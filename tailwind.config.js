@@ -4,12 +4,11 @@ export default {
     "./index.html",
     "./src/**/*.{js,ts,jsx,tsx}",
   ],
-  // CRITICAL: Prefix todas las clases para evitar colisiones con el host
-  prefix: 'vp-',
+  // Note: Removed prefix 'vp-' as the codebase uses standard Tailwind classes.
+  // The host app should handle CSS isolation via Module Federation's scoping.
+  // If CSS collisions occur, add prefix back and update all class names in components.
   corePlugins: {
-    // CRITICAL: Desactivar preflight para no resetear estilos del host
-    // El preflight de Tailwind resetea márgenes, paddings y estilos base
-    // que rompen los grids y layouts del host
+    // Disable preflight to avoid resetting host app styles
     preflight: false,
   },
   theme: {

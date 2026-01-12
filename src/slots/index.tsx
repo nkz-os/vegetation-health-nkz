@@ -6,8 +6,9 @@
 
 import { TimelineWidget } from '../components/slots/TimelineWidget';
 import { VegetationConfig } from '../components/VegetationConfig';
+import { VegetationAnalytics } from '../components/VegetationAnalytics';
 import { VegetationProvider } from '../services/vegetationContext';
-import { ZoningLayerControl } from '../components/slots/ZoningLayer'; // UI Control (Legend)
+import VegetationLayerControl from '../components/slots/VegetationLayerControl';
 import { VegetationLayer } from '../components/slots/VegetationLayer'; // Map Logic (Cesium)
 
 // Type definitions for slot widgets (matching SDK types)
@@ -49,10 +50,10 @@ export const vegetationPrimeSlots: ModuleViewerSlots = {
   // Layer Toggle: UI Controls (Legend, Opacity)
   'layer-toggle': [
     {
-      id: 'zoning-layer-control',
-      component: 'ZoningLayerControl',
-      priority: 15,
-      localComponent: ZoningLayerControl,
+      id: 'vegetation-layer-control',
+      component: 'VegetationLayerControl',
+      priority: 10,
+      localComponent: VegetationLayerControl,
       defaultProps: { visible: true },
       showWhen: {
         entityType: ['AgriParcel']
@@ -66,6 +67,15 @@ export const vegetationPrimeSlots: ModuleViewerSlots = {
       priority: 20,
       localComponent: VegetationConfig,
       defaultProps: { mode: 'panel' },
+      showWhen: {
+        entityType: ['AgriParcel']
+      }
+    },
+    {
+      id: 'vegetation-analytics',
+      component: 'VegetationAnalytics',
+      priority: 30,
+      localComponent: VegetationAnalytics,
       showWhen: {
         entityType: ['AgriParcel']
       }

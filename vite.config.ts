@@ -11,11 +11,16 @@ export default defineConfig({
       name: 'vegetation_prime_module',
       filename: 'remoteEntry.js',
       exposes: {
+        // Main App Entry
         './App': './src/App.tsx',
+        // Slots Registration (used by Host to discover slots)
         './viewerSlots': './src/slots/index.tsx',
+        // Individual Slot Components (must match manifest.json slot definitions)
         './VegetationLayer': './src/components/slots/VegetationLayer.tsx',
-        './TimelineWidget': './src/components/slots/TimelineWidget.tsx',
+        './TimelineWidget': './src/exports/TimelineWidget.tsx',
         './VegetationLayerControl': './src/components/slots/VegetationLayerControl.tsx',
+        './VegetationConfig': './src/exports/VegetationConfig.tsx',
+        './VegetationAnalytics': './src/exports/VegetationAnalytics.tsx',
       },
       shared: {
         // CRITICAL: React MUST be shared as singleton to avoid hook errors
