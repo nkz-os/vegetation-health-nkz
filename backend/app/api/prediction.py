@@ -12,9 +12,16 @@ from sqlalchemy.orm import Session
 import numpy as np
 from sklearn.linear_model import LinearRegression
 
-from app.database import get_db_for_tenant
+from app.database import get_db_with_tenant
 from app.middleware.auth import require_auth
 from app.models import VegetationIndexCache, VegetationScene
+
+
+# Helper function for database dependency with tenant context
+def get_db_for_tenant(current_user: dict = Depends(require_auth)):
+    """Get database session with tenant context."""
+    for db in get_db_with_tenant(current_user['tenant_id']):
+        yield db
 
 router = APIRouter(prefix="/api/vegetation/prediction", tags=["prediction"])
 

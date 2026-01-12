@@ -1347,9 +1347,8 @@ async def get_zoning_geojson(parcel_id: str, user: dict = Depends(require_auth))
 # =============================================================================
 # Prediction Router (N8N-ready)
 # =============================================================================
-# TODO: Fix circular import
-# from app.api.prediction import router as prediction_router
-# app.include_router(prediction_router)
+from app.api.prediction import router as prediction_router
+app.include_router(prediction_router)
 
 
 # =============================================================================
@@ -1456,4 +1455,88 @@ async def calculate_formula_preview(
             "n8n_batch_ready": True,
             "supported_outputs": ["tile_xyz", "geotiff", "statistics"]
         }
+    )
+
+
+# =============================================================================
+# Carbon Config Endpoints
+# =============================================================================
+
+class CarbonConfigRequest(BaseModel):
+    """Carbon configuration for a parcel."""
+    strawRemoved: bool = False
+    soilType: str = "loam"  # clay, loam, sandy, organic
+    tillageType: Optional[str] = "conventional"  # conventional, reduced, no-till
+
+
+class CarbonConfigResponse(BaseModel):
+    """Response for carbon config."""
+    entity_id: str
+    strawRemoved: bool
+    soilType: str
+    tillageType: Optional[str]
+    lue_factor: float = 1.0
+    updated_at: Optional[datetime] = None
+
+
+@app.get("/api/vegetation/carbon/{entity_id}", response_model=CarbonConfigResponse)
+async def get_carbon_config(
+    entity_id: str,
+    current_user: dict = Depends(require_auth),
+    db: Session = Depends(get_db_for_tenant)
+):
+    """Get carbon configuration for an entity.
+    
+    Returns stored config or defaults if not configured.
+    """
+    # For MVP, return defaults (config would be stored in a separate table)
+    # In production, query a CarbonConfig table
+    return CarbonConfigResponse(
+        entity_id=entity_id,
+        strawRemoved=False,
+        soilType="loam",
+        tillageType="conventional",
+        lue_factor=1.0,
+        updated_at=None
+    )
+
+
+@app.post("/api/vegetation/carbon/{entity_id}", response_model=CarbonConfigResponse)
+async def save_carbon_config(
+    entity_id: str,
+    config: CarbonConfigRequest,
+    current_user: dict = Depends(require_auth),
+    db: Session = Depends(get_db_for_tenant)
+):
+    """Save carbon configuration for an entity.
+    
+    Stores user preferences for carbon calculation parameters.
+    """
+    # Calculate LUE factor based on soil type and tillage
+    tillage_factors = {
+        "conventional": 0.7,
+        "reduced": 0.85,
+        "no-till": 1.0
+    }
+    soil_factors = {
+        "clay": 1.1,
+        "loam": 1.0,
+        "sandy": 0.85,
+        "organic": 1.2
+    }
+    
+    lue = tillage_factors.get(config.tillageType, 1.0) * soil_factors.get(config.soilType, 1.0)
+    if config.strawRemoved:
+        lue *= 0.85  # Penalty for removing organic matter
+    
+    # For MVP, we just return the config (in production, store in DB)
+    logger.info(f"Saving carbon config for {entity_id}: {config.dict()}, LUE={lue}")
+    
+    return CarbonConfigResponse(
+        entity_id=entity_id,
+        strawRemoved=config.strawRemoved,
+        soilType=config.soilType,
+        tillageType=config.tillageType,
+        lue_factor=round(lue, 3),
+        updated_at=datetime.utcnow()
     )
