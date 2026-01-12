@@ -246,6 +246,113 @@ export class VegetationApiClient {
         scene_info?: any;
       };
   }
+
+  // ==========================================================================
+  // Integration Endpoints (N8N, Intelligence Module, Platform)
+  // ==========================================================================
+
+  /**
+   * Get prediction for an entity (N8N/Intelligence Module ready)
+   */
+  async getPrediction(
+    entityId: string,
+    indexType: string = 'NDVI',
+    daysAhead: number = 7
+  ): Promise<{
+    entity_id: string;
+    index_type: string;
+    model_type: string;
+    predictions: Array<{ date: string; predicted_value: number; confidence_lower: number; confidence_upper: number }>;
+    webhook_metadata: Record<string, any>;
+  } | null> {
+    try {
+      const params = new URLSearchParams();
+      params.append('index_type', indexType);
+      params.append('days_ahead', daysAhead.toString());
+      
+      const response = await this.client.get(`/prediction/${encodeURIComponent(entityId)}?${params.toString()}`);
+      return response as any;
+    } catch (error) {
+      console.warn('[API] Prediction not available:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Get carbon configuration for an entity
+   */
+  async getCarbonConfig(entityId: string): Promise<{
+    entity_id: string;
+    strawRemoved: boolean;
+    soilType: string;
+    tillageType?: string;
+    lue_factor: number;
+  } | null> {
+    try {
+      const response = await this.client.get(`/carbon/${encodeURIComponent(entityId)}`);
+      return response as any;
+    } catch (error) {
+      console.warn('[API] Carbon config not found:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Save carbon configuration for an entity
+   */
+  async saveCarbonConfig(
+    entityId: string,
+    config: { strawRemoved: boolean; soilType: string; tillageType?: string }
+  ): Promise<void> {
+    await this.client.post(`/carbon/${encodeURIComponent(entityId)}`, config);
+  }
+
+  /**
+   * Trigger zoning job (VRA Management Zones)
+   * Supports N8N callback and Intelligence Module delegation
+   */
+  async triggerZoning(
+    parcelId: string,
+    options?: {
+      n_zones?: number;
+      delegate_to_intelligence?: boolean;
+      n8n_callback_url?: string;
+    }
+  ): Promise<{
+    message: string;
+    task_id: string;
+    parcel_id: string;
+    webhook_metadata: Record<string, any>;
+  }> {
+    const response = await this.client.post(`/jobs/zoning/${encodeURIComponent(parcelId)}`, options || {});
+    return response as any;
+  }
+
+  /**
+   * Get zoning results as GeoJSON
+   */
+  async getZoningGeoJson(parcelId: string): Promise<{
+    type: 'FeatureCollection';
+    features: Array<{
+      type: 'Feature';
+      properties: Record<string, any>;
+      geometry: Record<string, any>;
+    }>;
+  }> {
+    const response = await this.client.get(`/jobs/zoning/${encodeURIComponent(parcelId)}/geojson`);
+    return response as any;
+  }
+
+  /**
+   * Get crop recommendation based on species (Crop Intelligence)
+   */
+  async getCropRecommendation(cropSpecies: string): Promise<{
+    default_index: string;
+    valid_indices: string[];
+  }> {
+    const response = await this.client.get(`/logic/recommendation/${encodeURIComponent(cropSpecies)}`);
+    return response as any;
+  }
 }
 
 // Hook for using API client

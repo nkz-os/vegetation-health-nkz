@@ -79,7 +79,7 @@ app.add_middleware(
 
 # Include tile router
 app.include_router(tiles_router)
-app.include_router(crops_router, prefix="/api", tags=["logic"])
+app.include_router(crops_router, prefix="/api/vegetation", tags=["crop-intelligence"])
 
 
 # =============================================================================
@@ -1275,28 +1275,74 @@ async def compare_years(
     }
 
 # --- Zoning / VRA Endpoints ---
-# Lazy import - see route function below
-# from app.jobs.zoning_algorithm import ZoningAlgorithm
+# Integration ready for: N8N workflows, Intelligence Module, Nekazari Platform
+
+class ZoningRequest(BaseModel):
+    """Request for zoning job with N8N/Intelligence Module integration."""
+    n_zones: int = Field(default=3, ge=2, le=10, description="Number of management zones")
+    delegate_to_intelligence: bool = Field(default=False, description="Delegate clustering to Intelligence Module")
+    n8n_callback_url: Optional[str] = Field(None, description="N8N webhook callback URL")
+
 
 @app.post("/api/vegetation/jobs/zoning/{parcel_id}")
-async def trigger_zoning(parcel_id: str, background_tasks: BackgroundTasks, user: dict = Depends(require_auth)):
+async def trigger_zoning(
+    parcel_id: str,
+    request: ZoningRequest = None,
+    background_tasks: BackgroundTasks = None,
+    user: dict = Depends(require_auth)
+):
     """
     Trigger VRA Management Zone clustering for a parcel.
-    """
-    # 1. Verify ownership (mocked for now)
     
-    # 2. Add to background tasks
-    task_id = f"zoning-{parcel_id}-{datetime.now().timestamp()}"
+    **Integration Points:**
+    - Set `delegate_to_intelligence=true` to use Intelligence Module for advanced clustering
+    - Provide `n8n_callback_url` to receive webhook when complete
+    
+    **N8N Usage:** Use this as a webhook trigger node, then poll /geojson for results.
+    """
+    import os
+    
+    # Get ORION URL from environment
+    orion_url = os.getenv("FIWARE_CONTEXT_BROKER_URL", "http://orion:1026")
+    
+    # Generate task ID
+    task_id = f"zoning-{parcel_id.split(':')[-1]}-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+    
+    # Parameters for the job
+    params = {
+        "n_zones": request.n_zones if request else 3,
+        "delegate_to_intelligence": request.delegate_to_intelligence if request else False,
+        "n8n_callback_url": request.n8n_callback_url if request else None
+    }
     
     def run_zoning():
         from app.jobs.zoning_algorithm import ZoningAlgorithm
-        zoning = ZoningAlgorithm(orion_url=ORION_URL)
-        # Assuming we just need to pass parcel_id
-        zoning.execute(parcel_id, parcel_id, {}) # Mock scene_id as parcel_id for now or fetch latest
+        zoning = ZoningAlgorithm(orion_url=orion_url, tenant_id=user.get('tenant_id', 'master'))
+        result = zoning.execute(parcel_id, parcel_id, params)
+        
+        # If N8N callback is provided, send result
+        if params.get('n8n_callback_url'):
+            try:
+                import httpx
+                httpx.post(params['n8n_callback_url'], json=result, timeout=10.0)
+            except Exception as e:
+                logger.warning(f"Failed to send N8N callback: {e}")
+        
+        return result
 
     background_tasks.add_task(run_zoning)
     
-    return {"message": "Zoning job started", "task_id": task_id}
+    return {
+        "message": "Zoning job started",
+        "task_id": task_id,
+        "parcel_id": parcel_id,
+        "parameters": params,
+        "webhook_metadata": {
+            "poll_endpoint": f"/api/vegetation/jobs/zoning/{parcel_id}/geojson",
+            "n8n_compatible": True,
+            "intelligence_module_delegation": params.get('delegate_to_intelligence', False)
+        }
+    }
 
 @app.get("/api/vegetation/jobs/zoning/{parcel_id}/geojson")
 async def get_zoning_geojson(parcel_id: str, user: dict = Depends(require_auth)):

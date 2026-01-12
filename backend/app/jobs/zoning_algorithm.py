@@ -1,22 +1,35 @@
+"""
+Phase F6: Management Zone Clustering (VRA)
+Uses K-Means clustering on accumulated vegetation indices to define management zones.
+Designed for N8N integration and Intelligence Module handoff.
+"""
+
 import logging
-import json
+import os
 import numpy as np
 import rasterio
 from rasterio.features import shapes
-from shapely.geometry import shape, mapping
 from scipy.cluster.vq import kmeans2, whiten
-from ..core.orion import OrionClient
+from typing import Optional, Dict, Any, List
+
+from app.services.fiware_integration import FIWAREClient
 
 logger = logging.getLogger(__name__)
 
+
 class ZoningAlgorithm:
     """
-    Phase F6: Management Zone Clustering (VRA)
-    Uses K-Means clustering on accumulated vegetation indices to define management zones.
+    Management Zone Clustering (VRA) Algorithm.
+    
+    Integration Points:
+    - N8N: Can be triggered via webhook, results are webhook-friendly
+    - Intelligence Module: Prepares data for advanced ML clustering
+    - Nekazari Platform: Updates AgriManagementZone entities in Orion-LD
     """
     
-    def __init__(self):
-        self.orion = OrionClient()
+    def __init__(self, orion_url: Optional[str] = None, tenant_id: str = "master"):
+        url = orion_url or os.getenv("FIWARE_CONTEXT_BROKER_URL", "http://orion:1026")
+        self.fiware = FIWAREClient(url, tenant_id=tenant_id)
 
     def cluster_raster(self, raster_data: np.ndarray, n_clusters: int=3):
         """
@@ -111,14 +124,82 @@ class ZoningAlgorithm:
                     "value": "NDVI"
                 }
             }
-            # Create or Update
+            # Create or Update via FIWARE Client
             try:
-                 self.orion.update_entity(zone_id, entity)
+                self.fiware.update_entity(entity)
+                logger.info(f"Created/Updated Zone: {zone_id}")
             except Exception as e:
-                 logger.warn(f"Failed to update zone {zone_id}: {e}")
-            logger.info(f"Created/Updated Zone: {zone_id}")
+                logger.warning(f"Failed to update zone {zone_id}: {e}")
 
         logger.info(f"Successfully generated {len(vectors)} zones for {parcel_id}")
+        
+        # Return N8N-friendly response
+        return {
+            "status": "success",
+            "parcel_id": parcel_id,
+            "zones_created": len(vectors),
+            "webhook_metadata": {
+                "intelligence_module_compatible": True,
+                "n8n_ready": True,
+                "can_delegate_to": ["intelligence-module", "n8n-workflow"]
+            }
+        }
+
+    def execute(self, parcel_id: str, scene_id: str, parameters: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Synchronous execution wrapper for background task.
+        
+        Args:
+            parcel_id: Target parcel ID
+            scene_id: Scene to use for clustering (can be same as parcel_id for latest)
+            parameters: Additional parameters (n_zones, etc.)
+            
+        Returns:
+            N8N-compatible result dictionary
+        """
+        import asyncio
+        
+        n_zones = parameters.get('n_zones', 3)
+        
+        # Run the async method synchronously
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        
+        result = loop.run_until_complete(self.generate_zones(parcel_id, n_zones))
+        return result or {"status": "no_zones_generated", "parcel_id": parcel_id}
+
+    def prepare_for_intelligence_module(self, parcel_id: str, raster_data: np.ndarray) -> Dict[str, Any]:
+        """
+        Prepare data for handoff to Intelligence Module.
+        
+        The Intelligence Module can perform more sophisticated clustering
+        (e.g., deep learning, multi-temporal analysis).
+        
+        Returns:
+            Dictionary with data ready for Intelligence Module API
+        """
+        valid_mask = ~np.isnan(raster_data) & (raster_data > -1)
+        valid_pixels = raster_data[valid_mask].tolist()
+        
+        return {
+            "task_type": "advanced_clustering",
+            "parcel_id": parcel_id,
+            "data": {
+                "pixel_values": valid_pixels,
+                "shape": raster_data.shape,
+                "valid_pixel_count": len(valid_pixels)
+            },
+            "suggested_algorithms": ["dbscan", "spectral_clustering", "deep_clustering"],
+            "callback_endpoint": "/api/vegetation/jobs/zoning/callback"
+        }
+
+
+# Global instance for ORION_URL reference in main.py
+ORION_URL = os.getenv("FIWARE_CONTEXT_BROKER_URL", "http://orion:1026")
+
 
 if __name__ == "__main__":
     algo = ZoningAlgorithm()
