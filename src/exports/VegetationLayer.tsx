@@ -1,5 +1,6 @@
 /**
  * Wrapped VegetationLayer export for Module Federation
+ * Host does NOT use moduleProvider, so we wrap here
  */
 import React from 'react';
 import { VegetationLayer as BaseComponent } from '../components/slots/VegetationLayer';

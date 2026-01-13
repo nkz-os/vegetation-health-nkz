@@ -1,5 +1,6 @@
 /**
  * Wrapped VegetationConfig export for Module Federation
+ * Host does NOT use moduleProvider, so we wrap here
  */
 import React from 'react';
 import { VegetationConfig as BaseComponent } from '../components/VegetationConfig';
