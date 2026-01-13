@@ -28,6 +28,8 @@ spec:
         component: backend
         module: vegetation-prime
     spec:
+      imagePullSecrets:
+        - name: ghcr-secret
       containers:
         - name: api
           image: ghcr.io/k8-benetis/vegetation-health-nkz/vegetation-prime-backend:latest
