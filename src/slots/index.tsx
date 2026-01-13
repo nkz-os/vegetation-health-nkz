@@ -1,15 +1,15 @@
 /**
  * Slot Registration for Vegetation Prime Module
  * Defines all slots that integrate with the Unified Viewer.
- * Uses shared moduleProvider pattern supported by Host.
+ * IMPORTANT: All imports must be from ../exports/ to get VegetationProvider wrapping!
  */
 
-import { TimelineWidget } from '../components/slots/TimelineWidget';
-import { VegetationConfig } from '../components/VegetationConfig';
-import { VegetationAnalytics } from '../components/VegetationAnalytics';
-import { VegetationProvider } from '../services/vegetationContext';
-import VegetationLayerControl from '../components/slots/VegetationLayerControl';
-import { VegetationLayer } from '../components/slots/VegetationLayer'; // Map Logic (Cesium)
+// Import WRAPPED components from exports (each has its own VegetationProvider)
+import { TimelineWidget } from '../exports/TimelineWidget';
+import { VegetationConfig } from '../exports/VegetationConfig';
+import { VegetationAnalytics } from '../exports/VegetationAnalytics';
+import { VegetationLayerControl } from '../exports/VegetationLayerControl';
+import { VegetationLayer } from '../exports/VegetationLayer';
 
 // Type definitions for slot widgets (matching SDK types)
 export interface SlotWidgetDefinition {
@@ -41,7 +41,7 @@ export const vegetationPrimeSlots: ModuleViewerSlots = {
       id: 'vegetation-cesium-layer',
       component: 'VegetationLayer',
       priority: 10,
-      localComponent: VegetationLayer,
+      localComponent: VegetationLayer, // Now wrapped with VegetationProvider
       showWhen: {
         entityType: ['AgriParcel']
       }
@@ -53,7 +53,7 @@ export const vegetationPrimeSlots: ModuleViewerSlots = {
       id: 'vegetation-layer-control',
       component: 'VegetationLayerControl',
       priority: 10,
-      localComponent: VegetationLayerControl,
+      localComponent: VegetationLayerControl, // Now wrapped with VegetationProvider
       defaultProps: { visible: true },
       showWhen: {
         entityType: ['AgriParcel']
@@ -65,7 +65,7 @@ export const vegetationPrimeSlots: ModuleViewerSlots = {
       id: 'vegetation-config',
       component: 'VegetationConfig',
       priority: 20,
-      localComponent: VegetationConfig,
+      localComponent: VegetationConfig, // Now wrapped with VegetationProvider
       defaultProps: { mode: 'panel' },
       showWhen: {
         entityType: ['AgriParcel']
@@ -75,7 +75,7 @@ export const vegetationPrimeSlots: ModuleViewerSlots = {
       id: 'vegetation-analytics',
       component: 'VegetationAnalytics',
       priority: 30,
-      localComponent: VegetationAnalytics,
+      localComponent: VegetationAnalytics, // Now wrapped with VegetationProvider
       showWhen: {
         entityType: ['AgriParcel']
       }
@@ -86,13 +86,11 @@ export const vegetationPrimeSlots: ModuleViewerSlots = {
       id: 'vegetation-timeline',
       component: 'TimelineWidget',
       priority: 10,
-      localComponent: TimelineWidget
+      localComponent: TimelineWidget // Now wrapped with VegetationProvider
     }
   ],
-  'entity-tree': [],
-  
-  // SHARED PROVIDER: Host will wrap all widgets with this provider
-  moduleProvider: VegetationProvider
+  'entity-tree': []
+  // moduleProvider removed - each component is now self-contained
 };
 
 /**
