@@ -1,15 +1,7 @@
 /**
- * Wrapped TimelineWidget export for Module Federation
- * Host does NOT use moduleProvider, so we wrap here
+ * TimelineWidget export for Module Federation
+ * Host handles Provider wrapping via moduleProvider - no wrapping needed here
  */
-import React from 'react';
-import { TimelineWidget as BaseComponent } from '../components/slots/TimelineWidget';
-import { VegetationProvider } from '../services/vegetationContext';
-
-export const TimelineWidget: React.FC<any> = (props) => (
-  <VegetationProvider>
-    <BaseComponent {...props} />
-  </VegetationProvider>
-);
-
+import { TimelineWidget } from '../components/slots/TimelineWidget';
+export { TimelineWidget };
 export default TimelineWidget;

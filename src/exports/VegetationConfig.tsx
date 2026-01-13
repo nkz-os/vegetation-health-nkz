@@ -1,15 +1,7 @@
 /**
- * Wrapped VegetationConfig export for Module Federation
- * Host does NOT use moduleProvider, so we wrap here
+ * VegetationConfig export for Module Federation
+ * Host handles Provider wrapping via moduleProvider - no wrapping needed here
  */
-import React from 'react';
-import { VegetationConfig as BaseComponent } from '../components/VegetationConfig';
-import { VegetationProvider } from '../services/vegetationContext';
-
-export const VegetationConfig: React.FC<any> = (props) => (
-  <VegetationProvider>
-    <BaseComponent {...props} />
-  </VegetationProvider>
-);
-
+import { VegetationConfig } from '../components/VegetationConfig';
+export { VegetationConfig };
 export default VegetationConfig;

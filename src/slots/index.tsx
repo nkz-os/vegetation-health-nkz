@@ -1,15 +1,16 @@
 /**
  * Slot Registration for Vegetation Prime Module
  * Defines all slots that integrate with the Unified Viewer.
- * IMPORTANT: All imports must be from ../exports/ to get VegetationProvider wrapping!
+ * Uses moduleProvider pattern - Host wraps all widgets with this provider.
  */
 
-// Import WRAPPED components from exports (each has its own VegetationProvider)
-import { TimelineWidget } from '../exports/TimelineWidget';
-import { VegetationConfig } from '../exports/VegetationConfig';
-import { VegetationAnalytics } from '../exports/VegetationAnalytics';
-import { VegetationLayerControl } from '../exports/VegetationLayerControl';
-import { VegetationLayer } from '../exports/VegetationLayer';
+// Import UNWRAPPED components (Host's SlotRenderer will wrap with moduleProvider)
+import { TimelineWidget } from '../components/slots/TimelineWidget';
+import { VegetationConfig } from '../components/VegetationConfig';
+import { VegetationAnalytics } from '../components/VegetationAnalytics';
+import VegetationLayerControl from '../components/slots/VegetationLayerControl';
+import { VegetationLayer } from '../components/slots/VegetationLayer';
+import { VegetationProvider } from '../services/vegetationContext';
 
 // Type definitions for slot widgets (matching SDK types)
 export interface SlotWidgetDefinition {
@@ -27,7 +28,7 @@ export interface SlotWidgetDefinition {
 export type SlotType = 'layer-toggle' | 'context-panel' | 'bottom-panel' | 'entity-tree' | 'map-layer';
 
 export type ModuleViewerSlots = Record<SlotType, SlotWidgetDefinition[]> & {
-  moduleProvider?: React.ComponentType<any>;
+  moduleProvider?: React.ComponentType<{ children: React.ReactNode }>;
 };
 
 /**
@@ -35,29 +36,23 @@ export type ModuleViewerSlots = Record<SlotType, SlotWidgetDefinition[]> & {
  * These slots integrate the module into the Unified Viewer
  */
 export const vegetationPrimeSlots: ModuleViewerSlots = {
-  // Map Layer: Logic that interacts with Cesium directly (Raster/Vector)
   'map-layer': [
     {
       id: 'vegetation-cesium-layer',
       component: 'VegetationLayer',
       priority: 10,
-      localComponent: VegetationLayer, // Now wrapped with VegetationProvider
-      showWhen: {
-        entityType: ['AgriParcel']
-      }
+      localComponent: VegetationLayer,
+      showWhen: { entityType: ['AgriParcel'] }
     }
   ],
-  // Layer Toggle: UI Controls (Legend, Opacity)
   'layer-toggle': [
     {
       id: 'vegetation-layer-control',
       component: 'VegetationLayerControl',
       priority: 10,
-      localComponent: VegetationLayerControl, // Now wrapped with VegetationProvider
+      localComponent: VegetationLayerControl,
       defaultProps: { visible: true },
-      showWhen: {
-        entityType: ['AgriParcel']
-      }
+      showWhen: { entityType: ['AgriParcel'] }
     }
   ],
   'context-panel': [
@@ -65,20 +60,16 @@ export const vegetationPrimeSlots: ModuleViewerSlots = {
       id: 'vegetation-config',
       component: 'VegetationConfig',
       priority: 20,
-      localComponent: VegetationConfig, // Now wrapped with VegetationProvider
+      localComponent: VegetationConfig,
       defaultProps: { mode: 'panel' },
-      showWhen: {
-        entityType: ['AgriParcel']
-      }
+      showWhen: { entityType: ['AgriParcel'] }
     },
     {
       id: 'vegetation-analytics',
       component: 'VegetationAnalytics',
       priority: 30,
-      localComponent: VegetationAnalytics, // Now wrapped with VegetationProvider
-      showWhen: {
-        entityType: ['AgriParcel']
-      }
+      localComponent: VegetationAnalytics,
+      showWhen: { entityType: ['AgriParcel'] }
     }
   ],
   'bottom-panel': [
@@ -86,11 +77,14 @@ export const vegetationPrimeSlots: ModuleViewerSlots = {
       id: 'vegetation-timeline',
       component: 'TimelineWidget',
       priority: 10,
-      localComponent: TimelineWidget // Now wrapped with VegetationProvider
+      localComponent: TimelineWidget
     }
   ],
-  'entity-tree': []
-  // moduleProvider removed - each component is now self-contained
+  'entity-tree': [],
+  
+  // CRITICAL: Host's SlotRenderer wraps all widgets with this provider
+  // This ensures all widgets share the same context instance
+  moduleProvider: VegetationProvider
 };
 
 /**
