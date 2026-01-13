@@ -1,14 +1,7 @@
 /**
- * Wrapped VegetationAnalytics export for Module Federation
+ * VegetationAnalytics export for Module Federation
+ * Note: Provider wrapping handled by moduleProvider in slots/index.tsx
  */
-import React from 'react';
-import { VegetationAnalytics as BaseComponent } from '../components/VegetationAnalytics';
-import { VegetationProvider } from '../services/vegetationContext';
-
-export const VegetationAnalytics: React.FC<any> = (props) => (
-  <VegetationProvider>
-    <BaseComponent {...props} />
-  </VegetationProvider>
-);
-
+import { VegetationAnalytics } from '../components/VegetationAnalytics';
+export { VegetationAnalytics };
 export default VegetationAnalytics;
