@@ -2,8 +2,7 @@
  * Slot Registration for Vegetation Prime Module
  * Defines all slots that integrate with the Unified Viewer.
  * 
- * CRITICAL: Widget IDs must start with 'vegetation-prime-' to match module ID
- * Host extracts moduleId from first part of widget ID (before second dash)
+ * All widgets include explicit moduleId for proper host integration.
  */
 
 // Import UNWRAPPED components (Host's SlotRenderer will wrap with moduleProvider)
@@ -14,9 +13,14 @@ import VegetationLayerControl from '../components/slots/VegetationLayerControl';
 import { VegetationLayer } from '../components/slots/VegetationLayer';
 import { VegetationProvider } from '../services/vegetationContext';
 
+// Module identifier - used for all slot widgets
+const MODULE_ID = 'vegetation-prime';
+
 // Type definitions for slot widgets (matching SDK types)
 export interface SlotWidgetDefinition {
   id: string;
+  /** Module ID that owns this widget. REQUIRED for remote modules. */
+  moduleId: string;
   component: string;
   priority: number;
   localComponent: React.ComponentType<any>;
@@ -35,21 +39,22 @@ export type ModuleViewerSlots = Record<SlotType, SlotWidgetDefinition[]> & {
 
 /**
  * Vegetation Prime Slots Configuration
- * Widget IDs use 'vegetation-prime-*' pattern so Host extracts correct moduleId
+ * All widgets explicitly declare moduleId for proper provider wrapping.
  */
 export const vegetationPrimeSlots: ModuleViewerSlots = {
   'map-layer': [
     {
       id: 'vegetation-prime-cesium-layer',
+      moduleId: MODULE_ID,
       component: 'VegetationLayer',
       priority: 10,
-      localComponent: VegetationLayer,
-      showWhen: { entityType: ['AgriParcel'] }
+      localComponent: VegetationLayer
     }
   ],
   'layer-toggle': [
     {
       id: 'vegetation-prime-layer-control',
+      moduleId: MODULE_ID,
       component: 'VegetationLayerControl',
       priority: 10,
       localComponent: VegetationLayerControl,
@@ -60,6 +65,7 @@ export const vegetationPrimeSlots: ModuleViewerSlots = {
   'context-panel': [
     {
       id: 'vegetation-prime-config',
+      moduleId: MODULE_ID,
       component: 'VegetationConfig',
       priority: 20,
       localComponent: VegetationConfig,
@@ -68,6 +74,7 @@ export const vegetationPrimeSlots: ModuleViewerSlots = {
     },
     {
       id: 'vegetation-prime-analytics',
+      moduleId: MODULE_ID,
       component: 'VegetationAnalytics',
       priority: 30,
       localComponent: VegetationAnalytics,
@@ -77,13 +84,14 @@ export const vegetationPrimeSlots: ModuleViewerSlots = {
   'bottom-panel': [
     {
       id: 'vegetation-prime-timeline',
+      moduleId: MODULE_ID,
       component: 'TimelineWidget',
       priority: 10,
       localComponent: TimelineWidget
     }
   ],
   'entity-tree': [],
-  
+
   // Host's SlotRenderer wraps all widgets with this provider
   moduleProvider: VegetationProvider
 };

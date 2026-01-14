@@ -154,7 +154,7 @@ Once your module is uploaded:
 ## Support
 
 For testing issues:
-- Email: developers@nekazari.com
+- Email: nekazari@artotxiki.com
 - Check [External Developer Guide](https://github.com/k8-benetis/nekazari-public/blob/main/docs/development/EXTERNAL_DEVELOPER_GUIDE.md) troubleshooting section
 
 
