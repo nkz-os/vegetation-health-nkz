@@ -12,6 +12,7 @@ interface CalculationButtonProps {
   className?: string;
   startDate?: string;
   endDate?: string;
+  formula?: string;
 }
 
 export const CalculationButton: React.FC<CalculationButtonProps> = ({
@@ -23,6 +24,7 @@ export const CalculationButton: React.FC<CalculationButtonProps> = ({
   className = '',
   startDate,
   endDate,
+  formula,
 }) => {
   const { selectedIndex, selectedSceneId, selectedEntityId, setSelectedIndex } = useVegetationContext();
   const { calculateIndex, isCalculating, error, success, resetState } = useIndexCalculation();
@@ -39,11 +41,12 @@ export const CalculationButton: React.FC<CalculationButtonProps> = ({
       indexType: effectiveIndexType,
       startDate: startDate,
       endDate: endDate,
+      formula: formula,
     });
 
     if (jobId && setSelectedIndex) {
-       console.log('[CalculationButton] Calculation success, refreshing map layer:', effectiveIndexType);
-       setSelectedIndex(effectiveIndexType); 
+      console.log('[CalculationButton] Calculation success, refreshing map layer:', effectiveIndexType);
+      setSelectedIndex(effectiveIndexType);
     }
   };
 
@@ -56,8 +59,8 @@ export const CalculationButton: React.FC<CalculationButtonProps> = ({
           px-4 py-2 rounded-md font-medium transition-all
           disabled:opacity-50 disabled:cursor-not-allowed
           flex items-center gap-2 justify-center
-          ${variant === 'primary' 
-            ? 'bg-blue-600 text-white hover:bg-blue-700 active:bg-blue-800' 
+          ${variant === 'primary'
+            ? 'bg-blue-600 text-white hover:bg-blue-700 active:bg-blue-800'
             : 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 active:bg-slate-100'}
           ${size === 'sm' ? 'text-xs px-2 py-1' : size === 'lg' ? 'text-lg px-6 py-3' : 'text-sm'}
           ${className}

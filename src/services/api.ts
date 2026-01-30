@@ -10,13 +10,13 @@ export class VegetationApiClient {
   private getTenantId: () => string | undefined;
 
   constructor(
-    getToken: () => string | undefined, 
+    getToken: () => string | undefined,
     getTenantId: () => string | undefined,
     baseUrl: string = '/api/vegetation'
   ) {
     this.getToken = getToken;
     this.getTenantId = getTenantId;
-    
+
     this.client = axios.create({
       baseURL: baseUrl,
       headers: {
@@ -28,18 +28,18 @@ export class VegetationApiClient {
     this.client.interceptors.request.use((config) => {
       const token = this.getToken();
       const tenantId = this.getTenantId();
-      
+
       if (token) {
         config.headers.Authorization = `Bearer ${token}`;
       }
-      
+
       if (tenantId) {
         config.headers['X-Tenant-ID'] = tenantId;
       }
-      
+
       return config;
     });
-    
+
     // Response interceptor for error logger
     this.client.interceptors.response.use(
       (response) => response.data,
@@ -76,7 +76,7 @@ export class VegetationApiClient {
     if (startDate) params.append('start_date', startDate);
     if (endDate) params.append('end_date', endDate);
     params.append('limit', limit.toString());
-    
+
     const response = await this.client.get(`/scenes?${params.toString()}`);
     return response as unknown as { scenes: VegetationScene[]; total: number };
   }
@@ -92,7 +92,7 @@ export class VegetationApiClient {
     if (sceneId) params.append('scene_id', sceneId);
     if (indexType) params.append('index_type', indexType);
     params.append('format', format);
-    
+
     const response = await this.client.get(`/indices?${params.toString()}`);
     return response;
   }
@@ -108,7 +108,7 @@ export class VegetationApiClient {
     params.append('index_type', indexType);
     if (startDate) params.append('start_date', startDate);
     if (endDate) params.append('end_date', endDate);
-    
+
     const response = await this.client.get(`/timeseries?${params.toString()}`);
     return response as unknown as { entity_id: string; index_type: string; data_points: TimeseriesDataPoint[] };
   }
@@ -158,7 +158,7 @@ export class VegetationApiClient {
     const params = new URLSearchParams();
     params.append("index_type", indexType);
     params.append("months", months.toString());
-    
+
     const response = await this.client.get(`/scenes/${encodeURIComponent(entityId)}/stats?${params.toString()}`);
     return response as unknown as TimelineStatsResponse;
   }
@@ -169,7 +169,7 @@ export class VegetationApiClient {
   ): Promise<YearComparisonResponse> {
     const params = new URLSearchParams();
     params.append("index_type", indexType);
-    
+
     const response = await this.client.get(`/scenes/${encodeURIComponent(entityId)}/compare-years?${params.toString()}`);
     return response as unknown as YearComparisonResponse;
   }
@@ -227,24 +227,24 @@ export class VegetationApiClient {
     if (status) searchParams.append("status", status);
     searchParams.append("limit", limit.toString());
     searchParams.append("offset", offset.toString());
-    
+
     const response = await this.client.get(`/jobs?${searchParams.toString()}`);
     return response as unknown as { jobs: VegetationJob[]; total: number };
   }
 
-  async getJobDetails(jobId: string): Promise<{ 
-    job: VegetationJob; 
+  async getJobDetails(jobId: string): Promise<{
+    job: VegetationJob;
     index_stats?: { mean: number; min: number; max: number; std_dev: number; pixel_count: number; };
     timeseries?: any[];
     scene_info?: any;
   }> {
-      const response = await this.client.get(`/jobs/${jobId}`);
-      return response as unknown as { 
-        job: VegetationJob; 
-        index_stats?: { mean: number; min: number; max: number; std_dev: number; pixel_count: number; };
-        timeseries?: any[];
-        scene_info?: any;
-      };
+    const response = await this.client.get(`/jobs/${jobId}`);
+    return response as unknown as {
+      job: VegetationJob;
+      index_stats?: { mean: number; min: number; max: number; std_dev: number; pixel_count: number; };
+      timeseries?: any[];
+      scene_info?: any;
+    };
   }
 
   // ==========================================================================
@@ -269,7 +269,7 @@ export class VegetationApiClient {
       const params = new URLSearchParams();
       params.append('index_type', indexType);
       params.append('days_ahead', daysAhead.toString());
-      
+
       const response = await this.client.get(`/prediction/${encodeURIComponent(entityId)}?${params.toString()}`);
       return response as any;
     } catch (error) {
@@ -353,6 +353,23 @@ export class VegetationApiClient {
     const response = await this.client.get(`/logic/recommendation/${encodeURIComponent(cropSpecies)}`);
     return response as any;
   }
+  /**
+   * Save a geometry as a permanent Management Zone (AgriParcel)
+   */
+  async saveManagementZone(
+    name: string,
+    geometry: any,
+    parentId?: string,
+    attributes?: Record<string, any>
+  ): Promise<{ id: string; message: string }> {
+    const response = await this.client.post('/entities/roi', {
+      name,
+      geometry,
+      parent_id: parentId,
+      attributes
+    });
+    return response as any;
+  }
 }
 
 // Hook for using API client
@@ -366,7 +383,7 @@ export function useVegetationApi(): VegetationApiClient {
         return hostAuth.getToken();
       }
     } catch (error) {
-       // Silent fail
+      // Silent fail
     }
     return undefined;
   };
@@ -378,7 +395,7 @@ export function useVegetationApi(): VegetationApiClient {
         return hostAuth.tenantId;
       }
     } catch (error) {
-       // Silent fail
+      // Silent fail
     }
     return undefined;
   };
