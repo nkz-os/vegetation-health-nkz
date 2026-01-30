@@ -6,11 +6,11 @@ import { VegetationAnalytics } from './components/VegetationAnalytics';
 import { Calendar, Layers, Leaf, ChevronRight } from 'lucide-react';
 
 const DashboardContent: React.FC = () => {
-  const { 
-    selectedEntityId, 
+  const {
+    selectedEntityId,
     setSelectedEntityId,
-     
-      
+
+
   } = useVegetationContext();
   const parcels: any[] = [];
   const loadingContext = false;
@@ -57,8 +57,8 @@ const DashboardContent: React.FC = () => {
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {Array.isArray(parcels) && parcels.map((parcel: any) => (
-                      <tr 
-                        key={parcel.id} 
+                      <tr
+                        key={parcel.id}
                         className="hover:bg-slate-50 transition-colors cursor-pointer"
                         onClick={() => setSelectedEntityId(parcel.id)}
                       >
@@ -75,7 +75,7 @@ const DashboardContent: React.FC = () => {
                           {parcel.area ? (parcel.area / 10000).toFixed(2) : '-'} ha
                         </td>
                         <td className="p-4 text-right">
-                          <button 
+                          <button
                             className="text-white bg-green-600 hover:bg-green-700 px-3 py-1.5 rounded-md text-xs font-medium inline-flex items-center gap-1 transition-colors"
                             onClick={(e) => {
                               e.stopPropagation();
@@ -110,7 +110,7 @@ const DashboardContent: React.FC = () => {
       {/* Navigation Header */}
       <div className="bg-white border-b border-gray-200 px-6 py-3 flex items-center justify-between">
         <div className="flex items-center gap-4">
-          <button 
+          <button
             onClick={handleBackToDashboard}
             className="text-slate-500 hover:text-slate-900 font-medium text-sm flex items-center gap-1"
           >
@@ -121,15 +121,14 @@ const DashboardContent: React.FC = () => {
             {parcels.find((p: any) => p.id === selectedEntityId)?.name || (activeTab === 'analytics' ? 'Análisis detallado' : 'Configuración')}
           </h2>
         </div>
-        
+
         <div className="flex bg-slate-100 p-1 rounded-lg">
           <button
             onClick={() => setActiveTab('analytics')}
-            className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all ${
-              activeTab === 'analytics' 
-                ? 'bg-white text-green-700 shadow-sm' 
+            className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all ${activeTab === 'analytics'
+                ? 'bg-white text-green-700 shadow-sm'
                 : 'text-slate-600 hover:text-slate-900'
-            }`}
+              }`}
           >
             <div className="flex items-center gap-2">
               <Layers className="w-4 h-4" />
@@ -138,13 +137,12 @@ const DashboardContent: React.FC = () => {
           </button>
           <button
             onClick={() => setActiveTab('config')}
-            className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all ${
-              activeTab === 'config' 
-                ? 'bg-white text-green-700 shadow-sm' 
+            className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all ${activeTab === 'config'
+                ? 'bg-white text-green-700 shadow-sm'
                 : 'text-slate-600 hover:text-slate-900'
-            }`}
+              }`}
           >
-             <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2">
               <Calendar className="w-4 h-4" />
               <span>Configuración</span>
             </div>
@@ -168,7 +166,8 @@ const DashboardContent: React.FC = () => {
 const App: React.FC = () => {
   return (
     <VegetationProvider>
-      <div className="min-h-screen bg-slate-50 text-slate-900 font-sans">
+      {/* NOTE: Do NOT use min-h-screen here - Host Layout provides page structure */}
+      <div className="bg-slate-50 text-slate-900 font-sans">
         <DashboardContent />
       </div>
     </VegetationProvider>
