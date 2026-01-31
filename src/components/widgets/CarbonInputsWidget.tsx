@@ -3,12 +3,15 @@
  * Form for capturing user inputs required for carbon calculation:
  * - strawRemoved: Whether straw residue is removed from field
  * - soilType: Soil classification affecting carbon sequestration
+ * 
+ * Wired to API: getCarbonConfig / saveCarbonConfig
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useVegetationContext } from '../../services/vegetationContext';
+import { useVegetationApi } from '../../services/api';
 
-interface CarbonConfig {
+interface CarbonConfigLocal {
   strawRemoved: boolean;
   soilType: 'clay' | 'loam' | 'sandy' | 'organic';
   tillageType?: 'conventional' | 'reduced' | 'no-till';
@@ -16,7 +19,7 @@ interface CarbonConfig {
 
 interface CarbonInputsWidgetProps {
   entityId?: string;
-  onSave?: (config: CarbonConfig) => void;
+  onSave?: (config: CarbonConfigLocal) => void;
   compact?: boolean;
 }
 
@@ -40,28 +43,59 @@ export const CarbonInputsWidget: React.FC<CarbonInputsWidgetProps> = ({
 }) => {
   const { selectedEntityId } = useVegetationContext();
   const effectiveEntityId = propEntityId || selectedEntityId;
+  const api = useVegetationApi();
   
-  const [config, setConfig] = useState<CarbonConfig>({
+  const [config, setConfig] = useState<CarbonConfigLocal>({
     strawRemoved: false,
     soilType: 'loam',
     tillageType: 'conventional',
   });
   
+  const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Load existing carbon config when entity changes
+  useEffect(() => {
+    if (!effectiveEntityId) return;
+
+    const loadConfig = async () => {
+      setIsLoading(true);
+      setError(null);
+      try {
+        const existingConfig = await api.getCarbonConfig(effectiveEntityId);
+        if (existingConfig) {
+          setConfig({
+            strawRemoved: existingConfig.strawRemoved,
+            soilType: existingConfig.soilType as CarbonConfigLocal['soilType'],
+            tillageType: existingConfig.tillageType as CarbonConfigLocal['tillageType'],
+          });
+        }
+      } catch (err) {
+        // Config doesn't exist yet - use defaults
+        console.debug('[CarbonInputsWidget] No existing config, using defaults');
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    loadConfig();
+  }, [effectiveEntityId, api]);
 
   const handleSave = async () => {
     if (!effectiveEntityId) return;
     
     setIsSaving(true);
+    setError(null);
     try {
-      // TODO: Integrate with backend API
-      console.log('Saving carbon config:', config);
+      await api.saveCarbonConfig(effectiveEntityId, config);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
       onSave?.(config);
     } catch (err) {
       console.error('Failed to save carbon config:', err);
+      setError('Error al guardar la configuración');
     } finally {
       setIsSaving(false);
     }
@@ -75,11 +109,28 @@ export const CarbonInputsWidget: React.FC<CarbonInputsWidgetProps> = ({
     );
   }
 
+  if (isLoading) {
+    return (
+      <div className={`bg-white rounded-lg border border-slate-200 ${compact ? 'p-3' : 'p-4'}`}>
+        <div className="flex items-center justify-center py-4">
+          <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-emerald-600"></div>
+          <span className="ml-2 text-sm text-slate-500">Cargando configuración...</span>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className={`bg-white rounded-lg border border-slate-200 ${compact ? 'p-3' : 'p-4'}`}>
       <h3 className={`font-semibold text-slate-800 ${compact ? 'text-sm mb-2' : 'text-base mb-4'}`}>
-        🌱 Configuración de Carbono
+        Configuración de Carbono
       </h3>
+      
+      {error && (
+        <div className="mb-3 p-2 bg-red-50 border border-red-200 rounded text-sm text-red-700">
+          {error}
+        </div>
+      )}
       
       {/* Straw Removal Toggle */}
       <div className="mb-4">

@@ -1,11 +1,53 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { Card } from '@nekazari/ui-kit';
 import { VegetationProvider, useVegetationContext } from './services/vegetationContext';
 import { VegetationConfig } from './components/VegetationConfig';
 import { VegetationAnalytics } from './components/VegetationAnalytics';
 import { CalculationsPage } from './components/pages/CalculationsPage';
 import { useVegetationApi } from './services/api';
-import { Calendar, Layers, Leaf, ChevronRight, BarChart3 } from 'lucide-react';
+import { Calendar, Layers, Leaf, ChevronRight, BarChart3, FileDown, Bell, Cloud, MapPin } from 'lucide-react';
+
+// Lazy load new tabs for code splitting
+const PrescriptionTab = lazy(() => import('./components/pages/PrescriptionTab'));
+const AlertsTab = lazy(() => import('./components/pages/AlertsTab'));
+const WeatherTab = lazy(() => import('./components/pages/WeatherTab'));
+const ZoningTab = lazy(() => import('./components/pages/ZoningTab'));
+
+// Tab types for the Ferrari frontend
+type TabType = 'dashboard' | 'analytics' | 'config' | 'calculations' | 'prescription' | 'alerts' | 'weather' | 'zoning';
+
+// Loading fallback for lazy loaded tabs
+const TabLoadingFallback: React.FC = () => (
+  <div className="flex items-center justify-center py-12">
+    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-emerald-600"></div>
+    <span className="ml-3 text-slate-500">Cargando...</span>
+  </div>
+);
+
+/**
+ * Read URL search params for deep linking
+ * Format: /vegetation?entityId=xxx&tab=analytics
+ */
+function useDeepLinkParams(): { entityId: string | null; tab: TabType | null } {
+  const [params, setParams] = useState<{ entityId: string | null; tab: TabType | null }>({
+    entityId: null,
+    tab: null
+  });
+
+  useEffect(() => {
+    const searchParams = new URLSearchParams(window.location.search);
+    const entityId = searchParams.get('entityId');
+    const tab = searchParams.get('tab') as TabType | null;
+    
+    // Validate tab is a known type
+    const validTabs: TabType[] = ['dashboard', 'analytics', 'config', 'calculations', 'prescription', 'alerts', 'weather', 'zoning'];
+    const validatedTab = tab && validTabs.includes(tab) ? tab : null;
+    
+    setParams({ entityId, tab: validatedTab });
+  }, []);
+
+  return params;
+}
 
 const DashboardContent: React.FC = () => {
   const {
@@ -16,7 +58,11 @@ const DashboardContent: React.FC = () => {
   const api = useVegetationApi();
   const [parcels, setParcels] = useState<any[]>([]);
   const [loadingContext, setLoadingContext] = useState(true);
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'analytics' | 'config' | 'calculations'>('dashboard');
+  const [activeTab, setActiveTab] = useState<TabType>('dashboard');
+  
+  // Deep linking support
+  const deepLinkParams = useDeepLinkParams();
+  const [deepLinkApplied, setDeepLinkApplied] = useState(false);
 
   // Fetch parcels on mount
   useEffect(() => {
@@ -29,12 +75,23 @@ const DashboardContent: React.FC = () => {
       .finally(() => setLoadingContext(false));
   }, []);
 
-  // If a parcel is selected, auto-switch to analytics (unless user manually navigates back)
+  // Apply deep link params on mount (once)
   useEffect(() => {
-    if (selectedEntityId && activeTab === 'dashboard') {
+    if (deepLinkApplied) return;
+    
+    if (deepLinkParams.entityId) {
+      setSelectedEntityId(deepLinkParams.entityId);
+      setActiveTab(deepLinkParams.tab || 'analytics');
+      setDeepLinkApplied(true);
+    }
+  }, [deepLinkParams, deepLinkApplied, setSelectedEntityId]);
+
+  // If a parcel is selected and we're on dashboard, auto-switch to analytics
+  useEffect(() => {
+    if (selectedEntityId && activeTab === 'dashboard' && !deepLinkParams.tab) {
       setActiveTab('analytics');
     }
-  }, [selectedEntityId]);
+  }, [selectedEntityId, activeTab, deepLinkParams.tab]);
 
   const handleBackToDashboard = () => {
     setSelectedEntityId(null);
@@ -123,7 +180,7 @@ const DashboardContent: React.FC = () => {
     );
   }
 
-  // Detail View (Analytics / Config)
+  // Detail View (Analytics / Config / New Tabs)
   return (
     <div className="h-full flex flex-col">
       {/* Navigation Header */}
@@ -137,63 +194,111 @@ const DashboardContent: React.FC = () => {
           </button>
           <div className="h-4 w-px bg-gray-300"></div>
           <h2 className="font-semibold text-slate-800">
-            {parcels.find((p: any) => p.id === selectedEntityId)?.name || (activeTab === 'analytics' ? 'Análisis detallado' : 'Configuración')}
+            {parcels.find((p: any) => p.id === selectedEntityId)?.name?.value || 
+             parcels.find((p: any) => p.id === selectedEntityId)?.name || 
+             'Análisis detallado'}
           </h2>
         </div>
+      </div>
 
-        <div className="flex bg-slate-100 p-1 rounded-lg">
-          <button
+      {/* Tab Bar - Ferrari Frontend (8 tabs) */}
+      <div className="bg-white border-b border-gray-200 px-6">
+        <div className="flex overflow-x-auto scrollbar-hide -mb-px">
+          {/* Analytics Tab */}
+          <TabButton 
+            active={activeTab === 'analytics'} 
             onClick={() => setActiveTab('analytics')}
-            className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all ${activeTab === 'analytics'
-              ? 'bg-white text-green-700 shadow-sm'
-              : 'text-slate-600 hover:text-slate-900'
-              }`}
-          >
-            <div className="flex items-center gap-2">
-              <Layers className="w-4 h-4" />
-              <span>Análisis</span>
-            </div>
-          </button>
-          <button
+            icon={<Layers className="w-4 h-4" />}
+            label="Análisis"
+          />
+          
+          {/* Config Tab */}
+          <TabButton 
+            active={activeTab === 'config'} 
             onClick={() => setActiveTab('config')}
-            className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all ${activeTab === 'config'
-              ? 'bg-white text-green-700 shadow-sm'
-              : 'text-slate-600 hover:text-slate-900'
-              }`}
-          >
-            <div className="flex items-center gap-2">
-              <Calendar className="w-4 h-4" />
-              <span>Configuración</span>
-            </div>
-          </button>
-          <button
+            icon={<Calendar className="w-4 h-4" />}
+            label="Configuración"
+          />
+          
+          {/* Calculations Tab */}
+          <TabButton 
+            active={activeTab === 'calculations'} 
             onClick={() => setActiveTab('calculations')}
-            className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all ${activeTab === 'calculations'
-              ? 'bg-white text-green-700 shadow-sm'
-              : 'text-slate-600 hover:text-slate-900'
-              }`}
-          >
-            <div className="flex items-center gap-2">
-              <BarChart3 className="w-4 h-4" />
-              <span>Cálculos</span>
-            </div>
-          </button>
+            icon={<BarChart3 className="w-4 h-4" />}
+            label="Cálculos"
+          />
+          
+          {/* Prescription Tab (NEW) */}
+          <TabButton 
+            active={activeTab === 'prescription'} 
+            onClick={() => setActiveTab('prescription')}
+            icon={<FileDown className="w-4 h-4" />}
+            label="Prescripción"
+          />
+          
+          {/* Alerts Tab (NEW) */}
+          <TabButton 
+            active={activeTab === 'alerts'} 
+            onClick={() => setActiveTab('alerts')}
+            icon={<Bell className="w-4 h-4" />}
+            label="Alertas"
+          />
+          
+          {/* Weather Tab (NEW) */}
+          <TabButton 
+            active={activeTab === 'weather'} 
+            onClick={() => setActiveTab('weather')}
+            icon={<Cloud className="w-4 h-4" />}
+            label="Clima"
+          />
+          
+          {/* Zoning Tab (NEW) */}
+          <TabButton 
+            active={activeTab === 'zoning'} 
+            onClick={() => setActiveTab('zoning')}
+            icon={<MapPin className="w-4 h-4" />}
+            label="Zonificación"
+          />
         </div>
       </div>
 
       {/* Content Area */}
       <div className="flex-1 overflow-auto bg-slate-50">
-        {activeTab === 'analytics' ? (
-          <VegetationAnalytics />
-        ) : activeTab === 'calculations' ? (
-          <CalculationsPage />
-        ) : (
-          <VegetationConfig mode="page" />
-        )}
+        <Suspense fallback={<TabLoadingFallback />}>
+          {activeTab === 'analytics' && <VegetationAnalytics />}
+          {activeTab === 'config' && <VegetationConfig mode="page" />}
+          {activeTab === 'calculations' && <CalculationsPage />}
+          {activeTab === 'prescription' && <PrescriptionTab />}
+          {activeTab === 'alerts' && <AlertsTab />}
+          {activeTab === 'weather' && <WeatherTab />}
+          {activeTab === 'zoning' && <ZoningTab />}
+        </Suspense>
       </div>
     </div>
   );
 };
+
+/**
+ * Tab Button Component for consistent styling
+ */
+const TabButton: React.FC<{
+  active: boolean;
+  onClick: () => void;
+  icon: React.ReactNode;
+  label: string;
+}> = ({ active, onClick, icon, label }) => (
+  <button
+    onClick={onClick}
+    className={`flex items-center gap-2 px-4 py-3 text-sm font-medium whitespace-nowrap border-b-2 transition-colors ${
+      active
+        ? 'border-emerald-600 text-emerald-700'
+        : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
+    }`}
+  >
+    {icon}
+    <span>{label}</span>
+  </button>
+);
 
 // Main App Entry Point
 const App: React.FC = () => {

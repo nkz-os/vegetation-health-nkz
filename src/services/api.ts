@@ -1,5 +1,28 @@
 import axios, { AxiosInstance } from 'axios';
-import { VegetationJob, VegetationScene, VegetationConfig, IndexCalculationParams, TimeseriesDataPoint, TimelineStatsResponse, YearComparisonResponse } from '../types';
+import { 
+  VegetationJob, 
+  VegetationScene, 
+  VegetationConfig, 
+  IndexCalculationParams, 
+  TimeseriesDataPoint, 
+  TimelineStatsResponse, 
+  YearComparisonResponse,
+  AnomalyCheckParams,
+  AnomalyCheckResponse,
+  AlertConfig,
+  AlertTestResponse,
+  AlertFormatResponse,
+  WeatherData,
+  WeatherInterpretation,
+  WeatherSensor,
+  FormulaPreviewParams,
+  FormulaPreviewResponse,
+  CarbonConfig,
+  ZoningTriggerResponse,
+  ZoningGeoJsonResponse,
+  SendToCloudResponse,
+  ModuleCapabilities
+} from '../types';
 
 /**
  * API Client for Vegetation Prime Backend.
@@ -473,6 +496,250 @@ export class VegetationApiClient {
   async getSubscriptionForEntity(entityId: string): Promise<any | null> {
     const subs = await this.listSubscriptions();
     return subs.find((s: any) => s.entity_id === entityId) || null;
+  }
+
+  // ==========================================================================
+  // Ferrari Frontend - Export Methods
+  // ==========================================================================
+
+  /**
+   * Export prescription map as GeoJSON
+   */
+  async exportPrescriptionGeojson(parcelId: string): Promise<Blob> {
+    const token = this.getToken();
+    const tenantId = this.getTenantId();
+
+    const headers: Record<string, string> = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    if (tenantId) headers['X-Tenant-ID'] = tenantId;
+
+    const response = await fetch(`/api/vegetation/export/${encodeURIComponent(parcelId)}/geojson`, {
+      method: 'GET',
+      headers,
+    });
+
+    if (!response.ok) {
+      throw new Error(`Export GeoJSON failed: ${response.status}`);
+    }
+
+    return response.blob();
+  }
+
+  /**
+   * Export prescription map as Shapefile (zip)
+   */
+  async exportPrescriptionShapefile(parcelId: string): Promise<Blob> {
+    const token = this.getToken();
+    const tenantId = this.getTenantId();
+
+    const headers: Record<string, string> = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    if (tenantId) headers['X-Tenant-ID'] = tenantId;
+
+    const response = await fetch(`/api/vegetation/export/${encodeURIComponent(parcelId)}/shapefile`, {
+      method: 'GET',
+      headers,
+    });
+
+    if (!response.ok) {
+      throw new Error(`Export Shapefile failed: ${response.status}`);
+    }
+
+    return response.blob();
+  }
+
+  /**
+   * Export prescription map as CSV
+   */
+  async exportPrescriptionCsv(parcelId: string): Promise<Blob> {
+    const token = this.getToken();
+    const tenantId = this.getTenantId();
+
+    const headers: Record<string, string> = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    if (tenantId) headers['X-Tenant-ID'] = tenantId;
+
+    const response = await fetch(`/api/vegetation/export/${encodeURIComponent(parcelId)}/csv`, {
+      method: 'GET',
+      headers,
+    });
+
+    if (!response.ok) {
+      throw new Error(`Export CSV failed: ${response.status}`);
+    }
+
+    return response.blob();
+  }
+
+  // ==========================================================================
+  // Ferrari Frontend - Anomaly Detection
+  // ==========================================================================
+
+  /**
+   * Check for anomalies in vegetation indices
+   */
+  async checkAnomalies(params: AnomalyCheckParams): Promise<AnomalyCheckResponse> {
+    try {
+      const response = await this.client.post('/anomalies/check', params);
+      return response as unknown as AnomalyCheckResponse;
+    } catch (error) {
+      console.warn('[API] Anomaly check failed:', error);
+      throw error;
+    }
+  }
+
+  // ==========================================================================
+  // Ferrari Frontend - Alerts Configuration
+  // ==========================================================================
+
+  /**
+   * Configure vegetation alerts
+   */
+  async configureAlerts(config: AlertConfig): Promise<{ message: string }> {
+    const response = await this.client.post('/alerts/configure', config);
+    return response as unknown as { message: string };
+  }
+
+  /**
+   * Test alert for an entity
+   */
+  async testAlert(entityId: string): Promise<AlertTestResponse> {
+    const response = await this.client.get(`/alerts/test/${encodeURIComponent(entityId)}`);
+    return response as unknown as AlertTestResponse;
+  }
+
+  /**
+   * Get alert format example for N8N integration
+   */
+  async getAlertFormat(entityId: string): Promise<AlertFormatResponse> {
+    const response = await this.client.get(`/alerts/format/${encodeURIComponent(entityId)}`);
+    return response as unknown as AlertFormatResponse;
+  }
+
+  // ==========================================================================
+  // Ferrari Frontend - Weather Data
+  // ==========================================================================
+
+  /**
+   * Get weather data for an entity
+   */
+  async getWeather(entityId: string): Promise<WeatherData> {
+    const response = await this.client.get(`/weather/${encodeURIComponent(entityId)}`);
+    return response as unknown as WeatherData;
+  }
+
+  /**
+   * Get weather interpretation for an entity
+   */
+  async getWeatherInterpretation(entityId: string): Promise<WeatherInterpretation> {
+    const response = await this.client.get(`/weather/${encodeURIComponent(entityId)}/interpret`);
+    return response as unknown as WeatherInterpretation;
+  }
+
+  /**
+   * Get weather sensors for an entity
+   */
+  async getWeatherSensors(entityId: string): Promise<WeatherSensor[]> {
+    const response = await this.client.get(`/weather/${encodeURIComponent(entityId)}/sensors`);
+    return response as unknown as WeatherSensor[];
+  }
+
+  // ==========================================================================
+  // Ferrari Frontend - Formula Preview
+  // ==========================================================================
+
+  /**
+   * Preview custom formula calculation
+   */
+  async calculatePreview(params: FormulaPreviewParams): Promise<FormulaPreviewResponse> {
+    try {
+      const response = await this.client.post('/calculate/preview', params);
+      return response as unknown as FormulaPreviewResponse;
+    } catch (error) {
+      console.warn('[API] Formula preview failed:', error);
+      return {
+        valid: false,
+        error: error instanceof Error ? error.message : 'Preview failed'
+      };
+    }
+  }
+
+  // ==========================================================================
+  // Ferrari Frontend - Send to Cloud (N8N)
+  // ==========================================================================
+
+  /**
+   * Send prescription map to machinery cloud via N8N
+   * This goes through our backend which proxies to N8N (security: CORS + credentials)
+   */
+  async sendToCloud(
+    parcelId: string, 
+    payload?: {
+      prescription_type?: string;
+      zones?: any;
+      metadata?: Record<string, any>;
+    }
+  ): Promise<SendToCloudResponse> {
+    try {
+      const response = await this.client.post('/export/n8n', {
+        parcel_id: parcelId,
+        ...payload
+      });
+      return response as unknown as SendToCloudResponse;
+    } catch (error) {
+      console.warn('[API] Send to cloud failed:', error);
+      throw error;
+    }
+  }
+
+  // ==========================================================================
+  // Ferrari Frontend - Module Capabilities (Graceful Degradation)
+  // ==========================================================================
+
+  /**
+   * Get module capabilities for graceful degradation
+   * Returns which optional integrations (N8N, Intelligence, ISOBUS) are available
+   */
+  async getCapabilities(): Promise<ModuleCapabilities> {
+    try {
+      const response = await this.client.get('/capabilities');
+      return response as unknown as ModuleCapabilities;
+    } catch (error) {
+      // If endpoint doesn't exist, return conservative defaults
+      console.warn('[API] Capabilities check failed, using defaults:', error);
+      return {
+        n8n_available: false,
+        intelligence_available: false,
+        isobus_available: false,
+        features: {
+          predictions: false,
+          alerts_webhook: false,
+          export_isoxml: false,
+          send_to_cloud: false
+        }
+      };
+    }
+  }
+
+  /**
+   * Check if ISOBUS module is available
+   * Uses host-provided callback or route check
+   */
+  isIsobusAvailable(): boolean {
+    try {
+      // Check if host provides ISOBUS callback
+      if (typeof (window as any).__nekazariOpenISOBUS === 'function') {
+        return true;
+      }
+      // Check if host has ISOBUS route registered
+      const hostModules = (window as any).__nekazariModules;
+      if (hostModules && Array.isArray(hostModules)) {
+        return hostModules.some((m: any) => m.id === 'isobus' || m.id === 'nkz-isobus');
+      }
+      return false;
+    } catch {
+      return false;
+    }
   }
 }
 

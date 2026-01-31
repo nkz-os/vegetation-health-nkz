@@ -5,12 +5,11 @@ import { useVegetationApi } from '../services/api';
 import { TimeseriesChart } from './analytics/TimeseriesChart';
 import { DistributionHistogram } from './analytics/DistributionHistogram';
 import { useAuth } from '../hooks/useAuth';
-import type { VegetationJob } from '../types';
+import type { VegetationJob, AnomalyCheckResponse, PredictionResponse, ModuleCapabilities, VegetationIndexType } from '../types';
 
 import { SetupWizard } from './pages/SetupWizard';
-import { Button } from '@nekazari/ui-kit'; // Ensure Button is imported
-
-// ... imports
+import { Button } from '@nekazari/ui-kit';
+import { AlertTriangle, TrendingUp, Search } from 'lucide-react';
 
 export const VegetationAnalytics: React.FC = () => {
     const { selectedIndex, selectedEntityId, setSelectedEntityId, selectedGeometry } = useVegetationContext();
@@ -28,6 +27,24 @@ export const VegetationAnalytics: React.FC = () => {
     const [yearComparison, setYearComparison] = useState<any[]>([]);
     const [stats, setStats] = useState<{ mean: number; min: number; max: number; std_dev: number } | null>(null);
     const [loadingStats, setLoadingStats] = useState(false);
+
+    // Ferrari Frontend: Anomaly Check state
+    const [anomalyResult, setAnomalyResult] = useState<AnomalyCheckResponse | null>(null);
+    const [loadingAnomalies, setLoadingAnomalies] = useState(false);
+    const [anomalyDateRange, setAnomalyDateRange] = useState<{ start: string; end: string }>({
+        start: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().split('T')[0], // 90 days ago
+        end: new Date().toISOString().split('T')[0]
+    });
+
+    // Ferrari Frontend: Predictions state
+    const [predictions, setPredictions] = useState<PredictionResponse | null>(null);
+    const [loadingPredictions, setLoadingPredictions] = useState(false);
+    const [capabilities, setCapabilities] = useState<ModuleCapabilities | null>(null);
+
+    // Load capabilities for graceful degradation
+    useEffect(() => {
+        api.getCapabilities().then(setCapabilities).catch(console.error);
+    }, [api]);
 
     // Check subscription when entity changes
     useEffect(() => {
@@ -88,8 +105,39 @@ export const VegetationAnalytics: React.FC = () => {
                     setStats(null);
                 })
                 .finally(() => setLoadingStats(false));
+
+            // Ferrari: Load predictions if Intelligence module is available
+            if (capabilities?.intelligence_available) {
+                setLoadingPredictions(true);
+                api.getPrediction(selectedEntityId, selectedIndex || 'NDVI', 7)
+                    .then(setPredictions)
+                    .catch(() => setPredictions(null))
+                    .finally(() => setLoadingPredictions(false));
+            }
         }
-    }, [selectedEntityId, subscription, selectedIndex]);
+    }, [selectedEntityId, subscription, selectedIndex, capabilities]);
+
+    // Ferrari: Anomaly check handler
+    const handleAnomalyCheck = async () => {
+        if (!selectedEntityId) return;
+        
+        setLoadingAnomalies(true);
+        setAnomalyResult(null);
+        
+        try {
+            const result = await api.checkAnomalies({
+                entity_id: selectedEntityId,
+                index_type: (selectedIndex || 'NDVI') as VegetationIndexType,
+                start_date: anomalyDateRange.start,
+                end_date: anomalyDateRange.end
+            });
+            setAnomalyResult(result);
+        } catch (error) {
+            console.error('Anomaly check failed:', error);
+        } finally {
+            setLoadingAnomalies(false);
+        }
+    };
 
     // Group jobs by entity logic (keep existing)
     const uniqueEntities = React.useMemo(() => {
@@ -403,6 +451,144 @@ export const VegetationAnalytics: React.FC = () => {
                     )}
                 </Card>
             </div>
+
+            {/* Ferrari Frontend: Anomaly Check Section */}
+            <Card padding="lg" className="bg-white/90 backdrop-blur-md border border-slate-200/50 rounded-xl shadow-sm">
+                <div className="mb-4 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                        <AlertTriangle className="w-5 h-5 text-amber-500" />
+                        <h3 className="text-md font-semibold text-slate-800">Detección de Anomalías</h3>
+                    </div>
+                </div>
+                
+                <div className="space-y-4">
+                    {/* Date Range for Anomaly Check */}
+                    <div className="flex flex-wrap gap-4 items-end">
+                        <div>
+                            <label className="block text-xs font-medium text-slate-600 mb-1">Desde</label>
+                            <input
+                                type="date"
+                                value={anomalyDateRange.start}
+                                onChange={(e) => setAnomalyDateRange(prev => ({ ...prev, start: e.target.value }))}
+                                className="px-3 py-1.5 border border-slate-200 rounded-lg text-sm"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-xs font-medium text-slate-600 mb-1">Hasta</label>
+                            <input
+                                type="date"
+                                value={anomalyDateRange.end}
+                                onChange={(e) => setAnomalyDateRange(prev => ({ ...prev, end: e.target.value }))}
+                                className="px-3 py-1.5 border border-slate-200 rounded-lg text-sm"
+                            />
+                        </div>
+                        <button
+                            onClick={handleAnomalyCheck}
+                            disabled={loadingAnomalies}
+                            className="flex items-center gap-2 px-4 py-1.5 bg-amber-500 text-white rounded-lg text-sm font-medium hover:bg-amber-600 disabled:bg-slate-300 disabled:cursor-wait transition-colors"
+                        >
+                            <Search className="w-4 h-4" />
+                            {loadingAnomalies ? 'Analizando...' : 'Buscar Anomalías'}
+                        </button>
+                    </div>
+
+                    {/* Anomaly Results */}
+                    {anomalyResult && (
+                        <div className="mt-4">
+                            {anomalyResult.anomalies.length > 0 ? (
+                                <div className="space-y-2">
+                                    <div className="text-sm text-amber-700 font-medium">
+                                        Se encontraron {anomalyResult.anomalies.length} anomalías:
+                                    </div>
+                                    <div className="max-h-48 overflow-y-auto space-y-2">
+                                        {anomalyResult.anomalies.map((anomaly, idx) => (
+                                            <div 
+                                                key={idx}
+                                                className={`p-3 rounded-lg border ${
+                                                    anomaly.severity === 'critical' 
+                                                        ? 'bg-red-50 border-red-200' 
+                                                        : 'bg-amber-50 border-amber-200'
+                                                }`}
+                                            >
+                                                <div className="flex justify-between items-start">
+                                                    <div>
+                                                        <div className="font-medium text-sm text-slate-800">
+                                                            {new Date(anomaly.date).toLocaleDateString()}
+                                                        </div>
+                                                        <div className="text-xs text-slate-600">{anomaly.message}</div>
+                                                    </div>
+                                                    <div className="text-right">
+                                                        <div className="text-sm font-bold text-slate-800">{anomaly.value.toFixed(3)}</div>
+                                                        <div className={`text-xs ${
+                                                            anomaly.severity === 'critical' ? 'text-red-600' : 'text-amber-600'
+                                                        }`}>
+                                                            {anomaly.anomaly_type === 'low' ? '↓ Bajo' : 
+                                                             anomaly.anomaly_type === 'high' ? '↑ Alto' : '⚡ Cambio brusco'}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            ) : (
+                                <div className="p-4 bg-green-50 border border-green-200 rounded-lg text-center">
+                                    <span className="text-green-700 font-medium">
+                                        No se detectaron anomalías en el periodo seleccionado
+                                    </span>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
+            </Card>
+
+            {/* Ferrari Frontend: Predictions Section (Optional - Intelligence Module) */}
+            {capabilities?.intelligence_available ? (
+                <Card padding="lg" className="bg-white/90 backdrop-blur-md border border-slate-200/50 rounded-xl shadow-sm">
+                    <div className="mb-4 flex items-center gap-2">
+                        <TrendingUp className="w-5 h-5 text-emerald-500" />
+                        <h3 className="text-md font-semibold text-slate-800">Predicción de Índice</h3>
+                    </div>
+                    
+                    {loadingPredictions ? (
+                        <div className="flex items-center justify-center py-8">
+                            <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-emerald-600"></div>
+                            <span className="ml-2 text-slate-500">Cargando predicciones...</span>
+                        </div>
+                    ) : predictions && predictions.predictions.length > 0 ? (
+                        <div className="space-y-4">
+                            <div className="text-xs text-slate-500">
+                                Modelo: {predictions.model_type} | Próximos 7 días
+                            </div>
+                            <div className="grid grid-cols-7 gap-2">
+                                {predictions.predictions.map((pred, idx) => (
+                                    <div key={idx} className="text-center p-2 bg-slate-50 rounded-lg">
+                                        <div className="text-[10px] text-slate-500">
+                                            {new Date(pred.date).toLocaleDateString('es', { weekday: 'short' })}
+                                        </div>
+                                        <div className="text-lg font-bold text-emerald-700">
+                                            {pred.predicted_value.toFixed(2)}
+                                        </div>
+                                        <div className="text-[9px] text-slate-400">
+                                            ±{((pred.confidence_upper - pred.confidence_lower) / 2).toFixed(2)}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="text-center py-4 text-slate-500 text-sm">
+                            No hay predicciones disponibles para esta parcela
+                        </div>
+                    )}
+                </Card>
+            ) : (
+                <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 text-center text-slate-500 text-sm">
+                    <TrendingUp className="w-6 h-6 mx-auto mb-2 opacity-50" />
+                    Predicciones no disponibles para este tenant
+                </div>
+            )}
         </div>
     );
 };
