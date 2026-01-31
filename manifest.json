@@ -2,7 +2,7 @@
   "id": "vegetation-prime",
   "name": "vegetation-prime",
   "display_name": "Vegetation Prime",
-  "version": "1.0.0",
+  "version": "1.49.0",
   "description": "High-performance vegetation intelligence suite with advanced spectral index calculation, Sentinel-2 integration, and AI-powered predictions for agricultural monitoring.",
   "short_description": "Advanced vegetation health monitoring and analysis",
   "author": {
@@ -18,7 +18,11 @@
   "label": "Vegetation",
   "icon": "leaf",
   "icon_url": "assets/icon.png",
-  "required_roles": ["Farmer", "TenantAdmin", "PlatformAdmin"],
+  "required_roles": [
+    "Farmer",
+    "TenantAdmin",
+    "PlatformAdmin"
+  ],
   "dependencies": {
     "sdk_version": "^1.0.0",
     "react_version": "^18.3.1",
@@ -71,7 +75,9 @@
           "component": "VegetationConfig",
           "priority": 20,
           "showWhen": {
-            "entityType": ["AgriParcel"]
+            "entityType": [
+              "AgriParcel"
+            ]
           }
         },
         {
@@ -79,7 +85,9 @@
           "component": "VegetationAnalytics",
           "priority": 30,
           "showWhen": {
-            "entityType": ["AgriParcel"]
+            "entityType": [
+              "AgriParcel"
+            ]
           }
         }
       ],
