@@ -357,7 +357,208 @@ class VegetationIndexProcessor:
         ndre = np.clip(ndre, -1, 1)
 
         return ndre
-    
+
+    def calculate_ndwi(self, apply_cloud_mask: bool = True) -> np.ndarray:
+        """Calculate NDWI (Normalized Difference Water Index).
+
+        Detects water content in vegetation canopy. Useful for:
+        - Irrigation management
+        - Drought stress detection
+        - Water body mapping
+
+        Formula: (NIR - SWIR1) / (NIR + SWIR1)
+        Uses B08 (NIR, 10m) and B11 (SWIR1, 20m)
+        Range: -1 to 1 (higher values = more water content)
+
+        Args:
+            apply_cloud_mask: If True, mask cloudy pixels using SCL band
+        """
+        self.load_bands(['B08', 'B11'])
+
+        nir = self.band_data['B08']
+        swir1 = self.band_data['B11']
+
+        # Resample SWIR1 (20m) to match NIR (10m)
+        if swir1.shape != nir.shape:
+            logger.info(f"Resampling B11 from {swir1.shape} to {nir.shape} for NDWI")
+            swir1 = self._resample_to_10m(swir1, nir)
+
+        # Create cloud mask if requested
+        cloud_mask = None
+        if apply_cloud_mask and 'SCL' in self.band_paths:
+            cloud_mask = self.create_cloud_mask(reference_shape=nir.shape)
+
+        denominator = nir + swir1
+        ndwi = np.where(denominator != 0, (nir - swir1) / denominator, 0)
+
+        if cloud_mask is not None:
+            ndwi = self.apply_cloud_mask(ndwi, cloud_mask)
+
+        ndwi = np.clip(ndwi, -1, 1)
+        return ndwi
+
+    def calculate_ndmi(self, apply_cloud_mask: bool = True) -> np.ndarray:
+        """Calculate NDMI (Normalized Difference Moisture Index).
+
+        Measures vegetation water content. More sensitive to moisture stress
+        than NDVI. Useful for:
+        - Crop water stress monitoring
+        - Fire risk assessment
+        - Drought monitoring
+
+        Formula: (NIR - SWIR1) / (NIR + SWIR1)
+        Uses B8A (NIR narrow, 20m) and B11 (SWIR1, 20m)
+        Range: -1 to 1 (higher values = more moisture)
+
+        Note: Similar to NDWI but uses B8A instead of B08 for better
+        moisture sensitivity in dense vegetation.
+
+        Args:
+            apply_cloud_mask: If True, mask cloudy pixels using SCL band
+        """
+        self.load_bands(['B8A', 'B11'])
+
+        nir = self.band_data['B8A']
+        swir1 = self.band_data['B11']
+
+        # Both bands are 20m, but ensure same shape
+        if swir1.shape != nir.shape:
+            logger.warning(f"B8A and B11 shape mismatch: {nir.shape} vs {swir1.shape}")
+
+        # Get reference 10m band for cloud mask if available
+        reference_shape = nir.shape
+        if 'B08' in self.band_data:
+            reference_shape = self.band_data['B08'].shape
+        elif 'B04' in self.band_paths:
+            self.load_bands(['B04'])
+            reference_shape = self.band_data['B04'].shape
+
+        # Create cloud mask if requested
+        cloud_mask = None
+        if apply_cloud_mask and 'SCL' in self.band_paths:
+            cloud_mask = self.create_cloud_mask(reference_shape=nir.shape)
+
+        denominator = nir + swir1
+        ndmi = np.where(denominator != 0, (nir - swir1) / denominator, 0)
+
+        if cloud_mask is not None:
+            ndmi = self.apply_cloud_mask(ndmi, cloud_mask)
+
+        ndmi = np.clip(ndmi, -1, 1)
+        return ndmi
+
+    def calculate_msavi(self, apply_cloud_mask: bool = True) -> np.ndarray:
+        """Calculate MSAVI2 (Modified Soil-Adjusted Vegetation Index).
+
+        Self-adjusting index that minimizes soil background effects without
+        requiring an empirical soil adjustment factor (L). Better than SAVI
+        for areas with exposed soil or sparse vegetation.
+
+        Formula: (2 * NIR + 1 - sqrt((2 * NIR + 1)² - 8 * (NIR - RED))) / 2
+        Range: -1 to 1
+
+        Best for:
+        - Early crop growth stages
+        - Sparse vegetation
+        - Areas with variable soil types
+
+        Args:
+            apply_cloud_mask: If True, mask cloudy pixels using SCL band
+        """
+        self.load_bands(['B04', 'B08'])
+
+        red = self.band_data['B04']
+        nir = self.band_data['B08']
+
+        # Create cloud mask if requested
+        cloud_mask = None
+        if apply_cloud_mask and 'SCL' in self.band_paths:
+            cloud_mask = self.create_cloud_mask(reference_shape=nir.shape)
+
+        # MSAVI2 formula: (2 * NIR + 1 - sqrt((2 * NIR + 1)^2 - 8 * (NIR - RED))) / 2
+        term1 = 2 * nir + 1
+        term2 = np.sqrt(np.maximum(0, term1**2 - 8 * (nir - red)))  # max(0,...) to avoid sqrt of negative
+        msavi = (term1 - term2) / 2
+
+        if cloud_mask is not None:
+            msavi = self.apply_cloud_mask(msavi, cloud_mask)
+
+        msavi = np.clip(msavi, -1, 1)
+        return msavi
+
+    def calculate_lai(self, apply_cloud_mask: bool = True) -> np.ndarray:
+        """Calculate LAI (Leaf Area Index) approximation from NDVI.
+
+        LAI represents the total one-sided area of leaf tissue per unit
+        ground surface area. This is an empirical approximation based on
+        NDVI correlation studies.
+
+        Formula (empirical): LAI = 0.57 * exp(2.33 * NDVI)
+        Range: 0 to ~8 (m²/m²)
+
+        Note: This is an approximation. True LAI requires ground calibration.
+
+        Best for:
+        - Biomass estimation
+        - Crop growth monitoring
+        - Carbon sequestration estimates
+
+        Args:
+            apply_cloud_mask: If True, mask cloudy pixels using SCL band
+        """
+        # First calculate NDVI
+        ndvi = self.calculate_ndvi(apply_cloud_mask=apply_cloud_mask)
+
+        # Empirical LAI approximation (based on literature)
+        # LAI = 0.57 * exp(2.33 * NDVI) - common approximation
+        # Only valid for positive NDVI values
+        lai = np.where(ndvi > 0, 0.57 * np.exp(2.33 * ndvi), 0)
+
+        # Clip to reasonable LAI range (0-8 is typical max for dense vegetation)
+        lai = np.clip(lai, 0, 8)
+
+        return lai
+
+    def calculate_cire(self, apply_cloud_mask: bool = True) -> np.ndarray:
+        """Calculate CIre (Chlorophyll Index Red Edge).
+
+        Highly sensitive to chlorophyll content in leaves. Excellent for:
+        - Nitrogen stress detection
+        - Chlorophyll content estimation
+        - Precision fertilization planning
+
+        Formula: (NIR / RedEdge1) - 1
+        Uses B08 (NIR) and B05 (RedEdge1, 20m)
+        Range: 0 to ~10 (no upper bound, typically 0-5)
+
+        Args:
+            apply_cloud_mask: If True, mask cloudy pixels using SCL band
+        """
+        self.load_bands(['B05', 'B08'])
+
+        nir = self.band_data['B08']
+        rededge1 = self.band_data['B05']
+
+        # Resample B05 (20m) to match B08 (10m)
+        if rededge1.shape != nir.shape:
+            logger.info(f"Resampling B05 from {rededge1.shape} to {nir.shape} for CIre")
+            rededge1 = self._resample_to_10m(rededge1, nir)
+
+        # Create cloud mask if requested
+        cloud_mask = None
+        if apply_cloud_mask and 'SCL' in self.band_paths:
+            cloud_mask = self.create_cloud_mask(reference_shape=nir.shape)
+
+        # CIre formula: (NIR / RedEdge1) - 1
+        cire = np.where(rededge1 > 0, (nir / rededge1) - 1, 0)
+
+        if cloud_mask is not None:
+            cire = self.apply_cloud_mask(cire, cloud_mask)
+
+        # Clip to reasonable range
+        cire = np.clip(cire, 0, 10)
+        return cire
+
     def calculate_custom_index(self, formula: str) -> np.ndarray:
         """Calculate custom index using safe formula evaluation.
 

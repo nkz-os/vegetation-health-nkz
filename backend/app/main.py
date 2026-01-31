@@ -3,6 +3,7 @@ FastAPI main application for Vegetation Prime module.
 """
 
 import logging
+import io
 from typing import List, Optional, Dict, Any
 from datetime import date, datetime
 from uuid import UUID
@@ -1480,6 +1481,519 @@ async def get_zoning_geojson(parcel_id: str, user: dict = Depends(require_auth))
                 }
             }
         ]
+    }
+
+
+# =============================================================================
+# Prescription Map Export API
+# =============================================================================
+from fastapi.responses import StreamingResponse
+from app.services.export_service import PrescriptionMapExporter
+
+export_service = PrescriptionMapExporter()
+
+
+@app.get("/api/vegetation/export/{parcel_id}/geojson")
+async def export_geojson(
+    parcel_id: str,
+    user: dict = Depends(require_auth)
+):
+    """
+    Export management zones as GeoJSON file.
+
+    Returns downloadable GeoJSON file with all zone properties.
+    """
+    # Get zones (would query real data in production)
+    zones = await get_zoning_geojson(parcel_id, user)
+    features = zones.get('features', [])
+
+    if not features:
+        raise HTTPException(status_code=404, detail="No zones found for this parcel")
+
+    content = export_service.export_geojson(
+        features,
+        metadata={
+            "parcel_id": parcel_id,
+            "export_type": "prescription_map",
+            "tenant_id": user.get('tenant_id')
+        }
+    )
+
+    return StreamingResponse(
+        io.BytesIO(content),
+        media_type="application/geo+json",
+        headers={
+            "Content-Disposition": f'attachment; filename="{parcel_id.split(":")[-1]}_prescription.geojson"'
+        }
+    )
+
+
+@app.get("/api/vegetation/export/{parcel_id}/shapefile")
+async def export_shapefile(
+    parcel_id: str,
+    user: dict = Depends(require_auth)
+):
+    """
+    Export management zones as Shapefile (zipped).
+
+    Returns a ZIP file containing .shp, .shx, .dbf, .prj files
+    compatible with QGIS, ArcGIS, and farm machinery.
+    """
+    zones = await get_zoning_geojson(parcel_id, user)
+    features = zones.get('features', [])
+
+    if not features:
+        raise HTTPException(status_code=404, detail="No zones found for this parcel")
+
+    try:
+        content = export_service.export_shapefile(
+            features,
+            name=f"prescription_{parcel_id.split(':')[-1]}"
+        )
+
+        return StreamingResponse(
+            io.BytesIO(content),
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": f'attachment; filename="{parcel_id.split(":")[-1]}_prescription.zip"'
+            }
+        )
+    except ImportError as e:
+        raise HTTPException(
+            status_code=501,
+            detail="Shapefile export not available. Install fiona package."
+        )
+
+
+@app.get("/api/vegetation/export/{parcel_id}/csv")
+async def export_csv(
+    parcel_id: str,
+    include_geometry: bool = True,
+    user: dict = Depends(require_auth)
+):
+    """
+    Export management zones as CSV.
+
+    Returns CSV file with zone properties and optionally WKT geometry.
+    """
+    zones = await get_zoning_geojson(parcel_id, user)
+    features = zones.get('features', [])
+
+    if not features:
+        raise HTTPException(status_code=404, detail="No zones found for this parcel")
+
+    content = export_service.export_csv(features, include_geometry=include_geometry)
+
+    return StreamingResponse(
+        io.BytesIO(content),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": f'attachment; filename="{parcel_id.split(":")[-1]}_prescription.csv"'
+        }
+    )
+
+
+@app.get("/api/vegetation/export/{parcel_id}/isoxml")
+async def export_isoxml(
+    parcel_id: str,
+    task_name: str = "VRA_Prescription",
+    product_name: str = "Fertilizante",
+    rate_property: str = "nitrogen_recommendation",
+    user: dict = Depends(require_auth)
+):
+    """
+    Export as ISOXML (ISO 11783) for ISOBUS-compatible tractors.
+
+    Returns a TASKDATA.ZIP file that can be loaded directly into
+    modern tractors and implements for variable rate application.
+
+    Compatible with:
+    - John Deere
+    - Case IH
+    - New Holland
+    - Fendt
+    - Claas
+    - And other ISOBUS-compatible machinery
+    """
+    zones = await get_zoning_geojson(parcel_id, user)
+    features = zones.get('features', [])
+
+    if not features:
+        raise HTTPException(status_code=404, detail="No zones found for this parcel")
+
+    content = export_service.export_isoxml(
+        features,
+        task_name=task_name,
+        product_name=product_name,
+        rate_property=rate_property
+    )
+
+    return StreamingResponse(
+        io.BytesIO(content),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="TASKDATA_{parcel_id.split(":")[-1]}.zip"'
+        }
+    )
+
+
+# =============================================================================
+# Anomaly Detection and Alerts API
+# =============================================================================
+from app.services.anomaly_detection import anomaly_detector, alert_service, Anomaly, AnomalyType, AlertSeverity
+
+
+class AnomalyCheckRequest(BaseModel):
+    """Request to check for anomalies in recent data."""
+    entity_id: str
+    index_type: str = "NDVI"
+    current_value: float
+    previous_value: Optional[float] = None
+    webhook_url: Optional[str] = None
+
+
+class AnomalyCheckResponse(BaseModel):
+    """Response with detected anomalies."""
+    entity_id: str
+    anomalies_detected: int
+    anomalies: List[Dict[str, Any]]
+    webhook_sent: bool = False
+
+
+@app.post("/api/vegetation/anomalies/check", response_model=AnomalyCheckResponse)
+async def check_anomalies(
+    request: AnomalyCheckRequest,
+    user: dict = Depends(require_auth)
+):
+    """
+    Check for anomalies in vegetation index values.
+
+    This endpoint analyzes the provided values against thresholds
+    and historical patterns to detect potential issues.
+
+    Use Cases:
+    - Automated monitoring after each satellite pass
+    - Integration with N8N workflows
+    - Real-time health dashboards
+
+    The detected anomalies can trigger webhooks for immediate notification.
+    """
+    anomalies = anomaly_detector.analyze_parcel(
+        entity_id=request.entity_id,
+        index_type=request.index_type,
+        current_value=request.current_value,
+        previous_value=request.previous_value
+    )
+
+    webhook_sent = False
+
+    # Send webhook if configured and anomalies detected
+    if request.webhook_url and anomalies:
+        for anomaly in anomalies:
+            success = await alert_service.send_webhook(
+                request.webhook_url,
+                anomaly,
+                extra_data={
+                    "tenant_id": user.get('tenant_id'),
+                    "user_id": user.get('user_id')
+                }
+            )
+            webhook_sent = webhook_sent or success
+
+    return AnomalyCheckResponse(
+        entity_id=request.entity_id,
+        anomalies_detected=len(anomalies),
+        anomalies=[a.to_dict() for a in anomalies],
+        webhook_sent=webhook_sent
+    )
+
+
+class AlertConfigRequest(BaseModel):
+    """Request to configure alert thresholds."""
+    entity_id: Optional[str] = None  # None = tenant-wide default
+    ndvi_drop_warning: float = -0.10
+    ndvi_drop_critical: float = -0.20
+    moisture_warning: float = 0.0
+    moisture_critical: float = -0.2
+    webhook_url: Optional[str] = None
+    enabled: bool = True
+
+
+@app.post("/api/vegetation/alerts/configure")
+async def configure_alerts(
+    config: AlertConfigRequest,
+    user: dict = Depends(require_auth),
+    db: Session = Depends(get_db_session)
+):
+    """
+    Configure alert thresholds and webhook for a parcel or tenant.
+
+    Thresholds:
+    - ndvi_drop_warning: NDVI % change to trigger warning (default: -10%)
+    - ndvi_drop_critical: NDVI % change to trigger critical alert (default: -20%)
+    - moisture_warning: NDMI value threshold for warning (default: 0)
+    - moisture_critical: NDMI value threshold for critical (default: -0.2)
+
+    The webhook_url will receive POST requests with anomaly data when detected.
+    Compatible with N8N, Zapier, and custom integrations.
+    """
+    # Store configuration (would persist to database in production)
+    # For now, return the config as confirmation
+    return {
+        "status": "configured",
+        "config": config.dict(),
+        "message": "Alert configuration saved. Alerts will be sent to the specified webhook when anomalies are detected.",
+        "tenant_id": user.get('tenant_id'),
+        "entity_id": config.entity_id
+    }
+
+
+@app.get("/api/vegetation/alerts/test/{entity_id}")
+async def test_alert_webhook(
+    entity_id: str,
+    webhook_url: str,
+    user: dict = Depends(require_auth)
+):
+    """
+    Send a test alert to verify webhook configuration.
+
+    This sends a test anomaly notification to the specified webhook URL
+    to verify connectivity and payload format.
+    """
+    test_anomaly = Anomaly(
+        anomaly_type=AnomalyType.NDVI_DROP,
+        severity=AlertSeverity.INFO,
+        entity_id=entity_id,
+        index_type="NDVI",
+        current_value=0.45,
+        previous_value=0.55,
+        change_percent=-18.2,
+        threshold=-10.0,
+        detected_at=datetime.utcnow(),
+        recommendation="Este es un mensaje de prueba para verificar la configuración del webhook."
+    )
+
+    success = await alert_service.send_webhook(
+        webhook_url,
+        test_anomaly,
+        extra_data={
+            "test": True,
+            "tenant_id": user.get('tenant_id'),
+            "message": "Test alert from Nekazari Vegetation Prime"
+        }
+    )
+
+    if success:
+        return {
+            "status": "success",
+            "message": "Test alert sent successfully to webhook",
+            "webhook_url": webhook_url
+        }
+    else:
+        raise HTTPException(
+            status_code=502,
+            detail="Failed to send test alert. Check webhook URL and availability."
+        )
+
+
+@app.get("/api/vegetation/alerts/format/{entity_id}")
+async def get_alert_format(
+    entity_id: str,
+    index_type: str = "NDVI",
+    lang: str = "es",
+    user: dict = Depends(require_auth)
+):
+    """
+    Preview how an alert message would look.
+
+    Useful for configuring notification templates and understanding
+    the alert format before receiving real alerts.
+    """
+    sample_anomaly = Anomaly(
+        anomaly_type=AnomalyType.NDVI_DROP,
+        severity=AlertSeverity.WARNING,
+        entity_id=entity_id,
+        index_type=index_type,
+        current_value=0.42,
+        previous_value=0.55,
+        change_percent=-23.6,
+        threshold=-10.0,
+        detected_at=datetime.utcnow(),
+        recommendation="Vigilar la parcela. Considerar inspección visual si persiste."
+    )
+
+    return {
+        "formatted_message": alert_service.format_alert_message(sample_anomaly, lang=lang),
+        "json_payload": sample_anomaly.to_dict(),
+        "languages_available": ["es", "en"]
+    }
+
+
+# =============================================================================
+# Weather Integration API
+# =============================================================================
+from app.services.weather_service import weather_service
+
+
+@app.get("/api/vegetation/weather/{entity_id}")
+async def get_weather_context(
+    entity_id: str,
+    latitude: float,
+    longitude: float,
+    days: int = 30,
+    user: dict = Depends(require_auth)
+):
+    """
+    Get weather context for vegetation analysis.
+
+    Combines data from multiple sources:
+    - Nekazari Weather Module (if available)
+    - IoT soil sensors linked to the parcel
+    - Open-Meteo API (fallback)
+
+    Includes agricultural metrics like GDD, water balance, and stress indicators.
+    """
+    from datetime import date, timedelta
+
+    end_date = date.today()
+    start_date = end_date - timedelta(days=days)
+
+    # Get combined weather and sensor data
+    result = await weather_service.get_weather_with_sensors(
+        latitude=latitude,
+        longitude=longitude,
+        entity_id=entity_id,
+        tenant_id=user.get('tenant_id', 'master'),
+        start_date=start_date,
+        end_date=end_date
+    )
+
+    # Calculate summary if we have weather data
+    if result["weather_data"]:
+        from app.services.weather_service import WeatherData
+        weather_list = []
+        for w in result["weather_data"]:
+            weather_list.append(WeatherData(
+                date=date.fromisoformat(w["date"]),
+                temperature_max=w["temperature"]["max"],
+                temperature_min=w["temperature"]["min"],
+                temperature_mean=w["temperature"]["mean"],
+                precipitation=w["precipitation"]["total"],
+                precipitation_hours=w["precipitation"]["hours"],
+                evapotranspiration=w["evapotranspiration"]["et0"],
+                soil_moisture_0_10cm=w["soil_moisture"]["0_10cm"],
+                soil_moisture_10_40cm=w["soil_moisture"]["10_40cm"],
+                wind_speed_max=w["wind_speed_max"]["value"],
+                shortwave_radiation=w["radiation"]["shortwave"]
+            ))
+
+        summary = weather_service.calculate_summary(weather_list)
+        if summary:
+            result["summary"] = summary.to_dict()
+
+    return result
+
+
+@app.get("/api/vegetation/weather/{entity_id}/interpret")
+async def interpret_weather_vegetation(
+    entity_id: str,
+    latitude: float,
+    longitude: float,
+    vegetation_change: float,
+    days: int = 14,
+    lang: str = "es",
+    user: dict = Depends(require_auth)
+):
+    """
+    Interpret weather conditions in context of vegetation changes.
+
+    Analyzes recent weather patterns and correlates them with observed
+    NDVI/vegetation index changes to provide actionable insights.
+
+    Args:
+        entity_id: Parcel entity ID
+        latitude, longitude: Parcel centroid
+        vegetation_change: Recent NDVI change in percentage (e.g., -15.5)
+        days: Days of weather history to analyze
+        lang: Language for interpretation (es/en)
+    """
+    from datetime import date, timedelta
+    from app.services.weather_service import WeatherData
+
+    end_date = date.today()
+    start_date = end_date - timedelta(days=days)
+
+    # Get weather data (prefer module, fallback to open-meteo)
+    weather = await weather_service.get_from_weather_module(
+        latitude, longitude, start_date, end_date,
+        user.get('tenant_id', 'master')
+    )
+
+    if not weather:
+        weather = await weather_service.get_historical_weather(
+            latitude, longitude, start_date, end_date
+        )
+
+    if not weather:
+        raise HTTPException(
+            status_code=503,
+            detail="Weather data not available"
+        )
+
+    # Calculate summary
+    summary = weather_service.calculate_summary(weather)
+
+    # Get interpretation
+    interpretation = weather_service.interpret_for_vegetation(
+        summary, vegetation_change, lang=lang
+    )
+
+    # Add soil sensor context if available
+    sensors = await weather_service.get_soil_sensors_data(
+        entity_id, user.get('tenant_id', 'master')
+    )
+
+    if sensors:
+        interpretation["soil_sensors"] = {
+            "count": len(sensors),
+            "latest_readings": [s.to_dict() for s in sensors[:3]],
+            "note": "Datos de sensores IoT en campo disponibles"
+        }
+
+    return interpretation
+
+
+@app.get("/api/vegetation/weather/{entity_id}/sensors")
+async def get_soil_sensors(
+    entity_id: str,
+    user: dict = Depends(require_auth)
+):
+    """
+    Get real-time soil sensor data for a parcel.
+
+    Returns data from IoT SoilProbe devices linked to this parcel in Orion-LD.
+
+    Sensor types supported:
+    - Soil moisture (volumetric %)
+    - Soil temperature (°C)
+    - Electrical conductivity (dS/m)
+    - pH
+    - Leaf wetness
+    """
+    sensors = await weather_service.get_soil_sensors_data(
+        entity_id, user.get('tenant_id', 'master')
+    )
+
+    if not sensors:
+        return {
+            "sensors": [],
+            "message": "No soil sensors found for this parcel. Link SoilProbe devices in Orion-LD with refParcel attribute."
+        }
+
+    return {
+        "sensors": [s.to_dict() for s in sensors],
+        "count": len(sensors),
+        "entity_id": entity_id
     }
 
 

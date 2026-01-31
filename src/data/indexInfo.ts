@@ -62,19 +62,37 @@ export const INDEX_INFO: Record<string, IndexInfo> = {
         id: 'NDWI',
         name: 'NDWI',
         fullName: 'Índice de Agua de Diferencia Normalizada',
-        description: 'Detecta el contenido de agua en la vegetación y superficies. Útil para monitoreo de riego y estrés hídrico.',
-        formula: '(GREEN - NIR) / (GREEN + NIR)',
+        description: 'Detecta el contenido de agua en la vegetación usando bandas NIR y SWIR. Esencial para gestión de riego.',
+        formula: '(NIR - SWIR1) / (NIR + SWIR1)',
         range: [-1, 1],
         interpretation: {
             veryLow: { range: '< -0.3', meaning: 'Vegetación con déficit hídrico severo' },
             low: { range: '-0.3 - 0', meaning: 'Vegetación con estrés hídrico' },
             medium: { range: '0 - 0.2', meaning: 'Contenido de agua normal' },
             high: { range: '0.2 - 0.4', meaning: 'Alto contenido de agua' },
-            veryHigh: { range: '> 0.4', meaning: 'Cuerpos de agua o zonas inundadas' }
+            veryHigh: { range: '> 0.4', meaning: 'Vegetación muy hidratada o agua' }
         },
-        bestFor: ['Detección de estrés hídrico', 'Gestión de riego', 'Monitoreo de sequía', 'Detección de inundaciones'],
-        limitations: 'Puede confundir sombras con agua. Menos sensible en vegetación escasa.',
+        bestFor: ['Detección de estrés hídrico', 'Gestión de riego', 'Monitoreo de sequía', 'Planificación de riego'],
+        limitations: 'Requiere banda SWIR (20m resolución). Sensible a suelo húmedo.',
         color: '#3b82f6'
+    },
+    NDMI: {
+        id: 'NDMI',
+        name: 'NDMI',
+        fullName: 'Índice de Humedad de Diferencia Normalizada',
+        description: 'Mide el contenido de humedad en la vegetación. Más sensible al estrés hídrico que NDVI. Excelente para detectar problemas de riego.',
+        formula: '(NIR - SWIR1) / (NIR + SWIR1)',
+        range: [-1, 1],
+        interpretation: {
+            veryLow: { range: '< -0.2', meaning: 'Estrés hídrico severo - riego urgente' },
+            low: { range: '-0.2 - 0', meaning: 'Estrés hídrico moderado' },
+            medium: { range: '0 - 0.2', meaning: 'Humedad adecuada' },
+            high: { range: '0.2 - 0.4', meaning: 'Buena disponibilidad de agua' },
+            veryHigh: { range: '> 0.4', meaning: 'Alto contenido de humedad' }
+        },
+        bestFor: ['Detección temprana de sequía', 'Optimización de riego', 'Evaluación de riesgo de incendio', 'Cultivos de regadío'],
+        limitations: 'Usa banda B8A (20m). Similar a NDWI pero optimizado para vegetación densa.',
+        color: '#0ea5e9'
     },
     SAVI: {
         id: 'SAVI',
@@ -129,6 +147,60 @@ export const INDEX_INFO: Record<string, IndexInfo> = {
         bestFor: ['Estimación de nitrógeno', 'Aplicación variable de fertilizantes', 'Cultivos de hoja'],
         limitations: 'Menos común en literatura. Puede ser más ruidoso que NDVI.',
         color: '#84cc16'
+    },
+    NDRE: {
+        id: 'NDRE',
+        name: 'NDRE',
+        fullName: 'Índice de Diferencia Normalizada Red Edge',
+        description: 'Usa la banda Red Edge para mejor penetración en dosel. Excelente para detectar estrés antes que NDVI.',
+        formula: '(NIR - RedEdge) / (NIR + RedEdge)',
+        range: [-1, 1],
+        interpretation: {
+            veryLow: { range: '< 0', meaning: 'Sin vegetación o estrés severo' },
+            low: { range: '0 - 0.2', meaning: 'Vegetación escasa o estresada' },
+            medium: { range: '0.2 - 0.3', meaning: 'Vegetación en desarrollo' },
+            high: { range: '0.3 - 0.5', meaning: 'Vegetación saludable' },
+            veryHigh: { range: '> 0.5', meaning: 'Vegetación muy vigorosa' }
+        },
+        bestFor: ['Detección temprana de estrés', 'Cultivos densos (maíz, trigo)', 'Agricultura de precisión', 'Monitoreo de nitrógeno'],
+        limitations: 'Requiere banda Red Edge (B8A, 20m). Valores más bajos que NDVI.',
+        color: '#dc2626'
+    },
+    LAI: {
+        id: 'LAI',
+        name: 'LAI',
+        fullName: 'Índice de Área Foliar',
+        description: 'Estima el área total de hojas por unidad de superficie. Fundamental para modelos de rendimiento y captura de carbono.',
+        formula: '0.57 × exp(2.33 × NDVI)',
+        range: [0, 8],
+        interpretation: {
+            veryLow: { range: '< 1', meaning: 'Suelo expuesto o vegetación emergente' },
+            low: { range: '1 - 2', meaning: 'Vegetación joven o escasa' },
+            medium: { range: '2 - 4', meaning: 'Cobertura moderada (cultivos en crecimiento)' },
+            high: { range: '4 - 6', meaning: 'Vegetación densa (cultivo maduro)' },
+            veryHigh: { range: '> 6', meaning: 'Vegetación muy densa (bosque)' }
+        },
+        bestFor: ['Estimación de rendimiento', 'Captura de carbono', 'Modelos agronómicos', 'Evapotranspiración'],
+        limitations: 'Aproximación empírica. Para alta precisión se requiere calibración local.',
+        color: '#059669'
+    },
+    CIRE: {
+        id: 'CIRE',
+        name: 'CIre',
+        fullName: 'Índice de Clorofila Red Edge',
+        description: 'Altamente sensible al contenido de clorofila. Ideal para detectar deficiencias de nitrógeno y planificar fertilización.',
+        formula: '(NIR / RedEdge1) - 1',
+        range: [0, 10],
+        interpretation: {
+            veryLow: { range: '< 1', meaning: 'Deficiencia severa de clorofila/nitrógeno' },
+            low: { range: '1 - 2', meaning: 'Bajo contenido de clorofila' },
+            medium: { range: '2 - 3', meaning: 'Contenido normal de clorofila' },
+            high: { range: '3 - 5', meaning: 'Alto contenido de clorofila' },
+            veryHigh: { range: '> 5', meaning: 'Muy alta concentración de clorofila' }
+        },
+        bestFor: ['Detección de deficiencia de nitrógeno', 'Fertilización variable', 'Agricultura de precisión', 'Cultivos de alto valor'],
+        limitations: 'Requiere banda RedEdge (B05, 20m). Valores no normalizados.',
+        color: '#7c3aed'
     }
 };
 
