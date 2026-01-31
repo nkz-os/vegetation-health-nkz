@@ -9,6 +9,7 @@ from .scenes import VegetationScene
 from .indices import VegetationIndexCache, VegetationCustomFormula
 from .limits import VegetationPlanLimits, VegetationUsageStats, VegetationUsageLog
 from .global_scene_cache import GlobalSceneCache
+from .subscriptions import VegetationSubscription
 
 __all__ = [
     'BaseModel',
@@ -22,5 +23,6 @@ __all__ = [
     'VegetationUsageStats',
     'VegetationUsageLog',
     'GlobalSceneCache',
+    'VegetationSubscription',
 ]
 

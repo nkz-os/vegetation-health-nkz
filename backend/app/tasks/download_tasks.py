@@ -119,14 +119,8 @@ def download_sentinel2_scene(self, job_id: str, tenant_id: str, parameters: Dict
         
         self.update_state(state='PROGRESS', meta={'progress': 30, 'message': f'Found scene {scene_id}'})
         
-        # Determine which bands to download based on default index type
-        required_bands = {
-            'NDVI': ['B04', 'B08'],
-            'EVI': ['B02', 'B04', 'B08'],
-            'SAVI': ['B04', 'B08'],
-            'GNDVI': ['B03', 'B08'],
-            'NDRE': ['B8A', 'B08'],
-        }.get(config.default_index_type, ['B04', 'B08'])
+        # Determine which bands to download (Critical Fix: Always download full agricultural set)
+        required_bands = ['B02', 'B03', 'B04', 'B08', 'B11', 'B12']
         
         # =============================================================================
         # HYBRID CACHE LOGIC: Check global cache first, then download if needed
@@ -311,6 +305,44 @@ def download_sentinel2_scene(self, job_id: str, tenant_id: str, parameters: Dict
         # Update job status in usage stats
         from app.services.usage_tracker import UsageTracker
         UsageTracker.update_job_status(db, tenant_id, str(job.id), 'completed')
+
+        # Check for chained calculation trigger
+        calculate_indices = parameters.get('calculate_indices')
+        if calculate_indices and isinstance(calculate_indices, list):
+            try:
+                from app.tasks.processing_tasks import calculate_vegetation_index
+                import uuid
+                
+                # Trigger calculation for each index
+                for index_type in calculate_indices:
+                    calc_job_id = str(uuid.uuid4())
+                    calc_params = {
+                        'scene_id': scene_id,
+                        'index_type': index_type,
+                        'entity_id': parameters.get('entity_id'),
+                        'bbox': parameters.get('bbox')
+                    }
+                    
+                    # Create job record
+                    calc_job = VegetationJob(
+                        id=uuid.UUID(calc_job_id),
+                        tenant_id=tenant_id,
+                        entity_id=parameters.get('entity_id'),
+                        job_type='calculation',
+                        status='pending',
+                        parameters=calc_params
+                    )
+                    db.add(calc_job)
+                    db.commit()
+                    
+                    logger.info(f"Auto-triggering calculation for {index_type} (Job {calc_job_id})")
+                    calculate_vegetation_index.delay(
+                        job_id=calc_job_id,
+                        tenant_id=tenant_id,
+                        parameters=calc_params
+                    )
+            except Exception as e:
+                logger.error(f"Failed to trigger automated calculation: {e}")
         
         logger.info(f"Job {job_id} completed successfully - Scene {scene_id}")
         

@@ -17,16 +17,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db_with_tenant, get_db_session, init_db
 from app.middleware.auth import require_auth, get_tenant_id
 
-# Helper function for database dependency with tenant context
-def get_db_for_tenant(current_user: dict = Depends(require_auth)):
-    """Get database session with tenant context.
-    
-    This is a FastAPI dependency that depends on current_user.
-    Returns a generator that FastAPI will handle automatically.
-    """
-    # Call get_db_with_tenant and yield from it
-    for db in get_db_with_tenant(current_user['tenant_id']):
-        yield db
+# Database dependency moved to app.api.dependencies
 from app.middleware.service_auth import require_service_auth
 from app.models import (
     VegetationConfig, VegetationJob, VegetationScene,
@@ -37,6 +28,12 @@ from app.tasks import download_sentinel2_scene, calculate_vegetation_index
 from app.services.storage import create_storage_service
 from app.services.fiware_integration import FIWAREMapper, FIWAREClient
 from app.services.limits import LimitsValidator
+
+# Import Routers
+from app.api.tiles import router as tiles_router
+from app.api.crops import router as crops_router
+from app.api.subscriptions import router as subscriptions_router
+
 from app.services.usage_tracker import UsageTracker
 from app.middleware.limits import validate_limits_dependency
 from decimal import Decimal
@@ -68,6 +65,11 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# Initialize DB on startup
+@app.on_event("startup")
+def on_startup():
+    init_db()
+
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
@@ -80,6 +82,7 @@ app.add_middleware(
 # Include tile router
 app.include_router(tiles_router)
 app.include_router(crops_router, prefix="/api/vegetation", tags=["crop-intelligence"])
+app.include_router(subscriptions_router, prefix="/api/vegetation", tags=["subscriptions"])
 
 
 # =============================================================================
@@ -283,7 +286,7 @@ async def create_roi(
 async def create_job(
     request: JobCreateRequest,
     current_user: dict = Depends(require_auth),
-    db: Session = Depends(get_db_for_tenant)
+    db: Session = Depends(get_db_with_tenant)
 ):
     """Create a new vegetation processing job.
     
@@ -385,7 +388,7 @@ async def create_job(
 async def get_job(
     job_id: UUID,
     current_user: dict = Depends(require_auth),
-    db: Session = Depends(get_db_for_tenant)
+    db: Session = Depends(get_db_with_tenant)
 ):
     """Get job status and details."""
     job = db.query(VegetationJob).filter(
@@ -426,7 +429,7 @@ class JobDetailsResponse(BaseModel):
 async def get_job_details(
     job_id: UUID,
     current_user: dict = Depends(require_auth),
-    db: Session = Depends(get_db_for_tenant)
+    db: Session = Depends(get_db_with_tenant)
 ):
     """Get detailed job information including statistics and timeseries."""
     from app.models import VegetationIndexCache, VegetationScene
@@ -528,7 +531,7 @@ async def get_job_histogram(
     job_id: UUID,
     bins: int = 50,
     current_user: dict = Depends(require_auth),
-    db: Session = Depends(get_db_for_tenant)
+    db: Session = Depends(get_db_with_tenant)
 ):
     """Get histogram distribution for a completed job.
     
@@ -664,7 +667,7 @@ async def list_jobs(
     limit: int = 50,
     offset: int = 0,
     current_user: dict = Depends(require_auth),
-    db: Session = Depends(get_db_for_tenant)
+    db: Session = Depends(get_db_with_tenant)
 ):
     """List jobs for current tenant."""
     query = db.query(VegetationJob).filter(
@@ -699,7 +702,7 @@ async def get_indices(
     index_type: Optional[str] = None,
     format: str = "geojson",  # geojson or xyz
     current_user: dict = Depends(require_auth),
-    db: Session = Depends(get_db_for_tenant)
+    db: Session = Depends(get_db_with_tenant)
 ):
     """Get vegetation indices (as tiles or GeoJSON)."""
     query = db.query(VegetationIndexCache).filter(
@@ -755,7 +758,7 @@ async def list_scenes(
     end_date: Optional[date] = None,
     limit: int = 50,
     current_user: dict = Depends(require_auth),
-    db: Session = Depends(get_db_for_tenant)
+    db: Session = Depends(get_db_with_tenant)
 ):
     """List available scenes for current tenant.
     
@@ -805,7 +808,7 @@ async def list_scenes(
 async def get_timeseries(
     request: TimeseriesRequest = Depends(),
     current_user: dict = Depends(require_auth),
-    db: Session = Depends(get_db_for_tenant)
+    db: Session = Depends(get_db_with_tenant)
 ):
     """Get time series data for vegetation indices."""
     query = db.query(VegetationIndexCache).filter(
@@ -845,7 +848,7 @@ async def get_timeseries(
 @app.get("/api/vegetation/config/credentials-status")
 async def get_credentials_status(
     current_user: dict = Depends(require_auth),
-    db: Session = Depends(get_db_for_tenant)
+    db: Session = Depends(get_db_with_tenant)
 ):
     """Check Copernicus credentials availability status.
     
@@ -915,7 +918,7 @@ async def get_credentials_status(
 async def update_config(
     request: ConfigUpdateRequest,
     current_user: dict = Depends(require_auth),
-    db: Session = Depends(get_db_for_tenant)
+    db: Session = Depends(get_db_with_tenant)
 ):
     """Update tenant configuration."""
     config = db.query(VegetationConfig).filter(
@@ -954,7 +957,7 @@ async def update_config(
 @app.get("/api/vegetation/config")
 async def get_config(
     current_user: dict = Depends(require_auth),
-    db: Session = Depends(get_db_for_tenant)
+    db: Session = Depends(get_db_with_tenant)
 ):
     """Get tenant configuration."""
     config = db.query(VegetationConfig).filter(
@@ -1039,7 +1042,7 @@ async def sync_limits(
 @app.get("/api/vegetation/usage/current", response_model=UsageResponse)
 async def get_current_usage(
     current_user: dict = Depends(require_auth),
-    db: Session = Depends(get_db_for_tenant)
+    db: Session = Depends(get_db_with_tenant)
 ):
     """Get current usage statistics for the tenant.
     
@@ -1084,7 +1087,7 @@ async def get_current_usage(
 async def calculate_index(
     request: IndexCalculationRequest,
     current_user: dict = Depends(require_auth),
-    db: Session = Depends(get_db_for_tenant)
+    db: Session = Depends(get_db_with_tenant)
 ):
     """Calculate vegetation index for a scene or temporal composite.
     
@@ -1230,7 +1233,7 @@ async def get_scene_stats(
     index_type: str = "NDVI",
     months: int = 12,
     current_user: dict = Depends(require_auth),
-    db: Session = Depends(get_db_for_tenant)
+    db: Session = Depends(get_db_with_tenant)
 ):
     """Get historical statistics for timeline chart.
     
@@ -1306,7 +1309,7 @@ async def compare_years(
     entity_id: str,
     index_type: str = "NDVI",
     current_user: dict = Depends(require_auth),
-    db: Session = Depends(get_db_for_tenant)
+    db: Session = Depends(get_db_with_tenant)
 ):
     """Compare current year vs previous year.
     
@@ -1619,7 +1622,7 @@ class CarbonConfigResponse(BaseModel):
 async def get_carbon_config(
     entity_id: str,
     current_user: dict = Depends(require_auth),
-    db: Session = Depends(get_db_for_tenant)
+    db: Session = Depends(get_db_with_tenant)
 ):
     """Get carbon configuration for an entity.
     
@@ -1642,7 +1645,7 @@ async def save_carbon_config(
     entity_id: str,
     config: CarbonConfigRequest,
     current_user: dict = Depends(require_auth),
-    db: Session = Depends(get_db_for_tenant)
+    db: Session = Depends(get_db_with_tenant)
 ):
     """Save carbon configuration for an entity.
     
@@ -1730,7 +1733,7 @@ class BatchZonalStatsResponse(BaseModel):
 async def batch_zonal_stats(
     request: BatchZonalStatsRequest,
     current_user: dict = Depends(require_auth),
-    db: Session = Depends(get_db_for_tenant)
+    db: Session = Depends(get_db_with_tenant)
 ):
     """Calculate zonal statistics for multiple geometries against a single raster.
     

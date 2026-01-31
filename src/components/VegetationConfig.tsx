@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useVegetationContext } from '../services/vegetationContext';
 import { useVegetationConfig } from '../hooks/useVegetationConfig';
 import { ModeSelector } from './widgets/ModeSelector';
@@ -24,8 +24,20 @@ export const VegetationConfig: React.FC<VegetationConfigProps> = ({ mode = 'pane
   // Hook returns { config, loading, error, saveConfig, ... }
   // NOT updateConfig
   const { config, saveConfig } = useVegetationConfig();
+  const api = useVegetationApi();
   const [showCarbonConfig, setShowCarbonConfig] = useState(false);
   const [formula, setFormula] = useState('');
+  const [recentJobs, setRecentJobs] = useState<any[]>([]);
+
+  useEffect(() => {
+    api.listJobs('completed', 5, 0)
+      .then(response => {
+        if (response && response.jobs) {
+          setRecentJobs(response.jobs);
+        }
+      })
+      .catch(console.error);
+  }, []);
 
   const handleModeChange = (indexType: string) => {
     // Ensure casting if strict types are enforced, though string usually works due to union
@@ -74,7 +86,12 @@ export const VegetationConfig: React.FC<VegetationConfigProps> = ({ mode = 'pane
 
         <section>
           <div className="flex gap-2">
-            <CalculationButton formula={selectedIndex === 'CUSTOM' ? formula : undefined} />
+            <CalculationButton
+              formula={selectedIndex === 'CUSTOM' ? formula : undefined}
+              startDate={dateRange.startDate?.toISOString().split('T')[0]}
+              endDate={dateRange.endDate?.toISOString().split('T')[0]}
+              entityId={selectedEntityId || undefined}
+            />
             <button
               onClick={async () => {
                 // Check if geometry is available

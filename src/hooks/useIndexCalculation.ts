@@ -74,30 +74,42 @@ export function useIndexCalculation() {
         // POLL FOR COMPLETION
         const jobId = result.job_id;
         let attempts = 0;
-        const maxAttempts = 30; // 30s timeout
+        const maxAttempts = 60; // 60s timeout (increased for complex calculations)
+        let lastStatus = 'pending';
 
         while (attempts < maxAttempts) {
-           await new Promise(r => setTimeout(r, 1000));
-           try {
-             const jobDetails = await api.getJobDetails(jobId);
-             const status = jobDetails.job.status;
-             
-             if (status === 'completed') {
-                 // Success!
-                 break;
-             } else if (status === 'failed') {
-                 throw new Error(jobDetails.job.error_message || 'Job failed on backend');
-             }
-             // If pending/processing, continue
-           } catch (pollError: any) {
-             console.warn('Poll error:', pollError);
-             // Verify if it's 404 (maybe job not ready yet) or real error
-           }
-           attempts++;
+          await new Promise(r => setTimeout(r, 1000));
+          try {
+            const jobDetails = await api.getJobDetails(jobId);
+
+            if (!jobDetails || !jobDetails.job) {
+              console.warn('Poll: job details not available yet, retrying...');
+              attempts++;
+              continue;
+            }
+
+            lastStatus = jobDetails.job.status;
+
+            if (lastStatus === 'completed') {
+              // Success!
+              break;
+            } else if (lastStatus === 'failed') {
+              const errorMsg = jobDetails.job.error_message || 'El cálculo falló en el servidor';
+              throw new Error(errorMsg);
+            }
+            // If pending/processing, continue
+          } catch (pollError: any) {
+            // If it's a thrown error from failed status, rethrow it
+            if (pollError.message && !pollError.message.includes('Poll')) {
+              throw pollError;
+            }
+            console.warn('Poll error:', pollError.message);
+          }
+          attempts++;
         }
 
-        if (attempts >= maxAttempts) {
-            throw new Error('Calculation timed out (Backend slow)');
+        if (attempts >= maxAttempts && lastStatus !== 'completed') {
+          throw new Error(`El cálculo tardó demasiado (último estado: ${lastStatus}). Revisa los logs del servidor.`);
         }
 
         setState({

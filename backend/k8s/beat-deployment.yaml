@@ -1,0 +1,71 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vegetation-prime-beat
+  namespace: nekazari
+  labels:
+    app: vegetation-prime
+    component: beat
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vegetation-prime
+      component: beat
+  template:
+    metadata:
+      labels:
+        app: vegetation-prime
+        component: beat
+    spec:
+      containers:
+        - name: beat
+          image: vegetation-prime-api:v1.47
+          imagePullPolicy: IfNotPresent
+          command: ["celery", "-A", "app.celery_app", "beat", "--loglevel=info"]
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: postgresql-secret
+                  key: postgres-url
+            - name: PLATFORM_DATABASE_NAME
+              value: "nekazari"
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-secret
+                  key: password
+            - name: CELERY_BROKER_URL
+              value: "redis://:$(REDIS_PASSWORD)@redis-service:6379/0"
+            - name: CELERY_RESULT_BACKEND
+              value: "redis://:$(REDIS_PASSWORD)@redis-service:6379/0"
+            - name: REDIS_CACHE_URL
+              value: "redis://:$(REDIS_PASSWORD)@redis-service:6379/1"
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: vegetation-prime-secrets
+                  key: aws-access-key-id
+                  optional: true
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: vegetation-prime-secrets
+                  key: aws-secret-access-key
+                  optional: true
+            - name: S3_ENDPOINT_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: vegetation-prime-config
+                  key: s3-endpoint-url
+                  optional: true
+            - name: S3_BUCKET
+              value: "vegetation-prime"
+          # Mount temporary storage for beat schedule file
+          volumeMounts:
+            - name: temp-storage
+              mountPath: /app/storage
+      volumes:
+        - name: temp-storage
+          emptyDir: {}

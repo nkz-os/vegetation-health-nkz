@@ -238,13 +238,45 @@ export class VegetationApiClient {
     timeseries?: any[];
     scene_info?: any;
   }> {
-    const response = await this.client.get(`/jobs/${jobId}`);
+    // Use the /details endpoint which returns { job: {...}, index_stats, ... }
+    const response = await this.client.get(`/jobs/${jobId}/details`);
     return response as unknown as {
       job: VegetationJob;
       index_stats?: { mean: number; min: number; max: number; std_dev: number; pixel_count: number; };
       timeseries?: any[];
       scene_info?: any;
     };
+  }
+
+  /**
+   * Download job result in specified format
+   */
+  async downloadResult(jobId: string, format: 'geotiff' | 'png' | 'csv'): Promise<Blob> {
+    const token = this.getToken();
+    const tenantId = this.getTenantId();
+
+    const headers: Record<string, string> = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    if (tenantId) headers['X-Tenant-ID'] = tenantId;
+
+    const response = await fetch(`/api/vegetation/jobs/${jobId}/download?format=${format}`, {
+      method: 'GET',
+      headers,
+    });
+
+    if (!response.ok) {
+      throw new Error(`Download failed: ${response.status}`);
+    }
+
+    return response.blob();
+  }
+
+  /**
+   * Delete a job from history
+   */
+  async deleteJob(jobId: string): Promise<{ message: string }> {
+    const response = await this.client.delete(`/jobs/${jobId}`);
+    return response as unknown as { message: string };
   }
 
   // ==========================================================================
@@ -369,6 +401,77 @@ export class VegetationApiClient {
       attributes
     });
     return response as any;
+  }
+
+  /**
+   * List all AgriParcel entities for the current tenant
+   * Uses the main Nekazari API (NGSI-LD broker via gateway)
+   */
+  async listTenantParcels(): Promise<any[]> {
+    try {
+      const token = this.getToken();
+      const tenantId = this.getTenantId();
+
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      };
+
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+      if (tenantId) {
+        headers['X-Tenant-ID'] = tenantId;
+      }
+
+      // Call the main Nekazari API to get AgriParcel entities
+      const response = await fetch('/api/ngsi-ld/v1/entities?type=AgriParcel&limit=100', {
+        method: 'GET',
+        headers,
+      });
+
+      if (!response.ok) {
+        console.error('[VegetationApi] Failed to fetch parcels:', response.status);
+        return [];
+      }
+
+      const data = await response.json();
+      return Array.isArray(data) ? data : [];
+    } catch (error) {
+      console.error('[VegetationApi] Error fetching tenant parcels:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Create a new monitoring subscription
+   */
+  async createSubscription(data: {
+    entity_id: string;
+    geometry: any;
+    start_date: string;
+    index_types: string[];
+    frequency: 'weekly' | 'daily' | 'biweekly';
+    is_active: boolean;
+  }): Promise<any> {
+    const response = await this.client.post('/subscriptions', data);
+    return response;
+  }
+
+  /**
+   * List subscriptions
+   */
+  async listSubscriptions(): Promise<any[]> {
+    const response = await this.client.get('/subscriptions');
+    return response as unknown as any[];
+  }
+
+  /**
+   * Get subscription for an entity (helper)
+   */
+  async getSubscriptionForEntity(entityId: string): Promise<any | null> {
+    const subs = await this.listSubscriptions();
+    return subs.find((s: any) => s.entity_id === entityId) || null;
   }
 }
 

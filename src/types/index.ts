@@ -23,6 +23,22 @@ export interface VegetationJob {
   error_message?: string;
   entity_id?: string;
   entity_type?: string;
+  // Additional fields returned by backend
+  entity_name?: string;
+  scene_id?: string;
+  index_type?: string;
+  result_url?: string;
+  result_histogram?: {
+    bins: number[];
+    counts: number[];
+  };
+  result_stats?: {
+    mean?: number;
+    min?: number;
+    max?: number;
+    std_dev?: number;
+    pixel_count?: number;
+  };
 }
 
 export interface VegetationScene {

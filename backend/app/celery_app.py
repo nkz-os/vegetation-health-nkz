@@ -30,12 +30,11 @@ celery_app.conf.update(
 
 # Periodic tasks (optional - for scheduled processing)
 celery_app.conf.beat_schedule = {
-    'process-pending-jobs': {
-        'task': 'app.tasks.process_pending_jobs',
-        'schedule': crontab(minute='*/15'),  # Every 15 minutes
+    'vegetation.process_subscriptions': {
+        'task': 'vegetation.process_subscriptions',
+        'schedule': crontab(hour=2, minute=0), # Daily at 2 AM
     },
 }
 
 if __name__ == '__main__':
     celery_app.start()
-

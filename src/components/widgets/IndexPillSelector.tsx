@@ -3,9 +3,10 @@
  * Groups indices by use case for better UX.
  */
 
-import React from 'react';
-import { Leaf, Droplet, Sun } from 'lucide-react';
+import React, { useState } from 'react';
+import { Leaf, Droplet, Sun, Info } from 'lucide-react';
 import type { VegetationIndexType } from '../../types';
+import { IndexInfoModal } from './IndexInfoModal';
 
 interface IndexGroup {
   category: string;
@@ -60,6 +61,8 @@ export const IndexPillSelector: React.FC<IndexPillSelectorProps> = ({
   showCustom = false,
   className = '',
 }) => {
+  const [infoModalIndex, setInfoModalIndex] = useState<string | null>(null);
+
   return (
     <div className={`space-y-4 ${className}`}>
       {INDEX_GROUPS.map((group) => (
@@ -71,21 +74,31 @@ export const IndexPillSelector: React.FC<IndexPillSelectorProps> = ({
           <p className="text-xs text-gray-500 mb-2">{group.description}</p>
           <div className="flex flex-wrap gap-2">
             {group.indices.map((index) => (
-              <button
-                key={index.value}
-                onClick={() => onIndexChange(index.value)}
-                className={`
-                  px-3 py-1.5 rounded-full text-sm font-medium transition-all
-                  ${
-                    selectedIndex === index.value
+              <div key={index.value} className="flex items-center gap-1">
+                <button
+                  onClick={() => onIndexChange(index.value)}
+                  className={`
+                    px-3 py-1.5 rounded-full text-sm font-medium transition-all
+                    ${selectedIndex === index.value
                       ? 'bg-green-600 text-white shadow-md'
                       : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                  }
-                `}
-                title={index.label}
-              >
-                {index.shortLabel}
-              </button>
+                    }
+                  `}
+                  title={index.label}
+                >
+                  {index.shortLabel}
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setInfoModalIndex(index.value);
+                  }}
+                  className="p-1 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors"
+                  title="Ver información del índice"
+                >
+                  <Info className="w-3.5 h-3.5" />
+                </button>
+              </div>
             ))}
           </div>
         </div>
@@ -100,10 +113,9 @@ export const IndexPillSelector: React.FC<IndexPillSelectorProps> = ({
             onClick={() => onIndexChange('CUSTOM')}
             className={`
               px-3 py-1.5 rounded-full text-sm font-medium transition-all
-              ${
-                selectedIndex === 'CUSTOM'
-                  ? 'bg-purple-600 text-white shadow-md'
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+              ${selectedIndex === 'CUSTOM'
+                ? 'bg-purple-600 text-white shadow-md'
+                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
               }
             `}
           >
@@ -111,6 +123,13 @@ export const IndexPillSelector: React.FC<IndexPillSelectorProps> = ({
           </button>
         </div>
       )}
+
+      {/* Info Modal */}
+      <IndexInfoModal
+        indexType={infoModalIndex || ''}
+        isOpen={!!infoModalIndex}
+        onClose={() => setInfoModalIndex(null)}
+      />
     </div>
   );
 };

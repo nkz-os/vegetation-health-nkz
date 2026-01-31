@@ -3,19 +3,31 @@ import { Card } from '@nekazari/ui-kit';
 import { VegetationProvider, useVegetationContext } from './services/vegetationContext';
 import { VegetationConfig } from './components/VegetationConfig';
 import { VegetationAnalytics } from './components/VegetationAnalytics';
-import { Calendar, Layers, Leaf, ChevronRight } from 'lucide-react';
+import { CalculationsPage } from './components/pages/CalculationsPage';
+import { useVegetationApi } from './services/api';
+import { Calendar, Layers, Leaf, ChevronRight, BarChart3 } from 'lucide-react';
 
 const DashboardContent: React.FC = () => {
   const {
     selectedEntityId,
     setSelectedEntityId,
-
-
   } = useVegetationContext();
-  const parcels: any[] = [];
-  const loadingContext = false;
 
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'analytics' | 'config'>('dashboard');
+  const api = useVegetationApi();
+  const [parcels, setParcels] = useState<any[]>([]);
+  const [loadingContext, setLoadingContext] = useState(true);
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'analytics' | 'config' | 'calculations'>('dashboard');
+
+  // Fetch parcels on mount
+  useEffect(() => {
+    setLoadingContext(true);
+    api.listTenantParcels()
+      .then(data => {
+        setParcels(data);
+      })
+      .catch(console.error)
+      .finally(() => setLoadingContext(false));
+  }, []);
 
   // If a parcel is selected, auto-switch to analytics (unless user manually navigates back)
   useEffect(() => {
@@ -56,37 +68,44 @@ const DashboardContent: React.FC = () => {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {Array.isArray(parcels) && parcels.map((parcel: any) => (
-                      <tr
-                        key={parcel.id}
-                        className="hover:bg-slate-50 transition-colors cursor-pointer"
-                        onClick={() => setSelectedEntityId(parcel.id)}
-                      >
-                        <td className="p-4 font-medium text-slate-900 flex items-center gap-3">
-                          <div className="p-2 bg-green-100 text-green-700 rounded-lg">
-                            <Leaf className="w-4 h-4" />
-                          </div>
-                          {parcel.name || parcel.id}
-                        </td>
-                        <td className="p-4">
-                          {parcel.cropSpecies?.value || "Sin asignar"}
-                        </td>
-                        <td className="p-4">
-                          {parcel.area ? (parcel.area / 10000).toFixed(2) : '-'} ha
-                        </td>
-                        <td className="p-4 text-right">
-                          <button
-                            className="text-white bg-green-600 hover:bg-green-700 px-3 py-1.5 rounded-md text-xs font-medium inline-flex items-center gap-1 transition-colors"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setSelectedEntityId(parcel.id);
-                            }}
-                          >
-                            Analizar <ChevronRight className="w-3 h-3" />
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
+                    {Array.isArray(parcels) && parcels.map((parcel: any) => {
+                      // NGSI-LD format: properties are {value: ...} or plain values
+                      const parcelName = parcel.name?.value || parcel.name || parcel.id;
+                      const cropSpecies = parcel.cropSpecies?.value || parcel.category?.value || 'Sin asignar';
+                      const area = parcel.area?.value || parcel.area;
+
+                      return (
+                        <tr
+                          key={parcel.id}
+                          className="hover:bg-slate-50 transition-colors cursor-pointer"
+                          onClick={() => setSelectedEntityId(parcel.id)}
+                        >
+                          <td className="p-4 font-medium text-slate-900 flex items-center gap-3">
+                            <div className="p-2 bg-green-100 text-green-700 rounded-lg">
+                              <Leaf className="w-4 h-4" />
+                            </div>
+                            {parcelName}
+                          </td>
+                          <td className="p-4">
+                            {cropSpecies}
+                          </td>
+                          <td className="p-4">
+                            {area ? (Number(area) / 10000).toFixed(2) : '-'} ha
+                          </td>
+                          <td className="p-4 text-right">
+                            <button
+                              className="text-white bg-green-600 hover:bg-green-700 px-3 py-1.5 rounded-md text-xs font-medium inline-flex items-center gap-1 transition-colors"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedEntityId(parcel.id);
+                              }}
+                            >
+                              Analizar <ChevronRight className="w-3 h-3" />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
                     {parcels.length === 0 && (
                       <tr>
                         <td colSpan={4} className="p-8 text-center text-slate-400">
@@ -126,8 +145,8 @@ const DashboardContent: React.FC = () => {
           <button
             onClick={() => setActiveTab('analytics')}
             className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all ${activeTab === 'analytics'
-                ? 'bg-white text-green-700 shadow-sm'
-                : 'text-slate-600 hover:text-slate-900'
+              ? 'bg-white text-green-700 shadow-sm'
+              : 'text-slate-600 hover:text-slate-900'
               }`}
           >
             <div className="flex items-center gap-2">
@@ -138,13 +157,25 @@ const DashboardContent: React.FC = () => {
           <button
             onClick={() => setActiveTab('config')}
             className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all ${activeTab === 'config'
-                ? 'bg-white text-green-700 shadow-sm'
-                : 'text-slate-600 hover:text-slate-900'
+              ? 'bg-white text-green-700 shadow-sm'
+              : 'text-slate-600 hover:text-slate-900'
               }`}
           >
             <div className="flex items-center gap-2">
               <Calendar className="w-4 h-4" />
               <span>Configuración</span>
+            </div>
+          </button>
+          <button
+            onClick={() => setActiveTab('calculations')}
+            className={`px-3 py-1.5 text-sm font-medium rounded-md transition-all ${activeTab === 'calculations'
+              ? 'bg-white text-green-700 shadow-sm'
+              : 'text-slate-600 hover:text-slate-900'
+              }`}
+          >
+            <div className="flex items-center gap-2">
+              <BarChart3 className="w-4 h-4" />
+              <span>Cálculos</span>
             </div>
           </button>
         </div>
@@ -154,6 +185,8 @@ const DashboardContent: React.FC = () => {
       <div className="flex-1 overflow-auto bg-slate-50">
         {activeTab === 'analytics' ? (
           <VegetationAnalytics />
+        ) : activeTab === 'calculations' ? (
+          <CalculationsPage />
         ) : (
           <VegetationConfig mode="page" />
         )}
