@@ -3,6 +3,7 @@ import { VegetationJob, VegetationScene, VegetationConfig, IndexCalculationParam
 
 /**
  * API Client for Vegetation Prime Backend.
+ * Uses relative /api/vegetation; platform exposes this path on frontend host per EXTERNAL_MODULE_INSTALLATION.
  */
 export class VegetationApiClient {
   private client: AxiosInstance;
