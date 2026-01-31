@@ -47,22 +47,25 @@ async def verify_token(token: str) -> dict:
         token_issuer = unverified.get('iss')
         logger.info(f"Token issuer: {token_issuer}, Expected issuer: {JWT_ISSUER}")
         
+        # Strict issuer validation - fail closed for security
+        if token_issuer != JWT_ISSUER:
+            logger.warning(f"Issuer mismatch: token has '{token_issuer}', expected '{JWT_ISSUER}'. Rejecting token.")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=f"Invalid token issuer"
+            )
+
         # Get signing key from JWKS
         jwks_client = get_jwks_client()
         signing_key = jwks_client.get_signing_key_from_jwt(token)
-        
-        # Decode and verify token
-        # Use token's issuer if it doesn't match expected (for flexibility)
-        verify_issuer = JWT_ISSUER if token_issuer == JWT_ISSUER else None
-        if verify_issuer is None:
-            logger.warning(f"Issuer mismatch: token has '{token_issuer}', expected '{JWT_ISSUER}'. Verifying without issuer check.")
-        
+
+        # Decode and verify token with strict issuer validation
         payload = jwt.decode(
             token,
             signing_key.key,
             algorithms=[JWT_ALGORITHM],
-            issuer=verify_issuer,
-            options={"verify_exp": True, "verify_iss": verify_issuer is not None}
+            issuer=JWT_ISSUER,
+            options={"verify_exp": True, "verify_iss": True}
         )
         
         return payload

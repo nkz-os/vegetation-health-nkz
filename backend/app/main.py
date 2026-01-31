@@ -37,8 +37,6 @@ from app.api.subscriptions import router as subscriptions_router
 from app.services.usage_tracker import UsageTracker
 from app.middleware.limits import validate_limits_dependency
 from decimal import Decimal
-from app.api.tiles import router as tiles_router
-from app.api.crops import router as crops_router
 
 logger = logging.getLogger(__name__)
 
@@ -70,13 +68,15 @@ app = FastAPI(
 def on_startup():
     init_db()
 
-# CORS middleware
+# CORS middleware - restricted to known Nekazari domains
+import os
+ALLOWED_ORIGINS = os.getenv("CORS_ALLOWED_ORIGINS", "https://nekazari.artotxiki.com,https://nkz.artotxiki.com").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately for production
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Tenant-ID"],
 )
 
 # Include tile router

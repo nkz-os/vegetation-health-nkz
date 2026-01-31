@@ -24,6 +24,11 @@ export const VegetationAnalytics: React.FC = () => {
     const [checkingSub, setCheckingSub] = useState(false);
     const [showWizard, setShowWizard] = useState(false);
 
+    // Real statistics from API
+    const [yearComparison, setYearComparison] = useState<any[]>([]);
+    const [stats, setStats] = useState<{ mean: number; min: number; max: number; std_dev: number } | null>(null);
+    const [loadingStats, setLoadingStats] = useState(false);
+
     // Check subscription when entity changes
     useEffect(() => {
         if (selectedEntityId && isAuthenticated) {
@@ -53,6 +58,38 @@ export const VegetationAnalytics: React.FC = () => {
             }
         }
     }, [selectedEntityId, isAuthenticated]);
+
+    // Load real statistics when entity is selected and subscribed
+    useEffect(() => {
+        if (selectedEntityId && subscription && subscription.status === 'active') {
+            setLoadingStats(true);
+
+            // Load year comparison data
+            api.compareYears(selectedEntityId, selectedIndex || 'NDVI')
+                .then((data) => {
+                    if (data && data.years) {
+                        setYearComparison(data.years);
+                    }
+                })
+                .catch((err) => {
+                    console.warn('[Analytics] Year comparison not available:', err);
+                    setYearComparison([]);
+                });
+
+            // Load current stats from scene stats
+            api.getSceneStats(selectedEntityId, selectedIndex || 'NDVI', 3)
+                .then((data) => {
+                    if (data && data.statistics) {
+                        setStats(data.statistics);
+                    }
+                })
+                .catch((err) => {
+                    console.warn('[Analytics] Stats not available:', err);
+                    setStats(null);
+                })
+                .finally(() => setLoadingStats(false));
+        }
+    }, [selectedEntityId, subscription, selectedIndex]);
 
     // Group jobs by entity logic (keep existing)
     const uniqueEntities = React.useMemo(() => {
@@ -302,16 +339,29 @@ export const VegetationAnalytics: React.FC = () => {
                                 </tr>
                             </thead>
                             <tbody className="bg-white divide-y divide-gray-200">
-                                {/* Mock Data for Demo - Replace with real API data */}
-                                {[2024, 2023, 2022].map((year, i) => (
-                                    <tr key={year}>
-                                        <td className="px-3 py-2 whitespace-nowrap text-sm font-medium text-gray-900">{year}</td>
-                                        <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-500">0.{62 - i * 4}</td>
-                                        <td className={`px-3 py-2 whitespace-nowrap text-sm font-bold ${i === 0 ? 'text-green-600' : 'text-red-600'}`}>
-                                            {i === 0 ? '+4%' : '-2%'}
+                                {loadingStats ? (
+                                    <tr>
+                                        <td colSpan={3} className="px-3 py-4 text-center text-sm text-gray-500">
+                                            Cargando datos...
                                         </td>
                                     </tr>
-                                ))}
+                                ) : yearComparison.length > 0 ? (
+                                    yearComparison.map((yearData: any, i: number) => (
+                                        <tr key={yearData.year}>
+                                            <td className="px-3 py-2 whitespace-nowrap text-sm font-medium text-gray-900">{yearData.year}</td>
+                                            <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-500">{yearData.mean?.toFixed(2) || '-'}</td>
+                                            <td className={`px-3 py-2 whitespace-nowrap text-sm font-bold ${yearData.change_percent > 0 ? 'text-green-600' : yearData.change_percent < 0 ? 'text-red-600' : 'text-gray-500'}`}>
+                                                {yearData.change_percent !== undefined ? `${yearData.change_percent > 0 ? '+' : ''}${yearData.change_percent.toFixed(1)}%` : '-'}
+                                            </td>
+                                        </tr>
+                                    ))
+                                ) : (
+                                    <tr>
+                                        <td colSpan={3} className="px-3 py-4 text-center text-sm text-gray-500">
+                                            No hay datos históricos suficientes
+                                        </td>
+                                    </tr>
+                                )}
                             </tbody>
                         </table>
                     </div>
@@ -323,24 +373,34 @@ export const VegetationAnalytics: React.FC = () => {
                     <div className="mb-4">
                         <h3 className="text-md font-semibold text-slate-800">Estadísticas Rápidas</h3>
                     </div>
-                    <div className="grid grid-cols-2 gap-4">
-                        <div className="p-3 bg-green-50 rounded-lg border border-green-100">
-                            <span className="block text-xs text-green-600 uppercase font-bold">Max {selectedIndex}</span>
-                            <span className="text-2xl font-bold text-green-700">0.86</span>
+                    {loadingStats ? (
+                        <div className="flex items-center justify-center h-32 text-gray-500">
+                            Cargando estadísticas...
                         </div>
-                        <div className="p-3 bg-blue-50 rounded-lg border border-blue-100">
-                            <span className="block text-xs text-blue-600 uppercase font-bold">Media</span>
-                            <span className="text-2xl font-bold text-blue-700">0.62</span>
+                    ) : stats ? (
+                        <div className="grid grid-cols-2 gap-4">
+                            <div className="p-3 bg-green-50 rounded-lg border border-green-100">
+                                <span className="block text-xs text-green-600 uppercase font-bold">Max {selectedIndex}</span>
+                                <span className="text-2xl font-bold text-green-700">{stats.max.toFixed(2)}</span>
+                            </div>
+                            <div className="p-3 bg-blue-50 rounded-lg border border-blue-100">
+                                <span className="block text-xs text-blue-600 uppercase font-bold">Media</span>
+                                <span className="text-2xl font-bold text-blue-700">{stats.mean.toFixed(2)}</span>
+                            </div>
+                            <div className="p-3 bg-amber-50 rounded-lg border border-amber-100">
+                                <span className="block text-xs text-amber-600 uppercase font-bold">Min</span>
+                                <span className="text-2xl font-bold text-amber-700">{stats.min.toFixed(2)}</span>
+                            </div>
+                            <div className="p-3 bg-purple-50 rounded-lg border border-purple-100">
+                                <span className="block text-xs text-purple-600 uppercase font-bold">Std Dev</span>
+                                <span className="text-2xl font-bold text-purple-700">{stats.std_dev.toFixed(2)}</span>
+                            </div>
                         </div>
-                        <div className="p-3 bg-amber-50 rounded-lg border border-amber-100">
-                            <span className="block text-xs text-amber-600 uppercase font-bold">Min</span>
-                            <span className="text-2xl font-bold text-amber-700">0.12</span>
+                    ) : (
+                        <div className="flex items-center justify-center h-32 text-gray-500">
+                            Selecciona una parcela para ver estadísticas
                         </div>
-                        <div className="p-3 bg-purple-50 rounded-lg border border-purple-100">
-                            <span className="block text-xs text-purple-600 uppercase font-bold">Std Dev</span>
-                            <span className="text-2xl font-bold text-purple-700">0.15</span>
-                        </div>
-                    </div>
+                    )}
                 </Card>
             </div>
         </div>

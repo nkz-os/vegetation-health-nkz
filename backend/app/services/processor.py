@@ -30,7 +30,29 @@ class VegetationIndexProcessor:
         'B8A': 'RedEdge4',  # 20m
         'B11': 'SWIR1',     # 20m
         'B12': 'SWIR2',     # 20m
+        'SCL': 'SceneClassification',  # 20m - Scene Classification Layer
     }
+
+    # Sentinel-2 L2A Scene Classification Layer (SCL) values
+    # Reference: https://sentinels.copernicus.eu/web/sentinel/technical-guides/sentinel-2-msi/level-2a/algorithm
+    SCL_CLASSES = {
+        0: 'NO_DATA',
+        1: 'SATURATED_DEFECTIVE',
+        2: 'DARK_AREA_PIXELS',
+        3: 'CLOUD_SHADOWS',
+        4: 'VEGETATION',
+        5: 'BARE_SOILS',
+        6: 'WATER',
+        7: 'UNCLASSIFIED',
+        8: 'CLOUD_MEDIUM_PROBABILITY',
+        9: 'CLOUD_HIGH_PROBABILITY',
+        10: 'THIN_CIRRUS',
+        11: 'SNOW_ICE',
+    }
+
+    # Valid SCL classes for vegetation analysis (exclude clouds, shadows, water, snow)
+    VALID_SCL_CLASSES = {4, 5, 6, 7}  # Vegetation, Bare soils, Water, Unclassified
+    EXCLUDE_SCL_CLASSES = {0, 1, 3, 8, 9, 10, 11}  # No data, Saturated, Cloud shadows, Clouds, Cirrus, Snow
     
     def __init__(self, band_paths: Dict[str, str]):
         """Initialize processor with band file paths.
@@ -67,196 +89,345 @@ class VegetationIndexProcessor:
         
         logger.info(f"Loaded {len(bands)} bands: {bands}")
     
-    def _resample_to_10m(self, band_20m: np.ndarray, reference_meta: Dict) -> np.ndarray:
-        """Resample 20m band to 10m resolution.
-        
+    def _resample_to_10m(self, band_20m: np.ndarray, reference_10m: np.ndarray) -> np.ndarray:
+        """Resample 20m band to 10m resolution using scipy zoom.
+
         Args:
             band_20m: 20m resolution band data
-            reference_meta: Reference metadata (10m band)
-            
+            reference_10m: Reference 10m band for target shape
+
         Returns:
             Resampled band at 10m resolution
         """
-        # Create temporary dataset for 20m band
-        temp_20m_path = '/tmp/temp_20m.tif'
-        with rasterio.open(temp_20m_path, 'w', **self.band_meta) as dst:
-            dst.write(band_20m, 1)
-        
-        # Calculate transform for 10m
-        transform, width, height = calculate_default_transform(
-            self.band_meta['crs'],
-            reference_meta['crs'],
-            reference_meta['width'],
-            reference_meta['height'],
-            *reference_meta['bounds']
+        from scipy.ndimage import zoom
+
+        target_shape = reference_10m.shape
+        source_shape = band_20m.shape
+
+        # Calculate zoom factors
+        zoom_factors = (
+            target_shape[0] / source_shape[0],
+            target_shape[1] / source_shape[1]
         )
-        
-        # Reproject to 10m
-        resampled = np.zeros((height, width), dtype=np.float32)
-        reproject(
-            source=rasterio.band(dst, 1),
-            destination=resampled,
-            src_transform=self.band_meta['transform'],
-            src_crs=self.band_meta['crs'],
-            dst_transform=transform,
-            dst_crs=reference_meta['crs'],
-            resampling=Resampling.bilinear
-        )
-        
-        Path(temp_20m_path).unlink()
-        return resampled
-    
-    def calculate_ndvi(self) -> np.ndarray:
+
+        # Resample using bilinear interpolation (order=1)
+        resampled = zoom(band_20m, zoom_factors, order=1, mode='nearest')
+
+        # Ensure exact shape match (zoom may be off by 1 pixel due to rounding)
+        if resampled.shape != target_shape:
+            resampled = resampled[:target_shape[0], :target_shape[1]]
+
+        logger.info(f"Resampled 20m band from {source_shape} to {resampled.shape}")
+        return resampled.astype(np.float32)
+
+    def create_cloud_mask(self, reference_shape: Optional[Tuple[int, int]] = None) -> np.ndarray:
+        """Create cloud mask from SCL (Scene Classification Layer) band.
+
+        The SCL band identifies clouds, shadows, and other artifacts that should
+        be excluded from vegetation analysis for accurate results.
+
+        Args:
+            reference_shape: Target shape for 10m resolution (if SCL needs resampling)
+
+        Returns:
+            Boolean mask where True = invalid pixel (cloud/shadow/etc), False = valid
+        """
+        if 'SCL' not in self.band_paths:
+            logger.warning("SCL band not available, skipping cloud masking")
+            return None
+
+        try:
+            # Load SCL band if not already loaded
+            if 'SCL' not in self.band_data:
+                self.load_bands(['SCL'])
+
+            scl = self.band_data['SCL']
+
+            # Resample SCL to 10m if reference shape provided and different
+            if reference_shape and scl.shape != reference_shape:
+                logger.info(f"Resampling SCL from {scl.shape} to {reference_shape}")
+                # Use nearest neighbor for categorical data (SCL is classification)
+                from scipy.ndimage import zoom
+                zoom_factors = (
+                    reference_shape[0] / scl.shape[0],
+                    reference_shape[1] / scl.shape[1]
+                )
+                scl = zoom(scl, zoom_factors, order=0, mode='nearest')  # order=0 = nearest neighbor
+                if scl.shape != reference_shape:
+                    scl = scl[:reference_shape[0], :reference_shape[1]]
+
+            # Create mask: True for pixels to EXCLUDE (clouds, shadows, etc.)
+            cloud_mask = np.isin(scl.astype(int), list(self.EXCLUDE_SCL_CLASSES))
+
+            # Count statistics
+            total_pixels = cloud_mask.size
+            masked_pixels = np.sum(cloud_mask)
+            cloud_percentage = (masked_pixels / total_pixels) * 100
+
+            logger.info(
+                f"Cloud mask created: {masked_pixels}/{total_pixels} pixels masked "
+                f"({cloud_percentage:.1f}% cloudy/invalid)"
+            )
+
+            return cloud_mask
+
+        except Exception as e:
+            logger.warning(f"Failed to create cloud mask: {e}")
+            return None
+
+    def apply_cloud_mask(self, data: np.ndarray, cloud_mask: Optional[np.ndarray]) -> np.ndarray:
+        """Apply cloud mask to data array, setting masked pixels to NaN.
+
+        Args:
+            data: Input data array
+            cloud_mask: Boolean mask (True = masked/invalid)
+
+        Returns:
+            Data array with masked pixels set to NaN
+        """
+        if cloud_mask is None:
+            return data
+
+        if data.shape != cloud_mask.shape:
+            logger.warning(f"Shape mismatch: data {data.shape} vs mask {cloud_mask.shape}")
+            return data
+
+        # Set cloudy pixels to NaN
+        result = data.copy()
+        result[cloud_mask] = np.nan
+        return result
+
+    def calculate_ndvi(self, apply_cloud_mask: bool = True) -> np.ndarray:
         """Calculate NDVI (Normalized Difference Vegetation Index).
-        
+
         Formula: (NIR - Red) / (NIR + Red)
         Range: -1 to 1 (typically 0 to 1 for vegetation)
+
+        Args:
+            apply_cloud_mask: If True, mask cloudy pixels using SCL band
         """
         self.load_bands(['B04', 'B08'])
-        
+
         red = self.band_data['B04']
         nir = self.band_data['B08']
-        
+
+        # Create cloud mask if requested and SCL available
+        cloud_mask = None
+        if apply_cloud_mask and 'SCL' in self.band_paths:
+            cloud_mask = self.create_cloud_mask(reference_shape=nir.shape)
+
         # Avoid division by zero
         denominator = nir + red
         ndvi = np.where(denominator != 0, (nir - red) / denominator, 0)
-        
+
+        # Apply cloud mask
+        if cloud_mask is not None:
+            ndvi = self.apply_cloud_mask(ndvi, cloud_mask)
+
         # Clip to valid range
         ndvi = np.clip(ndvi, -1, 1)
-        
+
         return ndvi
     
-    def calculate_evi(self) -> np.ndarray:
+    def calculate_evi(self, apply_cloud_mask: bool = True) -> np.ndarray:
         """Calculate EVI (Enhanced Vegetation Index).
-        
+
         Formula: 2.5 * ((NIR - Red) / (NIR + 6*Red - 7.5*Blue + 1))
         Range: -1 to 1 (typically 0 to 1)
+
+        Args:
+            apply_cloud_mask: If True, mask cloudy pixels using SCL band
         """
         self.load_bands(['B02', 'B04', 'B08'])
-        
+
         blue = self.band_data['B02']
         red = self.band_data['B04']
         nir = self.band_data['B08']
-        
+
+        # Create cloud mask if requested
+        cloud_mask = None
+        if apply_cloud_mask and 'SCL' in self.band_paths:
+            cloud_mask = self.create_cloud_mask(reference_shape=nir.shape)
+
         denominator = nir + 6 * red - 7.5 * blue + 1
         evi = np.where(denominator != 0, 2.5 * ((nir - red) / denominator), 0)
-        
+
+        # Apply cloud mask
+        if cloud_mask is not None:
+            evi = self.apply_cloud_mask(evi, cloud_mask)
+
         evi = np.clip(evi, -1, 1)
-        
+
         return evi
     
-    def calculate_savi(self, l: float = 0.5) -> np.ndarray:
+    def calculate_savi(self, l: float = 0.5, apply_cloud_mask: bool = True) -> np.ndarray:
         """Calculate SAVI (Soil-Adjusted Vegetation Index).
-        
+
         Formula: ((NIR - Red) / (NIR + Red + L)) * (1 + L)
         L: Soil adjustment factor (typically 0.5)
         Range: -1 to 1
+
+        Args:
+            l: Soil adjustment factor (default 0.5)
+            apply_cloud_mask: If True, mask cloudy pixels using SCL band
         """
         self.load_bands(['B04', 'B08'])
-        
+
         red = self.band_data['B04']
         nir = self.band_data['B08']
-        
+
+        # Create cloud mask if requested
+        cloud_mask = None
+        if apply_cloud_mask and 'SCL' in self.band_paths:
+            cloud_mask = self.create_cloud_mask(reference_shape=nir.shape)
+
         denominator = nir + red + l
         savi = np.where(denominator != 0, ((nir - red) / denominator) * (1 + l), 0)
-        
+
+        # Apply cloud mask
+        if cloud_mask is not None:
+            savi = self.apply_cloud_mask(savi, cloud_mask)
+
         savi = np.clip(savi, -1, 1)
-        
+
         return savi
     
-    def calculate_gndvi(self) -> np.ndarray:
+    def calculate_gndvi(self, apply_cloud_mask: bool = True) -> np.ndarray:
         """Calculate GNDVI (Green Normalized Difference Vegetation Index).
-        
+
         Formula: (NIR - Green) / (NIR + Green)
         Range: -1 to 1
+
+        Args:
+            apply_cloud_mask: If True, mask cloudy pixels using SCL band
         """
         self.load_bands(['B03', 'B08'])
-        
+
         green = self.band_data['B03']
         nir = self.band_data['B08']
-        
+
+        # Create cloud mask if requested
+        cloud_mask = None
+        if apply_cloud_mask and 'SCL' in self.band_paths:
+            cloud_mask = self.create_cloud_mask(reference_shape=nir.shape)
+
         denominator = nir + green
         gndvi = np.where(denominator != 0, (nir - green) / denominator, 0)
-        
+
+        # Apply cloud mask
+        if cloud_mask is not None:
+            gndvi = self.apply_cloud_mask(gndvi, cloud_mask)
+
         gndvi = np.clip(gndvi, -1, 1)
-        
+
         return gndvi
     
-    def calculate_ndre(self) -> np.ndarray:
+    def calculate_ndre(self, apply_cloud_mask: bool = True) -> np.ndarray:
         """Calculate NDRE (Normalized Difference Red Edge).
-        
+
         Formula: (NIR - RedEdge) / (NIR + RedEdge)
-        Uses B8A (RedEdge4) as RedEdge band
+        Uses B8A (RedEdge4) as RedEdge band (20m -> resampled to 10m)
         Range: -1 to 1
+
+        Args:
+            apply_cloud_mask: If True, mask cloudy pixels using SCL band
         """
         self.load_bands(['B8A', 'B08'])
-        
+
         rededge = self.band_data['B8A']
         nir = self.band_data['B08']
-        
-        # Resample B8A to 10m if needed (it's 20m)
+
+        # Resample B8A (20m) to match B08 (10m) resolution
         if rededge.shape != nir.shape:
-            # This would require resampling - simplified for now
-            logger.warning("B8A and B08 have different resolutions, resampling needed")
-        
+            logger.info(f"Resampling B8A from {rededge.shape} to {nir.shape} for NDRE")
+            rededge = self._resample_to_10m(rededge, nir)
+
+        # Create cloud mask if requested
+        cloud_mask = None
+        if apply_cloud_mask and 'SCL' in self.band_paths:
+            cloud_mask = self.create_cloud_mask(reference_shape=nir.shape)
+
         denominator = nir + rededge
         ndre = np.where(denominator != 0, (nir - rededge) / denominator, 0)
-        
+
+        # Apply cloud mask
+        if cloud_mask is not None:
+            ndre = self.apply_cloud_mask(ndre, cloud_mask)
+
         ndre = np.clip(ndre, -1, 1)
-        
+
         return ndre
     
     def calculate_custom_index(self, formula: str) -> np.ndarray:
         """Calculate custom index using safe formula evaluation.
-        
+
         Args:
             formula: Mathematical formula using band names
                     e.g., "(B08-B04)/(B08+B04)" for NDVI
                     Available bands: B02, B03, B04, B05, B06, B07, B08, B8A, B11, B12
-        
+
         Returns:
             Calculated index array
+
+        Security: Uses simpleeval for safe formula parsing instead of eval()
         """
-        # Validate formula syntax
         try:
             # Load all bands mentioned in formula
             required_bands = self._extract_bands_from_formula(formula)
             if not required_bands:
                 raise ValueError("No valid bands found in formula")
-            
+
             self.load_bands(required_bands)
-            
-            # Create safe namespace with numpy and band arrays
-            # We'll use a safe evaluation approach with numpy operations
-            safe_namespace = {
-                'np': np,
-                '__builtins__': {},
-            }
-            
-            # Add band arrays to namespace
+
+            # Create safe evaluator with numpy functions
+            evaluator = simpleeval.EvalWithCompoundTypes(
+                functions={
+                    # Safe math functions
+                    'sqrt': np.sqrt,
+                    'abs': np.abs,
+                    'log': np.log,
+                    'log10': np.log10,
+                    'exp': np.exp,
+                    'sin': np.sin,
+                    'cos': np.cos,
+                    'tan': np.tan,
+                    'arctan': np.arctan,
+                    'arctan2': np.arctan2,
+                    'clip': np.clip,
+                    'where': np.where,
+                    'maximum': np.maximum,
+                    'minimum': np.minimum,
+                    'power': np.power,
+                },
+                names={}
+            )
+
+            # Add band arrays as named variables
             for band in required_bands:
                 if band in self.band_data:
-                    safe_namespace[band] = self.band_data[band]
-            
-            # Replace band names in formula to use namespace
-            # e.g., "B08" becomes safe_namespace['B08']
-            formula_safe = formula
-            for band in required_bands:
-                formula_safe = formula_safe.replace(band, f'safe_namespace["{band}"]')
-            
-            # Evaluate with safe namespace (only numpy operations allowed)
-            # This is safer than eval() but still allows numpy array operations
-            result = eval(formula_safe, safe_namespace)
-            
+                    evaluator.names[band] = self.band_data[band]
+
+            # Evaluate safely (simpleeval blocks dangerous operations)
+            result = evaluator.eval(formula)
+
             # Validate result
             if not isinstance(result, np.ndarray):
-                raise ValueError("Formula must return a numpy array")
-            
+                # Try to broadcast scalar to array shape
+                if isinstance(result, (int, float)):
+                    reference_shape = next(iter(self.band_data.values())).shape
+                    result = np.full(reference_shape, result, dtype=np.float32)
+                else:
+                    raise ValueError("Formula must return a numeric value or array")
+
             # Clip to reasonable range
             result = np.clip(result, -10, 10)
-            
-            return result
-            
+
+            logger.info(f"Custom formula evaluated successfully: {formula[:50]}...")
+            return result.astype(np.float32)
+
+        except simpleeval.InvalidExpression as e:
+            logger.error(f"Invalid formula syntax: {str(e)}")
+            raise ValueError(f"Invalid formula syntax: {str(e)}")
         except Exception as e:
             logger.error(f"Error calculating custom index: {str(e)}")
             raise ValueError(f"Invalid formula: {str(e)}")
