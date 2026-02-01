@@ -64,15 +64,46 @@ const DashboardContent: React.FC = () => {
   const deepLinkParams = useDeepLinkParams();
   const [deepLinkApplied, setDeepLinkApplied] = useState(false);
 
-  // Fetch parcels on mount
+  // Fetch parcels - wait for auth context to be available
   useEffect(() => {
+    let cancelled = false;
+    let retryCount = 0;
+    const maxRetries = 5;
+
+    const fetchParcels = async () => {
+      // Wait for host auth context to be available
+      const hostAuth = (window as any).__nekazariAuthContext;
+      if (!hostAuth || !hostAuth.getToken?.()) {
+        if (retryCount < maxRetries) {
+          retryCount++;
+          console.log(`[Vegetation] Waiting for auth context... (${retryCount}/${maxRetries})`);
+          setTimeout(fetchParcels, 500);
+          return;
+        }
+        console.warn('[Vegetation] Auth context not available after retries');
+      }
+
+      if (cancelled) return;
+
+      try {
+        const data = await api.listTenantParcels();
+        if (!cancelled) {
+          setParcels(data);
+          console.log(`[Vegetation] Loaded ${data.length} parcels`);
+        }
+      } catch (error) {
+        console.error('[Vegetation] Error fetching parcels:', error);
+      } finally {
+        if (!cancelled) {
+          setLoadingContext(false);
+        }
+      }
+    };
+
     setLoadingContext(true);
-    api.listTenantParcels()
-      .then(data => {
-        setParcels(data);
-      })
-      .catch(console.error)
-      .finally(() => setLoadingContext(false));
+    fetchParcels();
+
+    return () => { cancelled = true; };
   }, []);
 
   // Apply deep link params on mount (once)
