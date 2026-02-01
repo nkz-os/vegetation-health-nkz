@@ -1,7 +1,49 @@
-
 import React, { useState } from 'react';
-import { Card, Button, Modal, Checkbox } from '@nekazari/ui-kit';
-import { Calendar, Layers, Activity, CheckCircle, ArrowRight, ArrowLeft } from 'lucide-react';
+import { Card, Button } from '@nekazari/ui-kit';
+import { Calendar, Layers, Activity, CheckCircle, ArrowRight, ArrowLeft, X } from 'lucide-react';
+
+// Simple Modal component (ui-kit doesn't export Modal)
+const Modal: React.FC<{
+  isOpen: boolean;
+  onClose: () => void;
+  title: string;
+  size?: string;
+  children: React.ReactNode;
+}> = ({ isOpen, onClose, title, children }) => {
+  if (!isOpen) return null;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      <div className="fixed inset-0 bg-black/50" onClick={onClose} />
+      <div className="relative bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-auto">
+        <div className="flex items-center justify-between p-4 border-b">
+          <h2 className="text-lg font-semibold">{title}</h2>
+          <button onClick={onClose} className="p-1 hover:bg-slate-100 rounded">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+};
+
+// Simple Checkbox component (ui-kit doesn't export Checkbox)
+const Checkbox: React.FC<{
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  label?: string;
+  className?: string;
+}> = ({ checked, onChange, label, className }) => (
+  <label className={`flex items-center gap-2 cursor-pointer ${className || ''}`}>
+    <input
+      type="checkbox"
+      checked={checked}
+      onChange={(e) => onChange(e.target.checked)}
+      className="w-4 h-4 rounded border-slate-300 text-green-600 focus:ring-green-500"
+    />
+    {label && <span>{label}</span>}
+  </label>
+);
 import { useVegetationApi } from '../../services/api';
 
 interface SetupWizardProps {
