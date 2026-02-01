@@ -438,7 +438,7 @@ export class VegetationApiClient {
 
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
-        'Accept': 'application/json',
+        'Accept': 'application/ld+json',  // NGSI-LD requires this header
       };
 
       if (token) {
