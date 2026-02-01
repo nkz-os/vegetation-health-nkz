@@ -446,6 +446,7 @@ export class VegetationApiClient {
       }
       if (tenantId) {
         headers['X-Tenant-ID'] = tenantId;
+        headers['Fiware-Service'] = tenantId;  // FIWARE Orion-LD multi-tenancy header
       }
 
       // Call the main Nekazari API to get AgriParcel entities
