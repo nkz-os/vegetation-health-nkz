@@ -434,24 +434,15 @@ export class VegetationApiClient {
   async listTenantParcels(): Promise<any[]> {
     try {
       const token = this.getToken();
-      const tenantId = this.getTenantId();
 
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-        'Accept': 'application/ld+json',  // NGSI-LD requires this header
-      };
-
+      // Minimal headers - match what the host sends
+      const headers: Record<string, string> = {};
       if (token) {
         headers['Authorization'] = `Bearer ${token}`;
       }
-      if (tenantId) {
-        headers['X-Tenant-ID'] = tenantId;
-        headers['Fiware-Service'] = tenantId;  // FIWARE Orion-LD multi-tenancy header
-      }
 
-      // Call the main Nekazari API to get AgriParcel entities
-      // Use simple type name - the host proves this works
-      const response = await fetch('/ngsi-ld/v1/entities?type=AgriParcel&limit=100', {
+      // Use same URL as host (no limit parameter)
+      const response = await fetch('/ngsi-ld/v1/entities?type=AgriParcel', {
         method: 'GET',
         headers,
       });
