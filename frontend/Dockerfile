@@ -41,6 +41,9 @@ FROM nginx:alpine
 # Copy built assets
 COPY --from=builder /app/dist /usr/share/nginx/html
 
+# Copy manifest.json for module registration
+COPY --from=builder /app/manifest.json /usr/share/nginx/html/manifest.json
+
 # Copy custom nginx config (with CORS and module path support)
 COPY frontend/nginx.conf /etc/nginx/conf.d/default.conf
 
