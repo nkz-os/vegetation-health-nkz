@@ -739,33 +739,61 @@ export class VegetationApiClient {
 // Hook for using API client
 import { useMemo } from 'react';
 
+// Get auth token like catastro module does - from window.keycloak
+const getAuthToken = (): string | undefined => {
+  if (typeof window === 'undefined') return undefined;
+
+  // Try Keycloak instance first (same as working catastro module)
+  const keycloakInstance = (window as any).keycloak;
+  if (keycloakInstance && keycloakInstance.token) {
+    return keycloakInstance.token;
+  }
+
+  // Fallback to __nekazariAuthContext
+  const hostAuth = (window as any).__nekazariAuthContext;
+  if (hostAuth && typeof hostAuth.getToken === 'function') {
+    return hostAuth.getToken();
+  }
+
+  // Last fallback to localStorage
+  const storedToken = localStorage.getItem('auth_token');
+  if (storedToken) return storedToken;
+
+  return undefined;
+};
+
+// Get tenant ID from token (same as working catastro module)
+const getTenantId = (): string | undefined => {
+  // Try __nekazariAuthContext first
+  const hostAuth = (window as any).__nekazariAuthContext;
+  if (hostAuth && hostAuth.tenantId) {
+    return hostAuth.tenantId;
+  }
+
+  // Decode from token
+  const token = getAuthToken();
+  if (!token) return undefined;
+
+  try {
+    const base64Url = token.split('.')[1];
+    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+    const jsonPayload = decodeURIComponent(
+      window.atob(base64)
+        .split('')
+        .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+        .join('')
+    );
+    const decoded = JSON.parse(jsonPayload);
+    return decoded['tenant-id'] || decoded.tenant_id || decoded.tenantId || decoded.tenant || undefined;
+  } catch (e) {
+    console.warn('[VegetationApi] Failed to decode token for tenant', e);
+    return undefined;
+  }
+};
+
 export function useVegetationApi(): VegetationApiClient {
-  const getTokenFromHost = (): string | undefined => {
-    try {
-      const hostAuth = (window as any).__nekazariAuthContext;
-      if (hostAuth && typeof hostAuth.getToken === 'function') {
-        return hostAuth.getToken();
-      }
-    } catch (error) {
-      // Silent fail
-    }
-    return undefined;
-  };
-
-  const getTenantIdFromHost = (): string | undefined => {
-    try {
-      const hostAuth = (window as any).__nekazariAuthContext;
-      if (hostAuth && hostAuth.tenantId) {
-        return hostAuth.tenantId;
-      }
-    } catch (error) {
-      // Silent fail
-    }
-    return undefined;
-  };
-
   return useMemo(
-    () => new VegetationApiClient(getTokenFromHost, getTenantIdFromHost),
+    () => new VegetationApiClient(getAuthToken, getTenantId),
     []
   );
 }
