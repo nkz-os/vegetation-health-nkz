@@ -450,10 +450,44 @@ export class VegetationApiClient {
 
       // Call the main Nekazari API to get AgriParcel entities
       // Note: Ingress routes /ngsi-ld (not /api/ngsi-ld)
-      const response = await fetch('/ngsi-ld/v1/entities?type=AgriParcel&limit=100', {
+      // Use expanded type URIs because parcels are stored with full URIs in Orion-LD
+      const sarefType = encodeURIComponent('https://saref.etsi.org/saref4agri/AgriParcel');
+      const sdmType = encodeURIComponent('https://smartdatamodels.org/dataModel.Agrifood/AgriParcel');
+
+      // Try SAREF type first (most parcels use this)
+      let response = await fetch(`/ngsi-ld/v1/entities?type=${sarefType}&limit=100`, {
         method: 'GET',
         headers,
       });
+
+      // If no results, try Smart Data Models type
+      if (response.ok) {
+        const sarefData = await response.json();
+        if (Array.isArray(sarefData) && sarefData.length > 0) {
+          // Also try to get SDM parcels and merge
+          try {
+            const sdmResponse = await fetch(`/ngsi-ld/v1/entities?type=${sdmType}&limit=100`, {
+              method: 'GET',
+              headers,
+            });
+            if (sdmResponse.ok) {
+              const sdmData = await sdmResponse.json();
+              if (Array.isArray(sdmData)) {
+                return [...sarefData, ...sdmData];
+              }
+            }
+          } catch (e) {
+            // Ignore SDM errors, return SAREF data
+          }
+          return sarefData;
+        }
+
+        // SAREF empty, try SDM
+        response = await fetch(`/ngsi-ld/v1/entities?type=${sdmType}&limit=100`, {
+          method: 'GET',
+          headers,
+        });
+      }
 
       if (!response.ok) {
         console.error('[VegetationApi] Failed to fetch parcels:', response.status);
