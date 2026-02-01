@@ -449,7 +449,8 @@ export class VegetationApiClient {
       }
 
       // Call the main Nekazari API to get AgriParcel entities
-      const response = await fetch('/api/ngsi-ld/v1/entities?type=AgriParcel&limit=100', {
+      // Note: Ingress routes /ngsi-ld (not /api/ngsi-ld)
+      const response = await fetch('/ngsi-ld/v1/entities?type=AgriParcel&limit=100', {
         method: 'GET',
         headers,
       });
