@@ -838,9 +838,23 @@ const getTenantId = (): string | undefined => {
   }
 };
 
+// Helper to get base API URL (repeated here for closure access if needed, or better expose static)
+const getApiBaseUrl = () => {
+  if (typeof window !== 'undefined' && (window as any).__ENV__ && (window as any).__ENV__.API_URL) {
+    return (window as any).__ENV__.API_URL;
+  }
+  return '';
+};
+
 export function useVegetationApi(): VegetationApiClient {
   return useMemo(
-    () => new VegetationApiClient(getAuthToken, getTenantId),
+    () => {
+      const baseUrl = getApiBaseUrl();
+      // If baseUrl is present (e.g. https://nkz.artotxiki.com), append /api/vegetation
+      // otherwise default to relative path /api/vegetation
+      const apiPath = baseUrl ? `${baseUrl}/api/vegetation` : '/api/vegetation';
+      return new VegetationApiClient(getAuthToken, getTenantId, apiPath);
+    },
     []
   );
 }
