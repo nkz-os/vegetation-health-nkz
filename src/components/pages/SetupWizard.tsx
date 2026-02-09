@@ -131,22 +131,27 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
 
         setLoading(true);
         setError(null);
+        const payload = {
+            entity_id: entityId,
+            geometry: localGeometry, // Use fetched or prop geometry
+            start_date: startDate,
+            index_types: selectedIndices,
+            frequency: frequency,
+            is_active: true
+        };
+
+        console.log('[SetupWizard] Creating subscription with payload:', payload);
+
         try {
-            await api.createSubscription({
-                entity_id: entityId,
-                geometry: localGeometry, // Use fetched or prop geometry
-                start_date: startDate,
-                index_types: selectedIndices,
-                frequency: frequency,
-                is_active: true
-            });
+            await api.createSubscription(payload);
             onComplete();
             onClose();
         } catch (err: any) {
-            console.error(err);
+            console.error('[SetupWizard] Error creating subscription:', err);
             // Handle 422 explicitly
             if (err.response && err.response.status === 422) {
-                setError('Datos inválidos. Verifica que la parcela tenga geometría válida.');
+                console.error('[SetupWizard] Validation Error Data:', err.response.data);
+                setError('Datos inválidos (422). Revisa la consola para más detalles.');
             } else {
                 setError(err.message || 'Error al guardar la configuración');
             }

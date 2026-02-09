@@ -30,6 +30,31 @@ class SubscriptionBase(BaseModel):
     frequency: str = Field(default="weekly", description="Update frequency: weekly, daily")
     is_active: bool = Field(default=True, description="Whether subscription is active")
 
+    @validator('geometry', pre=True)
+    def parse_geometry(cls, v):
+        # Handle GeoAlchemy2 WKBElement
+        if hasattr(v, 'desc') or hasattr(v, 'geom_wkb'): 
+             try:
+                 s = to_shape(v)
+                 return mapping(s)
+             except Exception as e:
+                 print(f"Error converting geometry: {e}")
+                 return {}
+        
+        # Handle JSON String
+        if isinstance(v, str):
+            try:
+                if v.strip().startswith('{'):
+                    return json.loads(v)
+            except:
+                pass
+        
+        # Handle Dict directly
+        if isinstance(v, dict):
+            return v
+            
+        return {}
+
 class SubscriptionCreate(SubscriptionBase):
     pass
 

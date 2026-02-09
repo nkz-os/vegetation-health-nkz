@@ -429,6 +429,20 @@ export class VegetationApiClient {
    * List all AgriParcel entities for the current tenant
    * Uses the main Nekazari API (NGSI-LD broker via gateway)
    */
+  // Helper to get API URL
+  // Helper to get API URL
+  private getBaseApiUrl(): string {
+    if (typeof window !== 'undefined' && (window as any).__ENV__ && (window as any).__ENV__.API_URL) {
+      return (window as any).__ENV__.API_URL;
+    }
+    // Fallback for local dev or if env not set
+    return '';
+  }
+
+  /**
+   * List all AgriParcel entities for the current tenant
+   * Uses the main Nekazari API (NGSI-LD broker via gateway)
+   */
   async listTenantParcels(): Promise<any[]> {
     try {
       const token = this.getToken();
@@ -439,8 +453,11 @@ export class VegetationApiClient {
         headers['Authorization'] = `Bearer ${token}`;
       }
 
-      // Use same URL as host (no limit parameter)
-      const response = await fetch('/ngsi-ld/v1/entities?type=AgriParcel', {
+      // Use absolute URL from env if available
+      const baseUrl = this.getBaseApiUrl();
+      const url = `${baseUrl}/ngsi-ld/v1/entities?type=AgriParcel`;
+
+      const response = await fetch(url, {
         method: 'GET',
         headers,
       });
@@ -467,12 +484,20 @@ export class VegetationApiClient {
       const headers: Record<string, string> = {};
       if (token) headers['Authorization'] = `Bearer ${token}`;
 
-      const response = await fetch(`/ngsi-ld/v1/entities/${entityId}`, {
+      const baseUrl = this.getBaseApiUrl();
+      const url = `${baseUrl}/ngsi-ld/v1/entities/${entityId}`;
+
+      const response = await fetch(url, {
         method: 'GET',
         headers,
       });
 
       if (!response.ok) {
+        // Log error body if possible
+        try {
+          const errText = await response.text();
+          console.error(`[VegetationApi] Fetch entity failed ${response.status}:`, errText.substring(0, 200));
+        } catch (e) { }
         throw new Error(`Failed to fetch entity: ${response.status}`);
       }
       return response.json();
