@@ -12,10 +12,16 @@ import os
 
 logger = logging.getLogger(__name__)
 
-# JWT configuration
+# JWT configuration (align with Nekazari platform: auth.artotxiki.com)
 JWT_ALGORITHM = os.getenv('JWT_ALGORITHM', 'RS256')
-JWT_ISSUER = os.getenv('JWT_ISSUER', 'https://auth.nekazari.com/realms/nekazari')
-JWKS_URL = os.getenv('JWKS_URL', f'{JWT_ISSUER}/.well-known/jwks.json')
+JWT_ISSUER = os.getenv(
+    'JWT_ISSUER',
+    'https://auth.artotxiki.com/auth/realms/nekazari'
+)
+JWKS_URL = os.getenv(
+    'JWKS_URL',
+    'https://auth.artotxiki.com/auth/realms/nekazari/protocol/openid-connect/certs'
+)
 
 # Cache for JWKS
 _jwks_client: Optional[PyJWKClient] = None
@@ -45,9 +51,9 @@ async def verify_token(token: str) -> dict:
         # First, decode without verification to check issuer
         unverified = jwt.decode(token, options={"verify_signature": False})
         token_issuer = unverified.get('iss')
-        logger.info(f"Token issuer: {token_issuer}, Expected issuer: {JWT_ISSUER}")
+        logger.debug("Token issuer check: %s", token_issuer)
         
-        # Strict issuer validation - fail closed for security
+        # Strict issuer validation - fail closed for security (exact whitelist, no suffix matching)
         if token_issuer != JWT_ISSUER:
             logger.warning(f"Issuer mismatch: token has '{token_issuer}', expected '{JWT_ISSUER}'. Rejecting token.")
             raise HTTPException(

@@ -22,8 +22,7 @@ const QuickActionsToolbar: React.FC<{
   onZoningTrigger: () => void;
   isZoningLoading: boolean;
 }> = ({ entityId, onZoningTrigger, isZoningLoading }) => {
-  const api = useVegetationApi();
-  const isobusAvailable = api.isIsobusAvailable();
+  // Note: api hook available for future ISOBUS features
 
   const handleNavigateToModule = (tab: string) => {
     if (!entityId) return;
@@ -114,7 +113,7 @@ export const VegetationConfig: React.FC<VegetationConfigProps> = ({ mode = 'pane
   const [showCarbonConfig, setShowCarbonConfig] = useState(false);
   const [formula, setFormula] = useState('');
   const [recentJobs, setRecentJobs] = useState<any[]>([]);
-  
+
   // Quick Actions state
   const [isZoningLoading, setIsZoningLoading] = useState(false);
   const [zoningMessage, setZoningMessage] = useState<string | null>(null);
@@ -138,10 +137,10 @@ export const VegetationConfig: React.FC<VegetationConfigProps> = ({ mode = 'pane
   // Handle zoning trigger from Quick Actions
   const handleZoningTrigger = async () => {
     if (!selectedEntityId) return;
-    
+
     setIsZoningLoading(true);
     setZoningMessage(null);
-    
+
     try {
       const result = await api.triggerZoning(selectedEntityId);
       setZoningMessage(`Zonas generándose. Task ID: ${result.task_id}`);

@@ -32,13 +32,13 @@ interface ZoningJob {
 const ZoningTab: React.FC = () => {
   const { selectedEntityId } = useVegetationContext();
   const api = useVegetationApi();
-  
+
   const [zoningData, setZoningData] = useState<ZoningGeoJsonResponse | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [message, setMessage] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
   const [currentJob, setCurrentJob] = useState<ZoningJob | null>(null);
-  
+
   // Zoning options
   const [numZones, setNumZones] = useState(3);
 
@@ -54,12 +54,13 @@ const ZoningTab: React.FC = () => {
 
   const loadZoningData = async () => {
     if (!selectedEntityId) return;
-    
+
     setIsLoading(true);
     try {
       const data = await api.getZoningGeoJson(selectedEntityId);
       if (data && data.features && data.features.length > 0) {
-        setZoningData(data);
+        // Cast to match local type, API returns compatible structure
+        setZoningData(data as ZoningGeoJsonResponse);
       } else {
         setZoningData(null);
       }
@@ -74,24 +75,24 @@ const ZoningTab: React.FC = () => {
 
   const handleGenerateZones = async () => {
     if (!selectedEntityId) return;
-    
+
     setIsGenerating(true);
     setMessage(null);
-    
+
     try {
       const result = await api.triggerZoning(selectedEntityId, {
         n_zones: numZones
       });
-      
+
       setCurrentJob({
         task_id: result.task_id,
         status: 'running',
         created_at: new Date().toISOString()
       });
-      
-      setMessage({ 
-        type: 'info', 
-        text: `Generando ${numZones} zonas. Task ID: ${result.task_id}` 
+
+      setMessage({
+        type: 'info',
+        text: `Generando ${numZones} zonas. Task ID: ${result.task_id}`
       });
 
       // Poll for completion (simple version - in production use WebSocket or better polling)
@@ -104,17 +105,17 @@ const ZoningTab: React.FC = () => {
     }
   };
 
-  const pollForCompletion = async (taskId: string) => {
+  const pollForCompletion = async (_taskId: string) => {
     // Simple polling - check every 3 seconds for up to 60 seconds
     let attempts = 0;
     const maxAttempts = 20;
-    
+
     const poll = async () => {
       attempts++;
       try {
         const data = await api.getZoningGeoJson(selectedEntityId!);
         if (data && data.features && data.features.length > 0) {
-          setZoningData(data);
+          setZoningData(data as ZoningGeoJsonResponse);
           setCurrentJob(prev => prev ? { ...prev, status: 'completed' } : null);
           setMessage({ type: 'success', text: `Zonas generadas: ${data.features.length} zonas` });
           return;
@@ -122,13 +123,13 @@ const ZoningTab: React.FC = () => {
       } catch (error) {
         // Still processing
       }
-      
+
       if (attempts < maxAttempts) {
         setTimeout(poll, 3000);
       } else {
-        setMessage({ 
-          type: 'info', 
-          text: 'El proceso está tardando más de lo esperado. Pulsa "Actualizar" para comprobar.' 
+        setMessage({
+          type: 'info',
+          text: 'El proceso está tardando más de lo esperado. Pulsa "Actualizar" para comprobar.'
         });
       }
     };
@@ -142,10 +143,10 @@ const ZoningTab: React.FC = () => {
    */
   const handleViewOnMap = () => {
     if (!selectedEntityId) return;
-    
+
     // Format: /entities?selectedEntity={id}&activeLayers=vegetation,zoning
     const url = `/entities?selectedEntity=${encodeURIComponent(selectedEntityId)}&activeLayers=vegetation,zoning`;
-    
+
     if ((window as any).__nekazariNavigate) {
       (window as any).__nekazariNavigate(url);
     } else {
@@ -179,11 +180,10 @@ const ZoningTab: React.FC = () => {
 
       {/* Message */}
       {message && (
-        <div className={`mb-6 p-4 rounded-lg flex items-start gap-3 ${
-          message.type === 'success' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' :
-          message.type === 'error' ? 'bg-red-50 text-red-800 border border-red-200' :
-          'bg-blue-50 text-blue-800 border border-blue-200'
-        }`}>
+        <div className={`mb-6 p-4 rounded-lg flex items-start gap-3 ${message.type === 'success' ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' :
+            message.type === 'error' ? 'bg-red-50 text-red-800 border border-red-200' :
+              'bg-blue-50 text-blue-800 border border-blue-200'
+          }`}>
           {message.type === 'success' && <CheckCircle className="w-5 h-5 flex-shrink-0" />}
           {message.type === 'error' && <AlertCircle className="w-5 h-5 flex-shrink-0" />}
           {message.type === 'info' && <Clock className="w-5 h-5 flex-shrink-0" />}
@@ -209,11 +209,10 @@ const ZoningTab: React.FC = () => {
                 <button
                   key={n}
                   onClick={() => setNumZones(n)}
-                  className={`px-4 py-2 rounded-lg font-medium transition-colors ${
-                    numZones === n
+                  className={`px-4 py-2 rounded-lg font-medium transition-colors ${numZones === n
                       ? 'bg-emerald-600 text-white'
                       : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                  }`}
+                    }`}
                 >
                   {n}
                 </button>
@@ -276,9 +275,9 @@ const ZoningTab: React.FC = () => {
               const props = feature.properties;
               const zoneClass = props.zone_class || `zone_${idx + 1}`;
               const colorClass = ZONE_COLORS[zoneClass] || 'bg-slate-400';
-              
+
               return (
-                <div 
+                <div
                   key={idx}
                   className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-100"
                 >

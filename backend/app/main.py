@@ -99,6 +99,8 @@ class JobCreateRequest(BaseModel):
     start_date: Optional[date] = Field(None, description="Start date for scene search")
     end_date: Optional[date] = Field(None, description="End date for scene search")
     parameters: Dict[str, Any] = Field(default_factory=dict, description="Additional parameters")
+    # Pre-calculated area in hectares (optional; used for limit validation)
+    ha_to_process: Optional[float] = Field(None, description="Hectares to process (for limit checks)")
     # Multi-source satellite data support
     data_source: str = Field("SENTINEL_2", description="Data source: SENTINEL_2, PLANET_SCOPE, DRONE_ORTHO")
 

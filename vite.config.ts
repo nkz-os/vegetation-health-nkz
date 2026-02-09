@@ -42,8 +42,17 @@ export default defineConfig({
           import: false,
           shareScope: 'default',
         },
-        // NOTE: @nekazari/ui-kit is NOT shared - it gets bundled directly
-        // This matches how catastro (working module) handles it
+        // Shared with host for consistency
+        '@nekazari/ui-kit': {
+          singleton: true,
+          requiredVersion: '^1.0.0',
+          import: false,
+          shareScope: 'default',
+        },
+        '@nekazari/sdk': {
+          singleton: false,
+          requiredVersion: '^1.0.0',
+        },
       },
     }),
   ],

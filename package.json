@@ -19,10 +19,12 @@
     "@nekazari/sdk": "^1.0.3",
     "@nekazari/ui-kit": "^1.0.0",
     "axios": "^1.13.2",
+    "i18next": "^23.11.0",
     "lucide-react": "^0.424.0",
     "maplibre-gl": "^3.6.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "react-i18next": "^14.1.0",
     "react-router-dom": "^6.26.0",
     "recharts": "^3.6.0"
   },

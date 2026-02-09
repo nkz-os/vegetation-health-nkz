@@ -1,6 +1,13 @@
 import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { Card } from '@nekazari/ui-kit';
 import { VegetationProvider, useVegetationContext } from './services/vegetationContext';
+
+// Initialize i18n
+import './i18n';
+import { useTranslation } from 'react-i18next';
+
+// Export viewerSlots for host integration (align with module-template)
+export { viewerSlots } from './slots/index';
 import { VegetationConfig } from './components/VegetationConfig';
 import { VegetationAnalytics } from './components/VegetationAnalytics';
 import { CalculationsPage } from './components/pages/CalculationsPage';
@@ -17,12 +24,15 @@ const ZoningTab = lazy(() => import('./components/pages/ZoningTab'));
 type TabType = 'dashboard' | 'analytics' | 'config' | 'calculations' | 'prescription' | 'alerts' | 'weather' | 'zoning';
 
 // Loading fallback for lazy loaded tabs
-const TabLoadingFallback: React.FC = () => (
-  <div className="flex items-center justify-center py-12">
-    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-emerald-600"></div>
-    <span className="ml-3 text-slate-500">Cargando...</span>
-  </div>
-);
+const TabLoadingFallback: React.FC = () => {
+  const { t } = useTranslation();
+  return (
+    <div className="flex items-center justify-center py-12">
+      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-emerald-600"></div>
+      <span className="ml-3 text-slate-500">{t('common.loading')}</span>
+    </div>
+  );
+};
 
 /**
  * Read URL search params for deep linking
@@ -38,11 +48,11 @@ function useDeepLinkParams(): { entityId: string | null; tab: TabType | null } {
     const searchParams = new URLSearchParams(window.location.search);
     const entityId = searchParams.get('entityId');
     const tab = searchParams.get('tab') as TabType | null;
-    
+
     // Validate tab is a known type
     const validTabs: TabType[] = ['dashboard', 'analytics', 'config', 'calculations', 'prescription', 'alerts', 'weather', 'zoning'];
     const validatedTab = tab && validTabs.includes(tab) ? tab : null;
-    
+
     setParams({ entityId, tab: validatedTab });
   }, []);
 
@@ -50,6 +60,7 @@ function useDeepLinkParams(): { entityId: string | null; tab: TabType | null } {
 }
 
 const DashboardContent: React.FC = () => {
+  const { t } = useTranslation();
   const {
     selectedEntityId,
     setSelectedEntityId,
@@ -59,7 +70,7 @@ const DashboardContent: React.FC = () => {
   const [parcels, setParcels] = useState<any[]>([]);
   const [loadingContext, setLoadingContext] = useState(true);
   const [activeTab, setActiveTab] = useState<TabType>('dashboard');
-  
+
   // Deep linking support
   const deepLinkParams = useDeepLinkParams();
   const [deepLinkApplied, setDeepLinkApplied] = useState(false);
@@ -109,7 +120,7 @@ const DashboardContent: React.FC = () => {
   // Apply deep link params on mount (once)
   useEffect(() => {
     if (deepLinkApplied) return;
-    
+
     if (deepLinkParams.entityId) {
       setSelectedEntityId(deepLinkParams.entityId);
       setActiveTab(deepLinkParams.tab || 'analytics');
@@ -133,14 +144,14 @@ const DashboardContent: React.FC = () => {
     return (
       <div className="p-6 max-w-7xl mx-auto space-y-6">
         <header className="mb-8">
-          <h1 className="text-2xl font-bold text-slate-900">Gestión de Cultivos (Vegetation Prime)</h1>
-          <p className="text-slate-600">Selecciona una parcela para analizar su salud vegetativa.</p>
+          <h1 className="text-2xl font-bold text-slate-900">{t('dashboard.title')}</h1>
+          <p className="text-slate-600">{t('dashboard.subtitle')}</p>
         </header>
 
         {loadingContext ? (
           <div className="text-center py-12">
             <div className="animate-spin w-8 h-8 border-4 border-green-600 border-t-transparent rounded-full mx-auto mb-4"></div>
-            <p className="text-slate-500">Cargando parcelas...</p>
+            <p className="text-slate-500">{t('dashboard.loadingParcels')}</p>
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-4">
@@ -149,17 +160,17 @@ const DashboardContent: React.FC = () => {
                 <table className="w-full text-left text-sm text-slate-600">
                   <thead className="bg-slate-50 text-slate-900 font-semibold border-b border-slate-200">
                     <tr>
-                      <th className="p-4">Nombre de Parcela</th>
-                      <th className="p-4">Cultivo Detectado</th>
-                      <th className="p-4">Área (ha)</th>
-                      <th className="p-4 text-right">Acción</th>
+                      <th className="p-4">{t('dashboard.parcelName')}</th>
+                      <th className="p-4">{t('dashboard.detectedCrop')}</th>
+                      <th className="p-4">{t('dashboard.area')}</th>
+                      <th className="p-4 text-right">{t('dashboard.action')}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {Array.isArray(parcels) && parcels.map((parcel: any) => {
                       // NGSI-LD format: properties are {value: ...} or plain values
                       const parcelName = parcel.name?.value || parcel.name || parcel.id;
-                      const cropSpecies = parcel.cropSpecies?.value || parcel.category?.value || 'Sin asignar';
+                      const cropSpecies = parcel.cropSpecies?.value || parcel.category?.value || t('dashboard.unassigned');
                       const area = parcel.area?.value || parcel.area;
 
                       return (
@@ -188,7 +199,7 @@ const DashboardContent: React.FC = () => {
                                 setSelectedEntityId(parcel.id);
                               }}
                             >
-                              Analizar <ChevronRight className="w-3 h-3" />
+                              {t('dashboard.analyze')} <ChevronRight className="w-3 h-3" />
                             </button>
                           </td>
                         </tr>
@@ -197,7 +208,7 @@ const DashboardContent: React.FC = () => {
                     {parcels.length === 0 && (
                       <tr>
                         <td colSpan={4} className="p-8 text-center text-slate-400">
-                          No se encontraron parcelas asociadas a tu cuenta.
+                          {t('dashboard.noParcels')}
                         </td>
                       </tr>
                     )}
@@ -221,13 +232,13 @@ const DashboardContent: React.FC = () => {
             onClick={handleBackToDashboard}
             className="text-slate-500 hover:text-slate-900 font-medium text-sm flex items-center gap-1"
           >
-            ← Volver al listado
+            ← {t('common.back')}
           </button>
           <div className="h-4 w-px bg-gray-300"></div>
           <h2 className="font-semibold text-slate-800">
-            {parcels.find((p: any) => p.id === selectedEntityId)?.name?.value || 
-             parcels.find((p: any) => p.id === selectedEntityId)?.name || 
-             'Análisis detallado'}
+            {parcels.find((p: any) => p.id === selectedEntityId)?.name?.value ||
+              parcels.find((p: any) => p.id === selectedEntityId)?.name ||
+              'Análisis detallado'}
           </h2>
         </div>
       </div>
@@ -236,59 +247,59 @@ const DashboardContent: React.FC = () => {
       <div className="bg-white border-b border-gray-200 px-6">
         <div className="flex overflow-x-auto scrollbar-hide -mb-px">
           {/* Analytics Tab */}
-          <TabButton 
-            active={activeTab === 'analytics'} 
+          <TabButton
+            active={activeTab === 'analytics'}
             onClick={() => setActiveTab('analytics')}
             icon={<Layers className="w-4 h-4" />}
-            label="Análisis"
+            label={t('tabs.analytics')}
           />
-          
+
           {/* Config Tab */}
-          <TabButton 
-            active={activeTab === 'config'} 
+          <TabButton
+            active={activeTab === 'config'}
             onClick={() => setActiveTab('config')}
             icon={<Calendar className="w-4 h-4" />}
-            label="Configuración"
+            label={t('tabs.config')}
           />
-          
+
           {/* Calculations Tab */}
-          <TabButton 
-            active={activeTab === 'calculations'} 
+          <TabButton
+            active={activeTab === 'calculations'}
             onClick={() => setActiveTab('calculations')}
             icon={<BarChart3 className="w-4 h-4" />}
-            label="Cálculos"
+            label={t('tabs.calculations')}
           />
-          
+
           {/* Prescription Tab (NEW) */}
-          <TabButton 
-            active={activeTab === 'prescription'} 
+          <TabButton
+            active={activeTab === 'prescription'}
             onClick={() => setActiveTab('prescription')}
             icon={<FileDown className="w-4 h-4" />}
-            label="Prescripción"
+            label={t('tabs.prescription')}
           />
-          
+
           {/* Alerts Tab (NEW) */}
-          <TabButton 
-            active={activeTab === 'alerts'} 
+          <TabButton
+            active={activeTab === 'alerts'}
             onClick={() => setActiveTab('alerts')}
             icon={<Bell className="w-4 h-4" />}
-            label="Alertas"
+            label={t('tabs.alerts')}
           />
-          
+
           {/* Weather Tab (NEW) */}
-          <TabButton 
-            active={activeTab === 'weather'} 
+          <TabButton
+            active={activeTab === 'weather'}
             onClick={() => setActiveTab('weather')}
             icon={<Cloud className="w-4 h-4" />}
-            label="Clima"
+            label={t('tabs.weather')}
           />
-          
+
           {/* Zoning Tab (NEW) */}
-          <TabButton 
-            active={activeTab === 'zoning'} 
+          <TabButton
+            active={activeTab === 'zoning'}
             onClick={() => setActiveTab('zoning')}
             icon={<MapPin className="w-4 h-4" />}
-            label="Zonificación"
+            label={t('tabs.zoning')}
           />
         </div>
       </div>
@@ -320,11 +331,10 @@ const TabButton: React.FC<{
 }> = ({ active, onClick, icon, label }) => (
   <button
     onClick={onClick}
-    className={`flex items-center gap-2 px-4 py-3 text-sm font-medium whitespace-nowrap border-b-2 transition-colors ${
-      active
-        ? 'border-emerald-600 text-emerald-700'
-        : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
-    }`}
+    className={`flex items-center gap-2 px-4 py-3 text-sm font-medium whitespace-nowrap border-b-2 transition-colors ${active
+      ? 'border-emerald-600 text-emerald-700'
+      : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
+      }`}
   >
     {icon}
     <span>{label}</span>

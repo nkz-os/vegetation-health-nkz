@@ -3,7 +3,6 @@ import { Card } from '@nekazari/ui-kit';
 import { useVegetationContext } from '../services/vegetationContext';
 import { useVegetationApi } from '../services/api';
 import { TimeseriesChart } from './analytics/TimeseriesChart';
-import { DistributionHistogram } from './analytics/DistributionHistogram';
 import { useAuth } from '../hooks/useAuth';
 import type { VegetationJob, AnomalyCheckResponse, PredictionResponse, ModuleCapabilities, VegetationIndexType } from '../types';
 
@@ -84,8 +83,15 @@ export const VegetationAnalytics: React.FC = () => {
             // Load year comparison data
             api.compareYears(selectedEntityId, selectedIndex || 'NDVI')
                 .then((data) => {
-                    if (data && data.years) {
-                        setYearComparison(data.years);
+                    // Handle both possible response structures
+                    if (data && (data as any).years) {
+                        setYearComparison((data as any).years);
+                    } else if (data && data.current_year && data.previous_year) {
+                        // Convert structured response to array format
+                        setYearComparison([
+                            { year: data.current_year.year, stats: data.current_year.stats },
+                            { year: data.previous_year.year, stats: data.previous_year.stats }
+                        ]);
                     }
                 })
                 .catch((err) => {
@@ -96,8 +102,20 @@ export const VegetationAnalytics: React.FC = () => {
             // Load current stats from scene stats
             api.getSceneStats(selectedEntityId, selectedIndex || 'NDVI', 3)
                 .then((data) => {
-                    if (data && data.statistics) {
-                        setStats(data.statistics);
+                    // Handle both possible response structures
+                    if (data && (data as any).statistics) {
+                        setStats((data as any).statistics);
+                    } else if (data && data.stats && data.stats.length > 0) {
+                        // Calculate aggregate stats from scene stats
+                        const latestStat = data.stats[0];
+                        if (latestStat.mean_value !== null) {
+                            setStats({
+                                mean: latestStat.mean_value,
+                                min: latestStat.min_value ?? 0,
+                                max: latestStat.max_value ?? 1,
+                                std_dev: latestStat.std_dev ?? 0
+                            });
+                        }
                     }
                 })
                 .catch((err) => {
@@ -120,10 +138,10 @@ export const VegetationAnalytics: React.FC = () => {
     // Ferrari: Anomaly check handler
     const handleAnomalyCheck = async () => {
         if (!selectedEntityId) return;
-        
+
         setLoadingAnomalies(true);
         setAnomalyResult(null);
-        
+
         try {
             const result = await api.checkAnomalies({
                 entity_id: selectedEntityId,
@@ -394,7 +412,7 @@ export const VegetationAnalytics: React.FC = () => {
                                         </td>
                                     </tr>
                                 ) : yearComparison.length > 0 ? (
-                                    yearComparison.map((yearData: any, i: number) => (
+                                    yearComparison.map((yearData: any) => (
                                         <tr key={yearData.year}>
                                             <td className="px-3 py-2 whitespace-nowrap text-sm font-medium text-gray-900">{yearData.year}</td>
                                             <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-500">{yearData.mean?.toFixed(2) || '-'}</td>
@@ -460,7 +478,7 @@ export const VegetationAnalytics: React.FC = () => {
                         <h3 className="text-md font-semibold text-slate-800">Detección de Anomalías</h3>
                     </div>
                 </div>
-                
+
                 <div className="space-y-4">
                     {/* Date Range for Anomaly Check */}
                     <div className="flex flex-wrap gap-4 items-end">
@@ -502,13 +520,12 @@ export const VegetationAnalytics: React.FC = () => {
                                     </div>
                                     <div className="max-h-48 overflow-y-auto space-y-2">
                                         {anomalyResult.anomalies.map((anomaly, idx) => (
-                                            <div 
+                                            <div
                                                 key={idx}
-                                                className={`p-3 rounded-lg border ${
-                                                    anomaly.severity === 'critical' 
-                                                        ? 'bg-red-50 border-red-200' 
+                                                className={`p-3 rounded-lg border ${anomaly.severity === 'critical'
+                                                        ? 'bg-red-50 border-red-200'
                                                         : 'bg-amber-50 border-amber-200'
-                                                }`}
+                                                    }`}
                                             >
                                                 <div className="flex justify-between items-start">
                                                     <div>
@@ -519,11 +536,10 @@ export const VegetationAnalytics: React.FC = () => {
                                                     </div>
                                                     <div className="text-right">
                                                         <div className="text-sm font-bold text-slate-800">{anomaly.value.toFixed(3)}</div>
-                                                        <div className={`text-xs ${
-                                                            anomaly.severity === 'critical' ? 'text-red-600' : 'text-amber-600'
-                                                        }`}>
-                                                            {anomaly.anomaly_type === 'low' ? '↓ Bajo' : 
-                                                             anomaly.anomaly_type === 'high' ? '↑ Alto' : '⚡ Cambio brusco'}
+                                                        <div className={`text-xs ${anomaly.severity === 'critical' ? 'text-red-600' : 'text-amber-600'
+                                                            }`}>
+                                                            {anomaly.anomaly_type === 'low' ? '↓ Bajo' :
+                                                                anomaly.anomaly_type === 'high' ? '↑ Alto' : '⚡ Cambio brusco'}
                                                         </div>
                                                     </div>
                                                 </div>
@@ -550,7 +566,7 @@ export const VegetationAnalytics: React.FC = () => {
                         <TrendingUp className="w-5 h-5 text-emerald-500" />
                         <h3 className="text-md font-semibold text-slate-800">Predicción de Índice</h3>
                     </div>
-                    
+
                     {loadingPredictions ? (
                         <div className="flex items-center justify-center py-8">
                             <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-emerald-600"></div>

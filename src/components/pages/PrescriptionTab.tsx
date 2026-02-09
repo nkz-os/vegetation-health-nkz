@@ -17,11 +17,11 @@ import { FileDown, Upload, Map, ExternalLink } from 'lucide-react';
 const PrescriptionTab: React.FC = () => {
   const { selectedEntityId } = useVegetationContext();
   const api = useVegetationApi();
-  
+
   const [isExporting, setIsExporting] = useState<string | null>(null);
   const [exportMessage, setExportMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [capabilities, setCapabilities] = useState<ModuleCapabilities | null>(null);
-  const [loadingCapabilities, setLoadingCapabilities] = useState(true);
+  const [_loadingCapabilities, setLoadingCapabilities] = useState(true);
 
   // Load module capabilities for graceful degradation
   useEffect(() => {
@@ -37,14 +37,14 @@ const PrescriptionTab: React.FC = () => {
 
   const handleExport = async (format: 'geojson' | 'shapefile' | 'csv') => {
     if (!selectedEntityId) return;
-    
+
     setIsExporting(format);
     setExportMessage(null);
-    
+
     try {
       let blob: Blob;
       let filename: string;
-      
+
       switch (format) {
         case 'geojson':
           blob = await api.exportPrescriptionGeojson(selectedEntityId);
@@ -59,7 +59,7 @@ const PrescriptionTab: React.FC = () => {
           filename = `prescription_${selectedEntityId}.csv`;
           break;
       }
-      
+
       // Trigger download
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -69,7 +69,7 @@ const PrescriptionTab: React.FC = () => {
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-      
+
       setExportMessage({ type: 'success', text: `Exportado correctamente: ${filename}` });
     } catch (error) {
       console.error('Export failed:', error);
@@ -85,14 +85,14 @@ const PrescriptionTab: React.FC = () => {
    */
   const handleIsobusExport = () => {
     if (!selectedEntityId) return;
-    
+
     // Try host-provided callback first
     if (typeof (window as any).__nekazariOpenISOBUS === 'function') {
       const geometry = (window as any).__nekazariContext?.selectedGeometry;
       (window as any).__nekazariOpenISOBUS(geometry, { entityId: selectedEntityId });
       return;
     }
-    
+
     // Fallback: Navigate to ISOBUS route with query params
     const url = `/isobus/create-task?source=vegetation&entityId=${encodeURIComponent(selectedEntityId)}`;
     if ((window as any).__nekazariNavigate) {
@@ -108,10 +108,10 @@ const PrescriptionTab: React.FC = () => {
    */
   const handleSendToCloud = async () => {
     if (!selectedEntityId) return;
-    
+
     setIsExporting('n8n');
     setExportMessage(null);
-    
+
     try {
       const result = await api.sendToCloud(selectedEntityId, {
         prescription_type: 'vra_zones',
@@ -120,10 +120,10 @@ const PrescriptionTab: React.FC = () => {
           source: 'vegetation-prime'
         }
       });
-      
-      setExportMessage({ 
-        type: 'success', 
-        text: result.message || 'Mapa enviado correctamente a la nube' 
+
+      setExportMessage({
+        type: 'success',
+        text: result.message || 'Mapa enviado correctamente a la nube'
       });
     } catch (error) {
       console.error('Send to cloud failed:', error);
@@ -168,11 +168,10 @@ const PrescriptionTab: React.FC = () => {
 
       {/* Export Message */}
       {exportMessage && (
-        <div className={`mb-6 p-4 rounded-lg ${
-          exportMessage.type === 'success' 
-            ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' 
+        <div className={`mb-6 p-4 rounded-lg ${exportMessage.type === 'success'
+            ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
             : 'bg-red-50 text-red-800 border border-red-200'
-        }`}>
+          }`}>
           {exportMessage.text}
         </div>
       )}
@@ -183,7 +182,7 @@ const PrescriptionTab: React.FC = () => {
           <FileDown className="w-5 h-5 text-emerald-600" />
           Formatos de Descarga
         </h2>
-        
+
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {/* GeoJSON */}
           <button
@@ -235,7 +234,7 @@ const PrescriptionTab: React.FC = () => {
           <Upload className="w-5 h-5 text-blue-600" />
           Integración con Maquinaria
         </h2>
-        
+
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {/* ISOBUS Export (Bridge) */}
           <div className="p-4 border border-slate-200 rounded-lg">
@@ -251,11 +250,10 @@ const PrescriptionTab: React.FC = () => {
                 <button
                   onClick={handleIsobusExport}
                   disabled={!isobusAvailable || isExporting !== null}
-                  className={`mt-3 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                    isobusAvailable
+                  className={`mt-3 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${isobusAvailable
                       ? 'bg-purple-600 text-white hover:bg-purple-700'
                       : 'bg-slate-200 text-slate-400 cursor-not-allowed'
-                  }`}
+                    }`}
                   title={!isobusAvailable ? 'Módulo ISOBUS no disponible para este tenant' : ''}
                 >
                   <span className="flex items-center gap-2">
@@ -281,11 +279,10 @@ const PrescriptionTab: React.FC = () => {
                 <button
                   onClick={handleSendToCloud}
                   disabled={!n8nAvailable || isExporting !== null}
-                  className={`mt-3 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                    n8nAvailable
+                  className={`mt-3 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${n8nAvailable
                       ? 'bg-sky-600 text-white hover:bg-sky-700'
                       : 'bg-slate-200 text-slate-400 cursor-not-allowed'
-                  }`}
+                    }`}
                   title={!n8nAvailable ? 'N8N no configurado para este tenant' : ''}
                 >
                   {isExporting === 'n8n' ? (

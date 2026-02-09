@@ -1,11 +1,11 @@
 import axios, { AxiosInstance } from 'axios';
-import { 
-  VegetationJob, 
-  VegetationScene, 
-  VegetationConfig, 
-  IndexCalculationParams, 
-  TimeseriesDataPoint, 
-  TimelineStatsResponse, 
+import {
+  VegetationJob,
+  VegetationScene,
+  VegetationConfig,
+  IndexCalculationParams,
+  TimeseriesDataPoint,
+  TimelineStatsResponse,
   YearComparisonResponse,
   AnomalyCheckParams,
   AnomalyCheckResponse,
@@ -17,9 +17,6 @@ import {
   WeatherSensor,
   FormulaPreviewParams,
   FormulaPreviewResponse,
-  CarbonConfig,
-  ZoningTriggerResponse,
-  ZoningGeoJsonResponse,
   SendToCloudResponse,
   ModuleCapabilities
 } from '../types';
@@ -243,7 +240,8 @@ export class VegetationApiClient {
 
   async getRecentJobs(limit: number = 5): Promise<VegetationJob[]> {
     const response = await this.client.get(`/jobs?limit=${limit}`);
-    return response as unknown as VegetationJob[];
+    const data = response as unknown as { jobs: VegetationJob[]; total: number };
+    return Array.isArray(data?.jobs) ? data.jobs : [];
   }
 
   async listJobs(status?: string, limit: number = 50, offset: number = 0): Promise<{ jobs: VegetationJob[]; total: number }> {
@@ -666,7 +664,7 @@ export class VegetationApiClient {
    * This goes through our backend which proxies to N8N (security: CORS + credentials)
    */
   async sendToCloud(
-    parcelId: string, 
+    parcelId: string,
     payload?: {
       prescription_type?: string;
       zones?: any;

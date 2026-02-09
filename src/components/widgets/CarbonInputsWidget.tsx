@@ -44,13 +44,13 @@ export const CarbonInputsWidget: React.FC<CarbonInputsWidgetProps> = ({
   const { selectedEntityId } = useVegetationContext();
   const effectiveEntityId = propEntityId || selectedEntityId;
   const api = useVegetationApi();
-  
+
   const [config, setConfig] = useState<CarbonConfigLocal>({
     strawRemoved: false,
     soilType: 'loam',
     tillageType: 'conventional',
   });
-  
+
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -85,7 +85,7 @@ export const CarbonInputsWidget: React.FC<CarbonInputsWidgetProps> = ({
 
   const handleSave = async () => {
     if (!effectiveEntityId) return;
-    
+
     setIsSaving(true);
     setError(null);
     try {
@@ -125,13 +125,13 @@ export const CarbonInputsWidget: React.FC<CarbonInputsWidgetProps> = ({
       <h3 className={`font-semibold text-slate-800 ${compact ? 'text-sm mb-2' : 'text-base mb-4'}`}>
         Configuración de Carbono
       </h3>
-      
+
       {error && (
         <div className="mb-3 p-2 bg-red-50 border border-red-200 rounded text-sm text-red-700">
           {error}
         </div>
       )}
-      
+
       {/* Straw Removal Toggle */}
       <div className="mb-4">
         <label className="flex items-center justify-between cursor-pointer">
@@ -143,18 +143,16 @@ export const CarbonInputsWidget: React.FC<CarbonInputsWidgetProps> = ({
               onChange={(e) => setConfig({ ...config, strawRemoved: e.target.checked })}
               className="sr-only"
             />
-            <div className={`w-10 h-5 rounded-full transition-colors ${
-              config.strawRemoved ? 'bg-orange-500' : 'bg-green-500'
-            }`}>
-              <div className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${
-                config.strawRemoved ? 'translate-x-5' : ''
-              }`} />
+            <div className={`w-10 h-5 rounded-full transition-colors ${config.strawRemoved ? 'bg-orange-500' : 'bg-green-500'
+              }`}>
+              <div className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${config.strawRemoved ? 'translate-x-5' : ''
+                }`} />
             </div>
           </div>
         </label>
         <p className="text-xs text-slate-500 mt-1">
-          {config.strawRemoved 
-            ? '⚠️ Menor secuestro de carbono' 
+          {config.strawRemoved
+            ? '⚠️ Menor secuestro de carbono'
             : '✓ La paja se incorpora al suelo'}
         </p>
       </div>
@@ -166,12 +164,11 @@ export const CarbonInputsWidget: React.FC<CarbonInputsWidgetProps> = ({
           {SOIL_TYPES.map((soil) => (
             <button
               key={soil.value}
-              onClick={() => setConfig({ ...config, soilType: soil.value as CarbonConfig['soilType'] })}
-              className={`px-3 py-2 rounded-lg text-xs font-medium transition-all ${
-                config.soilType === soil.value
+              onClick={() => setConfig({ ...config, soilType: soil.value as CarbonConfigLocal['soilType'] })}
+              className={`px-3 py-2 rounded-lg text-xs font-medium transition-all ${config.soilType === soil.value
                   ? 'bg-emerald-100 text-emerald-800 border-2 border-emerald-500'
                   : 'bg-slate-50 text-slate-600 border border-slate-200 hover:bg-slate-100'
-              }`}
+                }`}
             >
               {soil.label}
             </button>
@@ -185,7 +182,7 @@ export const CarbonInputsWidget: React.FC<CarbonInputsWidgetProps> = ({
           <label className="block text-sm text-slate-700 mb-2">Sistema de Laboreo</label>
           <select
             value={config.tillageType}
-            onChange={(e) => setConfig({ ...config, tillageType: e.target.value as CarbonConfig['tillageType'] })}
+            onChange={(e) => setConfig({ ...config, tillageType: e.target.value as CarbonConfigLocal['tillageType'] })}
             className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
           >
             {TILLAGE_TYPES.map((tillage) => (
@@ -201,13 +198,12 @@ export const CarbonInputsWidget: React.FC<CarbonInputsWidgetProps> = ({
       <button
         onClick={handleSave}
         disabled={isSaving}
-        className={`w-full py-2 rounded-lg font-medium text-sm transition-all ${
-          saved
+        className={`w-full py-2 rounded-lg font-medium text-sm transition-all ${saved
             ? 'bg-green-500 text-white'
             : isSaving
-            ? 'bg-slate-300 text-slate-500 cursor-wait'
-            : 'bg-emerald-600 text-white hover:bg-emerald-700'
-        }`}
+              ? 'bg-slate-300 text-slate-500 cursor-wait'
+              : 'bg-emerald-600 text-white hover:bg-emerald-700'
+          }`}
       >
         {saved ? '✓ Guardado' : isSaving ? 'Guardando...' : 'Guardar Configuración'}
       </button>

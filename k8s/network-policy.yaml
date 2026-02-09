@@ -1,0 +1,43 @@
+# =============================================================================
+# Network Policy for Vegetation Prime Backend
+# =============================================================================
+# Restricts ingress traffic to the backend API to only come from the api-gateway.
+# This follows zero-trust network principles.
+# =============================================================================
+
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: vegetation-prime-api-netpol
+  namespace: nekazari
+  labels:
+    app: vegetation-prime-api
+    module: vegetation-prime
+spec:
+  podSelector:
+    matchLabels:
+      app: vegetation-prime-api
+  policyTypes:
+    - Ingress
+  ingress:
+    # Allow traffic only from api-gateway
+    - from:
+        - podSelector:
+            matchLabels:
+              app: api-gateway
+      ports:
+        - protocol: TCP
+          port: 8000
+    # Allow traffic from vegetation-prime-worker (for internal communication)
+    - from:
+        - podSelector:
+            matchLabels:
+              app: vegetation-prime-worker
+      ports:
+        - protocol: TCP
+          port: 8000
+    # Allow health probes from kubernetes
+    - from: []
+      ports:
+        - protocol: TCP
+          port: 8000

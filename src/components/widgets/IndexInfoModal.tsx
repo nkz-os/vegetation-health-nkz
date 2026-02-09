@@ -1,6 +1,6 @@
 import React from 'react';
 import { X, Info, Beaker, Target, AlertTriangle, Leaf } from 'lucide-react';
-import { IndexInfo, getIndexInfo } from '../../data/indexInfo';
+import { getIndexInfo } from '../../data/indexInfo';
 
 interface IndexInfoModalProps {
     indexType: string;
@@ -91,10 +91,10 @@ export const IndexInfoModal: React.FC<IndexInfoModalProps> = ({
                                 >
                                     <div
                                         className={`w-3 h-3 rounded-full ${key === 'veryLow' ? 'bg-red-500' :
-                                                key === 'low' ? 'bg-orange-400' :
-                                                    key === 'medium' ? 'bg-yellow-400' :
-                                                        key === 'high' ? 'bg-lime-500' :
-                                                            'bg-green-500'
+                                            key === 'low' ? 'bg-orange-400' :
+                                                key === 'medium' ? 'bg-yellow-400' :
+                                                    key === 'high' ? 'bg-lime-500' :
+                                                        'bg-green-500'
                                             }`}
                                     />
                                     <span className="font-mono text-xs text-slate-600 w-24">{range}</span>
