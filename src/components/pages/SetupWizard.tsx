@@ -100,9 +100,19 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
 
     const [startDate, setStartDate] = useState<string>(() => {
         const date = new Date();
-        date.setFullYear(date.getFullYear() - 1); // Default to 1 year ago
+        date.setDate(date.getDate() - 21); // Default to 21 days ago for Sentinel-2 coverage
         return date.toISOString().split('T')[0];
     });
+
+    // Calculate days from start date to today for validation
+    const daysFromStartToToday = React.useMemo(() => {
+        const start = new Date(startDate);
+        const today = new Date();
+        const diffTime = today.getTime() - start.getTime();
+        return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    }, [startDate]);
+
+    const isDateRangeTooShort = daysFromStartToToday < 14;
 
     const [selectedIndices, setSelectedIndices] = useState<string[]>(['NDVI', 'EVI']);
     const [frequency, setFrequency] = useState<'weekly' | 'daily' | 'biweekly'>('weekly');
@@ -243,15 +253,24 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
                             {/* Date Selection */}
                             <div>
                                 <label className="block text-sm font-medium text-slate-700 mb-2">
-                                    <Calendar className="inline w-4 h-4 mr-1" /> Fecha de inicio de datos históricos
+                                    <Calendar className="inline w-4 h-4 mr-1" /> Fecha de inicio de monitoreo
                                 </label>
                                 <input
                                     type="date"
                                     value={startDate}
                                     onChange={(e) => setStartDate(e.target.value)}
-                                    className="w-full border-slate-300 rounded-md shadow-sm focus:border-green-500 focus:ring-green-500"
+                                    max={new Date().toISOString().split('T')[0]}
+                                    className={`w-full rounded-md shadow-sm focus:border-green-500 focus:ring-green-500 ${isDateRangeTooShort ? 'border-amber-400' : 'border-slate-300'}`}
                                 />
-                                <p className="text-xs text-slate-500 mt-1">Descargaremos imágenes disponibles desde esta fecha.</p>
+                                <p className="text-xs text-slate-500 mt-1">
+                                    Buscaremos imágenes de Sentinel-2 desde esta fecha. Recomendamos mínimo 21 días para garantizar disponibilidad.
+                                </p>
+                                {isDateRangeTooShort && (
+                                    <div className="mt-2 p-2 bg-amber-50 border border-amber-200 rounded text-xs text-amber-700">
+                                        ⚠️ <strong>Rango corto ({daysFromStartToToday} días)</strong>: Sentinel-2 pasa cada 5 días.
+                                        Con nubes, puede que no haya imágenes disponibles. Recomendamos mínimo 14-21 días.
+                                    </div>
+                                )}
                             </div>
 
                             {/* Index Selection */}
