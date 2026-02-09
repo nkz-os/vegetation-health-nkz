@@ -81,21 +81,7 @@ export default defineConfig({
     // React must be shared via Module Federation (singleton) to work correctly
     // when module renders inside host's React tree
     rollupOptions: {
-      // Externalize React so ui-kit (when bundled) can use React from host
-      // Note: react/jsx-runtime is NOT externalized - it's bundled because
-      // Module Federation doesn't provide it in shared scope and it's safe to bundle
-      // Note: @nekazari/sdk is NOT externalized - it's bundled directly
-      external: [
-        'react',
-        'react-dom',
-        'react-router-dom',
-      ],
       output: {
-        globals: {
-          'react': 'React',
-          'react-dom': 'ReactDOM',
-          'react-router-dom': 'ReactRouterDOM',
-        },
         format: 'es',
       },
     },
