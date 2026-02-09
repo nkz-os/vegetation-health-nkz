@@ -27,14 +27,13 @@ export default defineConfig({
         'react': {
           singleton: true,
           requiredVersion: '^18.3.1',
+          import: false, // Use Global window.React
         },
-        'react-dom': {
-          singleton: true,
-          requiredVersion: '^18.3.1',
-        },
+        // We bundle react-dom to ensure we have createPortal, but we use the global React
         'react-router-dom': {
           singleton: true,
           requiredVersion: '^6.26.0',
+          import: false, // Use Global window.ReactRouterDOM
         },
         // Shared with host for consistency
         '@nekazari/ui-kit': {
@@ -75,7 +74,19 @@ export default defineConfig({
     // React must be shared via Module Federation (singleton) to work correctly
     // when module renders inside host's React tree
     rollupOptions: {
+      // Externalize React so ui-kit (when bundled) can use React from host
+      // Note: react/jsx-runtime is NOT externalized - it's bundled because
+      // Module Federation doesn't provide it in shared scope and it's safe to bundle
+      // Note: @nekazari/sdk is NOT externalized - it's bundled directly
+      external: [
+        'react',
+        'react-router-dom',
+      ],
       output: {
+        globals: {
+          'react': 'React',
+          'react-router-dom': 'ReactRouterDOM',
+        },
         format: 'es',
       },
     },
