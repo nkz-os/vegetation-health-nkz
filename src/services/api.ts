@@ -459,6 +459,30 @@ export class VegetationApiClient {
   }
 
   /**
+   * Get a single entity by ID
+   */
+  async getEntity(entityId: string): Promise<any> {
+    try {
+      const token = this.getToken();
+      const headers: Record<string, string> = {};
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const response = await fetch(`/ngsi-ld/v1/entities/${entityId}`, {
+        method: 'GET',
+        headers,
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch entity: ${response.status}`);
+      }
+      return response.json();
+    } catch (error) {
+      console.error('[VegetationApi] Error fetching entity:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Create a new monitoring subscription
    */
   async createSubscription(data: {

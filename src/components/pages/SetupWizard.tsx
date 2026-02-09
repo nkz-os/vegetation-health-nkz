@@ -63,6 +63,8 @@ interface SetupWizardProps {
     onComplete: () => void;
 }
 
+import { getEntityGeometry } from '../../utils/geometry';
+
 export const SetupWizard: React.FC<SetupWizardProps> = ({
     open, onClose, entityId, entityName = 'Parcela seleccionada', geometry, onComplete
 }) => {
@@ -70,8 +72,32 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
     const [step, setStep] = useState(1);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [localGeometry, setLocalGeometry] = useState<any>(geometry);
+    const [fetchingGeometry, setFetchingGeometry] = useState(false);
 
-    // Configuration state
+    // Fetch geometry if missing
+    React.useEffect(() => {
+        if (open && entityId && !geometry && !localGeometry) {
+            setFetchingGeometry(true);
+            api.getEntity(entityId)
+                .then(entity => {
+                    const geom = getEntityGeometry(entity);
+                    if (geom) {
+                        setLocalGeometry(geom);
+                    } else {
+                        setError("No se pudo obtener la geometría de la parcela.");
+                    }
+                })
+                .catch(err => {
+                    console.error("Error fetching entity:", err);
+                    setError("Error al cargar datos de la parcela.");
+                })
+                .finally(() => setFetchingGeometry(false));
+        } else if (geometry) {
+            setLocalGeometry(geometry);
+        }
+    }, [entityId, geometry, open, api]);
+
     const [startDate, setStartDate] = useState<string>(() => {
         const date = new Date();
         date.setFullYear(date.getFullYear() - 1); // Default to 1 year ago
@@ -98,12 +124,17 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
     };
 
     const handleSubmit = async () => {
+        if (!localGeometry) {
+            setError("Falta la geometría de la parcela. No se puede continuar.");
+            return;
+        }
+
         setLoading(true);
         setError(null);
         try {
             await api.createSubscription({
                 entity_id: entityId,
-                geometry: geometry, // Important: Pass geometry for scene search
+                geometry: localGeometry, // Use fetched or prop geometry
                 start_date: startDate,
                 index_types: selectedIndices,
                 frequency: frequency,
@@ -113,7 +144,12 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
             onClose();
         } catch (err: any) {
             console.error(err);
-            setError(err.message || 'Error al guardar la configuración');
+            // Handle 422 explicitly
+            if (err.response && err.response.status === 422) {
+                setError('Datos inválidos. Verifica que la parcela tenga geometría válida.');
+            } else {
+                setError(err.message || 'Error al guardar la configuración');
+            }
         } finally {
             setLoading(false);
         }
@@ -179,6 +215,16 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
                                     Vamos a configurar la descarga automática de imágenes satelitales y el cálculo semanal de índices de vegetación para esta parcela.
                                 </p>
                             </div>
+                            {fetchingGeometry && (
+                                <div className="text-sm text-blue-600 animate-pulse">
+                                    Obteniendo geometría de la parcela...
+                                </div>
+                            )}
+                            {error && step === 1 && (
+                                <div className="text-sm text-red-600 bg-red-50 p-2 rounded">
+                                    {error}
+                                </div>
+                            )}
                             <div className="bg-slate-50 p-4 rounded-lg inline-block text-left border border-slate-200">
                                 <p className="text-sm font-semibold text-slate-700">Parcela seleccionada:</p>
                                 <p className="text-slate-600">{entityName}</p>
