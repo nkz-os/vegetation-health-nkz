@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Button } from '@nekazari/ui-kit';
 import { Calendar, Layers, Activity, CheckCircle, ArrowRight, ArrowLeft, X } from 'lucide-react';
 
@@ -12,14 +13,15 @@ const Modal: React.FC<{
     footer?: React.ReactNode;
 }> = ({ isOpen, onClose, title, children, footer }) => {
     if (!isOpen) return null;
-    return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <div className="fixed inset-0 bg-black/50" onClick={onClose} />
-            <div className="relative bg-white rounded-lg shadow-xl max-w-2xl w-full flex flex-col max-h-[85vh]">
+
+    return createPortal(
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
+            <div className="fixed inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
+            <div className="relative bg-white rounded-lg shadow-xl max-w-2xl w-full flex flex-col max-h-[85vh] animate-in fade-in zoom-in-95 duration-200">
                 {/* Fixed Header */}
                 <div className="flex items-center justify-between p-4 border-b flex-shrink-0">
                     <h2 className="text-lg font-semibold">{title}</h2>
-                    <button onClick={onClose} className="p-1 hover:bg-slate-100 rounded">
+                    <button onClick={onClose} className="p-1 hover:bg-slate-100 rounded transition-colors">
                         <X className="w-5 h-5" />
                     </button>
                 </div>
@@ -34,7 +36,8 @@ const Modal: React.FC<{
                     </div>
                 )}
             </div>
-        </div>
+        </div>,
+        document.body
     );
 };
 
