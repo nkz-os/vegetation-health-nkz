@@ -32,7 +32,7 @@ spec:
         - name: ghcr-secret
       containers:
         - name: worker
-          image: ghcr.io/k8-benetis/vegetation-health-nkz/vegetation-prime-backend:latest
+          image: ghcr.io/k8-benetis/vegetation-health-nkz/vegetation-prime-api:latest
           imagePullPolicy: Always
           command:
             [
