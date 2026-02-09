@@ -111,6 +111,27 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
             onClose={onClose}
             title={`Configurar Monitoreo: ${entityName}`}
             size="lg"
+            footer={
+                <div className="flex justify-between">
+                    {step > 1 ? (
+                        <Button variant="ghost" onClick={() => setStep(step - 1)} disabled={loading}>
+                            <ArrowLeft className="w-4 h-4 mr-2" /> Atrás
+                        </Button>
+                    ) : (
+                        <div />
+                    )}
+
+                    {step < 3 ? (
+                        <Button variant="primary" onClick={() => setStep(step + 1)}>
+                            Continuar <ArrowRight className="w-4 h-4 ml-2" />
+                        </Button>
+                    ) : (
+                        <Button variant="primary" onClick={handleSubmit} disabled={loading} className="bg-green-600 hover:bg-green-700">
+                            {loading ? 'Activando...' : 'Activar Monitoreo'}
+                        </Button>
+                    )}
+                </div>
+            }
         >
             <div className="p-6">
                 {/* Progress Indicators */}
@@ -257,27 +278,6 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
                     )}
                 </div>
             </div>
-            footer={
-                <div className="flex justify-between">
-                    {step > 1 ? (
-                        <Button variant="ghost" onClick={() => setStep(step - 1)} disabled={loading}>
-                            <ArrowLeft className="w-4 h-4 mr-2" /> Atrás
-                        </Button>
-                    ) : (
-                        <div />
-                    )}
-
-                    {step < 3 ? (
-                        <Button variant="primary" onClick={() => setStep(step + 1)}>
-                            Continuar <ArrowRight className="w-4 h-4 ml-2" />
-                        </Button>
-                    ) : (
-                        <Button variant="primary" onClick={handleSubmit} disabled={loading} className="bg-green-600 hover:bg-green-700">
-                            {loading ? 'Activando...' : 'Activar Monitoreo'}
-                        </Button>
-                    )}
-                </div>
-            }
         </Modal>
     );
 };
