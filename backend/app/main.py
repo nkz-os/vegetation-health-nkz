@@ -420,6 +420,51 @@ async def get_job(
     )
 
 
+@app.delete("/api/vegetation/jobs/{job_id}")
+async def delete_job(
+    job_id: UUID,
+    current_user: dict = Depends(require_auth),
+    db: Session = Depends(get_db_with_tenant)
+):
+    """Delete a job from history.
+    
+    Only allows deletion of completed or failed jobs.
+    Running jobs must be cancelled first.
+    """
+    job = db.query(VegetationJob).filter(
+        VegetationJob.id == job_id,
+        VegetationJob.tenant_id == current_user['tenant_id']
+    ).first()
+    
+    if not job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Job not found"
+        )
+    
+    # Prevent deletion of running jobs
+    if job.status in ('pending', 'running'):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot delete a running job. Please wait for completion or cancel first."
+        )
+    
+    # Delete associated cache entries first
+    from app.models import VegetationIndexCache
+    db.query(VegetationIndexCache).filter(
+        VegetationIndexCache.tenant_id == current_user['tenant_id'],
+        VegetationIndexCache.entity_id == job.entity_id
+    ).delete(synchronize_session=False)
+    
+    # Delete the job
+    db.delete(job)
+    db.commit()
+    
+    logger.info(f"Job {job_id} deleted by user {current_user.get('user_id')}")
+    
+    return {"message": f"Job {job_id} deleted successfully"}
+
+
 class JobDetailsResponse(BaseModel):
     """Response model for job details with statistics."""
     job: JobResponse

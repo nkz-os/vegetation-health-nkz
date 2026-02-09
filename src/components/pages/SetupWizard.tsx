@@ -2,26 +2,37 @@ import React, { useState } from 'react';
 import { Button } from '@nekazari/ui-kit';
 import { Calendar, Layers, Activity, CheckCircle, ArrowRight, ArrowLeft, X } from 'lucide-react';
 
-// Simple Modal component (ui-kit doesn't export Modal)
+// Simple Modal component with fixed header/footer and scrollable content
 const Modal: React.FC<{
     isOpen: boolean;
     onClose: () => void;
     title: string;
     size?: string;
     children: React.ReactNode;
-}> = ({ isOpen, onClose, title, children }) => {
+    footer?: React.ReactNode;
+}> = ({ isOpen, onClose, title, children, footer }) => {
     if (!isOpen) return null;
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
             <div className="fixed inset-0 bg-black/50" onClick={onClose} />
-            <div className="relative bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-auto">
-                <div className="flex items-center justify-between p-4 border-b">
+            <div className="relative bg-white rounded-lg shadow-xl max-w-2xl w-full flex flex-col max-h-[85vh]">
+                {/* Fixed Header */}
+                <div className="flex items-center justify-between p-4 border-b flex-shrink-0">
                     <h2 className="text-lg font-semibold">{title}</h2>
                     <button onClick={onClose} className="p-1 hover:bg-slate-100 rounded">
                         <X className="w-5 h-5" />
                     </button>
                 </div>
-                {children}
+                {/* Scrollable Content */}
+                <div className="flex-1 overflow-y-auto">
+                    {children}
+                </div>
+                {/* Fixed Footer */}
+                {footer && (
+                    <div className="border-t border-slate-200 p-4 flex-shrink-0 bg-white rounded-b-lg">
+                        {footer}
+                    </div>
+                )}
             </div>
         </div>
     );
@@ -245,15 +256,15 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
                         </div>
                     )}
                 </div>
-
-                {/* Footer Buttons */}
-                <div className="mt-8 flex justify-between border-t border-slate-100 pt-4">
+            </div>
+            footer={
+                <div className="flex justify-between">
                     {step > 1 ? (
                         <Button variant="ghost" onClick={() => setStep(step - 1)} disabled={loading}>
                             <ArrowLeft className="w-4 h-4 mr-2" /> Atrás
                         </Button>
                     ) : (
-                        <div /> // Spacer
+                        <div />
                     )}
 
                     {step < 3 ? (
@@ -266,7 +277,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
                         </Button>
                     )}
                 </div>
-            </div>
+            }
         </Modal>
     );
 };
