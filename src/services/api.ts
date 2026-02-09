@@ -432,8 +432,8 @@ export class VegetationApiClient {
   // Helper to get API URL
   // Helper to get API URL
   private getBaseApiUrl(): string {
-    if (typeof window !== 'undefined' && (window as any).__ENV__ && (window as any).__ENV__.API_URL) {
-      return (window as any).__ENV__.API_URL;
+    if (typeof window !== 'undefined' && (window as any).__ENV__) {
+      return (window as any).__ENV__.API_URL || (window as any).__ENV__.VITE_API_URL || '';
     }
     // Fallback for local dev or if env not set
     return '';
