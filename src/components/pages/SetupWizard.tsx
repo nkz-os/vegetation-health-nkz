@@ -14,31 +14,42 @@ const Modal: React.FC<{
 }> = ({ isOpen, onClose, title, children, footer }) => {
     if (!isOpen) return null;
 
-    return createPortal(
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
-            <div className="fixed inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
-            <div className="relative bg-white rounded-lg shadow-xl max-w-2xl w-full flex flex-col max-h-[85vh] animate-in fade-in zoom-in-95 duration-200">
-                {/* Fixed Header */}
-                <div className="flex items-center justify-between p-4 border-b flex-shrink-0">
-                    <h2 className="text-lg font-semibold">{title}</h2>
-                    <button onClick={onClose} className="p-1 hover:bg-slate-100 rounded transition-colors">
-                        <X className="w-5 h-5" />
-                    </button>
-                </div>
-                {/* Scrollable Content */}
-                <div className="flex-1 overflow-y-auto">
-                    {children}
-                </div>
-                {/* Fixed Footer */}
-                {footer && (
-                    <div className="border-t border-slate-200 p-4 flex-shrink-0 bg-white rounded-b-lg">
-                        {footer}
+    // Debug logging for portal issue
+    console.log('Rendering Modal, Portal check:', {
+        createPortal,
+        isFunction: typeof createPortal === 'function'
+    });
+
+    try {
+        return createPortal(
+            <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
+                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm" onClick={onClose} />
+                <div className="relative bg-white rounded-lg shadow-xl max-w-2xl w-full flex flex-col max-h-[85vh] animate-in fade-in zoom-in-95 duration-200">
+                    {/* Fixed Header */}
+                    <div className="flex items-center justify-between p-4 border-b flex-shrink-0">
+                        <h2 className="text-lg font-semibold">{title}</h2>
+                        <button onClick={onClose} className="p-1 hover:bg-slate-100 rounded transition-colors">
+                            <X className="w-5 h-5" />
+                        </button>
                     </div>
-                )}
-            </div>
-        </div>,
-        document.body
-    );
+                    {/* Scrollable Content */}
+                    <div className="flex-1 overflow-y-auto">
+                        {children}
+                    </div>
+                    {/* Fixed Footer */}
+                    {footer && (
+                        <div className="border-t border-slate-200 p-4 flex-shrink-0 bg-white rounded-b-lg">
+                            {footer}
+                        </div>
+                    )}
+                </div>
+            </div>,
+            document.body
+        );
+    } catch (e) {
+        console.error('Portal creation failed:', e);
+        return null;
+    }
 };
 
 import { useVegetationApi } from '../../services/api';

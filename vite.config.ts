@@ -27,20 +27,14 @@ export default defineConfig({
         'react': {
           singleton: true,
           requiredVersion: '^18.3.1',
-          import: false,
-          shareScope: 'default',
         },
         'react-dom': {
           singleton: true,
           requiredVersion: '^18.3.1',
-          import: false,
-          shareScope: 'default',
         },
         'react-router-dom': {
           singleton: true,
           requiredVersion: '^6.26.0',
-          import: false,
-          shareScope: 'default',
         },
         // Shared with host for consistency
         '@nekazari/ui-kit': {
