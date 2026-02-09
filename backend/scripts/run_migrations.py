@@ -235,6 +235,13 @@ def main():
     logger.info(f"Migration runner starting...")
     logger.info(f"Migrations directory: {migrations_dir}")
     
+    # DEBUG: List all files in migrations directory
+    try:
+        files = list(migrations_dir.glob('*'))
+        logger.info(f"Files in migrations dir: {[f.name for f in files]}")
+    except Exception as e:
+        logger.error(f"Error listing files: {e}")
+    
     # Get migration files
     migrations = get_migration_files(migrations_dir)
     
