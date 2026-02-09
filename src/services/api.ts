@@ -840,8 +840,9 @@ const getTenantId = (): string | undefined => {
 
 // Helper to get base API URL (repeated here for closure access if needed, or better expose static)
 const getApiBaseUrl = () => {
-  if (typeof window !== 'undefined' && (window as any).__ENV__ && (window as any).__ENV__.API_URL) {
-    return (window as any).__ENV__.API_URL;
+  if (typeof window !== 'undefined' && (window as any).__ENV__) {
+    const env = (window as any).__ENV__;
+    return env.API_URL || env.VITE_API_URL || '';
   }
   return '';
 };
