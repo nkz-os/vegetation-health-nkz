@@ -92,9 +92,9 @@ spec:
           resources:
             requests:
               memory: "512Mi"
-              cpu: "200m"
+              cpu: "100m"
             limits:
               memory: "1Gi"
-              cpu: "1000m"
+              cpu: "500m"
           # Workers don't need health checks (Celery manages them internally)
           # But we can add a readiness probe if needed
