@@ -7,6 +7,8 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.pool import NullPool
 from app.models.base import Base
+from fastapi import Depends
+from app.middleware.auth import get_tenant_id
 
 # Database URL
 DATABASE_URL = os.getenv('DATABASE_URL')
@@ -48,13 +50,13 @@ def get_db_session() -> Session:
         db.close()
 
 
-def get_db_with_tenant(tenant_id: str):
+def get_db_with_tenant(tenant_id: str = Depends(get_tenant_id)):
     """Get database session with tenant context set.
     
     This is a generator function for FastAPI dependency injection.
     
     Args:
-        tenant_id: Tenant ID for RLS
+        tenant_id: Tenant ID for RLS (injected via dependency)
         
     Yields:
         Database session

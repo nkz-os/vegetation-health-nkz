@@ -35,6 +35,9 @@ RUN rm -rf /usr/share/nginx/html/*
 COPY --from=builder /app/dist /usr/share/nginx/html
 COPY manifest.json /usr/share/nginx/html/manifest.json
 
+# Fix permissions
+RUN chown -R nginx-user:nginx-user /usr/share/nginx/html
+
 # Copy nginx config
 COPY frontend/nginx.conf /etc/nginx/conf.d/default.conf
 

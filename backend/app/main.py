@@ -70,6 +70,19 @@ app = FastAPI(
 def on_startup():
     init_db()
 
+
+# Validation Error Handler (for debugging 422)
+from fastapi.exceptions import RequestValidationError
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """Log validation errors in detail."""
+    logger.error(f"Validation error for {request.url}: {exc.errors()}")
+    logger.error(f"Body: {await request.body()}")
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content={"detail": exc.errors(), "body": str(exc.body)},
+    )
+
 # CORS middleware - restricted to known Nekazari domains
 import os
 ALLOWED_ORIGINS = os.getenv("CORS_ALLOWED_ORIGINS", "https://nekazari.artotxiki.com,https://nkz.artotxiki.com").split(",")
@@ -179,6 +192,22 @@ async def health_check():
 async def vegetation_health_check():
     """Health check endpoint for ingress routing."""
     return {"status": "healthy", "service": "vegetation-prime"}
+
+
+@app.get("/api/vegetation/capabilities")
+async def get_capabilities():
+    """Return module capabilities (resolves 404)."""
+    return {
+        "n8n_available": False,
+        "intelligence_available": False,
+        "isobus_available": False,
+        "features": {
+            "predictions": False,
+            "alerts_webhook": False,
+            "export_isoxml": False,
+            "send_to_cloud": False
+        }
+    }
 
 
 class LimitsSyncRequest(BaseModel):
