@@ -3,7 +3,7 @@ API endpoints for vegetation subscriptions (automated monitoring).
 """
 
 from typing import List, Optional
-from datetime import date
+from datetime import date, datetime
 import json
 from uuid import UUID
 
@@ -68,10 +68,10 @@ class SubscriptionResponse(SubscriptionBase):
     id: UUID
     tenant_id: str
     status: str
-    last_run_at: Optional[date] = None
-    next_run_at: Optional[date] = None
+    last_run_at: Optional[datetime] = None
+    next_run_at: Optional[datetime] = None
     last_error: Optional[str] = None
-    created_at: date
+    created_at: datetime
     
     class Config:
         from_attributes = True
