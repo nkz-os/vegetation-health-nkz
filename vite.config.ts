@@ -78,18 +78,7 @@ export default defineConfig({
     // React must be shared via Module Federation (singleton) to work correctly
     // when module renders inside host's React tree
     rollupOptions: {
-      // Externalize React dependencies to use Globals provided by Host
-      external: [
-        'react',
-        'react-dom',
-        'react-router-dom',
-      ],
       output: {
-        globals: {
-          'react': 'React',
-          'react-dom': 'ReactDOM',
-          'react-router-dom': 'ReactRouterDOM',
-        },
         format: 'es',
       },
     },
