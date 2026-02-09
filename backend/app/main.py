@@ -23,7 +23,8 @@ from app.middleware.service_auth import require_service_auth
 from app.models import (
     VegetationConfig, VegetationJob, VegetationScene,
     VegetationIndexCache, VegetationCustomFormula,
-    VegetationPlanLimits, VegetationUsageStats
+    VegetationPlanLimits, VegetationUsageStats,
+    VegetationSubscription
 )
 from app.tasks import download_sentinel2_scene, calculate_vegetation_index
 from app.services.storage import create_storage_service
