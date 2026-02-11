@@ -339,7 +339,8 @@ def download_sentinel2_scene(self, job_id: str, tenant_id: str, parameters: Dict
                     calculate_vegetation_index.delay(
                         job_id=calc_job_id,
                         tenant_id=tenant_id,
-                        parameters=calc_params
+                        scene_id=str(scene.id),
+                        index_type=index_type
                     )
             except Exception as e:
                 logger.error(f"Failed to trigger automated calculation: {e}")

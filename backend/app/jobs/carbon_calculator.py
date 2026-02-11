@@ -33,7 +33,7 @@ LUE_VALUES = {
 
 class CarbonCalculator:
     def __init__(self):
-        url = os.getenv("FIWARE_CONTEXT_BROKER_URL", "http://orion:1026")
+        url = os.getenv("FIWARE_CONTEXT_BROKER_URL", "http://orion-ld-service:1026")
         self.fiware = FIWAREClient(url, tenant_id="master")
 
     def calculate_daily_carbon(self, parcel: Dict[str, Any], ndvi: float, date_obs: date):

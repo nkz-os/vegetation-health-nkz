@@ -247,7 +247,7 @@ async def create_roi(
         
         # Configure FIWARE Client
         # In production, these should come from env vars
-        cb_url = os.getenv("FIWARE_CONTEXT_BROKER_URL", "http://orion:1026")
+        cb_url = os.getenv("FIWARE_CONTEXT_BROKER_URL", "http://orion-ld-service:1026")
         # In a real module, we might use a service account or user token
         
         client = FIWAREClient(
@@ -1474,7 +1474,7 @@ async def trigger_zoning(
     import os
     
     # Get ORION URL from environment
-    orion_url = os.getenv("FIWARE_CONTEXT_BROKER_URL", "http://orion:1026")
+    orion_url = os.getenv("FIWARE_CONTEXT_BROKER_URL", "http://orion-ld-service:1026")
     
     # Generate task ID
     task_id = f"zoning-{parcel_id.split(':')[-1]}-{datetime.now().strftime('%Y%m%d%H%M%S')}"

@@ -134,18 +134,18 @@ class UsageTracker:
                 )
                 db.add(stats)
             
-            # Update aggregated stats
-            stats.ha_processed += ha_processed
-            stats.ha_processed_count += 1
-            stats.jobs_created += 1
+            # Update aggregated stats (NULL-safe)
+            stats.ha_processed = (stats.ha_processed or Decimal('0.0')) + ha_processed
+            stats.ha_processed_count = (stats.ha_processed_count or 0) + 1
+            stats.jobs_created = (stats.jobs_created or 0) + 1
             
             # Update job type counters
             if job_type == 'download':
-                stats.download_jobs += 1
+                stats.download_jobs = (stats.download_jobs or 0) + 1
             elif job_type == 'process':
-                stats.process_jobs += 1
+                stats.process_jobs = (stats.process_jobs or 0) + 1
             elif job_type == 'calculate_index':
-                stats.calculate_jobs += 1
+                stats.calculate_jobs = (stats.calculate_jobs or 0) + 1
             
             stats.last_job_at = now
             
@@ -242,9 +242,9 @@ class UsageTracker:
             
             if stats:
                 if status == 'completed':
-                    stats.jobs_completed += 1
+                    stats.jobs_completed = (stats.jobs_completed or 0) + 1
                 elif status == 'failed':
-                    stats.jobs_failed += 1
+                    stats.jobs_failed = (stats.jobs_failed or 0) + 1
                 
                 db.commit()
                 

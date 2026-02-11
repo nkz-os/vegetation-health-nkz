@@ -67,7 +67,7 @@ class SentinelCrawler:
         return CopernicusDataSpaceClient(client_id, client_secret)
 
     def _init_fiware(self):
-        url = os.getenv("FIWARE_CONTEXT_BROKER_URL", "http://orion:1026")
+        url = os.getenv("FIWARE_CONTEXT_BROKER_URL", "http://orion-ld-service:1026")
         return FIWAREClient(url, tenant_id="master") # Multi-tenant loop needed in future
 
     def get_parcels(self) -> List[Dict[str, Any]]:

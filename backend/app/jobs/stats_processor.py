@@ -50,7 +50,7 @@ class StatsProcessor:
         )
 
     def _init_fiware(self):
-        url = os.getenv("FIWARE_CONTEXT_BROKER_URL", "http://orion:1026")
+        url = os.getenv("FIWARE_CONTEXT_BROKER_URL", "http://orion-ld-service:1026")
         return FIWAREClient(url, tenant_id="master")
 
     def process_stats(self, parcel_id: str, date_str: str, bands_map: Dict[str, str]):

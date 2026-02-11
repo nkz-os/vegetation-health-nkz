@@ -28,7 +28,7 @@ class ZoningAlgorithm:
     """
     
     def __init__(self, orion_url: Optional[str] = None, tenant_id: str = "master"):
-        url = orion_url or os.getenv("FIWARE_CONTEXT_BROKER_URL", "http://orion:1026")
+        url = orion_url or os.getenv("FIWARE_CONTEXT_BROKER_URL", "http://orion-ld-service:1026")
         self.fiware = FIWAREClient(url, tenant_id=tenant_id)
 
     def cluster_raster(self, raster_data: np.ndarray, n_clusters: int=3):
@@ -198,7 +198,7 @@ class ZoningAlgorithm:
 
 
 # Global instance for ORION_URL reference in main.py
-ORION_URL = os.getenv("FIWARE_CONTEXT_BROKER_URL", "http://orion:1026")
+ORION_URL = os.getenv("FIWARE_CONTEXT_BROKER_URL", "http://orion-ld-service:1026")
 
 
 if __name__ == "__main__":

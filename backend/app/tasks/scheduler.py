@@ -80,7 +80,8 @@ def check_and_process_entity(self, subscription_id, start_date, end_date):
     import json
     import uuid
     from app.services.copernicus_client import CopernicusDataSpaceClient
-    from app.models import VegetationScene
+    from app.services.platform_credentials import get_copernicus_credentials_with_fallback
+    from app.models import VegetationScene, VegetationConfig
     from geoalchemy2.shape import to_shape
 
     db_gen = get_db_session()
@@ -109,8 +110,26 @@ def check_and_process_entity(self, subscription_id, start_date, end_date):
             db.commit()
             return
 
-        # Search Copernicus
+        # Load Copernicus credentials from platform DB (or module config fallback)
+        config = db.query(VegetationConfig).filter(
+            VegetationConfig.tenant_id == sub.tenant_id
+        ).first()
+        
+        creds = get_copernicus_credentials_with_fallback(
+            fallback_client_id=config.copernicus_client_id if config else None,
+            fallback_client_secret=config.copernicus_client_secret_encrypted if config else None
+        )
+        
+        if not creds:
+            print(f"Error: Copernicus credentials not available for subscription {subscription_id}")
+            sub.last_error = "Copernicus credentials not configured. Configure in platform admin or module settings."
+            sub.status = 'error'
+            db.commit()
+            return
+        
+        # Search Copernicus with loaded credentials
         client = CopernicusDataSpaceClient()
+        client.set_credentials(creds['client_id'], creds['client_secret'])
         
         start = datetime.fromisoformat(start_date).date()
         end = datetime.fromisoformat(end_date).date()
