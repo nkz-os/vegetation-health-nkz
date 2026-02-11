@@ -18,8 +18,10 @@ class CopernicusDataSpaceClient:
     """Client for Copernicus Data Space Ecosystem API."""
     
     BASE_URL = "https://dataspace.copernicus.eu"
-    OAUTH_URL = f"{BASE_URL}/oauth/token"
-    CATALOG_URL = f"{BASE_URL}/api/v1/catalog/1.0.0"
+    # Identity API for token generation
+    OAUTH_URL = "https://identity.dataspace.copernicus.eu/auth/realms/CDSE/protocol/openid-connect/token"
+    # STAC API for scene search
+    CATALOG_URL = "https://stac.dataspace.copernicus.eu/v1"
     
     def __init__(self, client_id: Optional[str] = None, client_secret: Optional[str] = None):
         """Initialize Copernicus Data Space client.
