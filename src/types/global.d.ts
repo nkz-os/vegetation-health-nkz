@@ -12,10 +12,13 @@ declare global {
       };
       [key: string]: any; // Allow other modules to add their data
     };
+    __NKZ__: {
+      register: (module: any) => void;
+    };
   }
 }
 
-export {};
+export { };
 
 
 

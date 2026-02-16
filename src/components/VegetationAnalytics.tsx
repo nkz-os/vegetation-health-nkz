@@ -2,8 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { Card } from '@nekazari/ui-kit';
 import { useVegetationContext } from '../services/vegetationContext';
 import { useVegetationApi } from '../services/api';
-import { TimeseriesChart } from './analytics/TimeseriesChart';
+import TimeseriesChart from './widgets/TimeseriesChart';
 import { useAuth } from '../hooks/useAuth';
+import { useTranslation } from 'react-i18next';
 import type { VegetationJob, AnomalyCheckResponse, PredictionResponse, ModuleCapabilities, VegetationIndexType } from '../types';
 
 import { SetupWizard } from './pages/SetupWizard';
@@ -11,6 +12,7 @@ import { Button } from '@nekazari/ui-kit';
 import { AlertTriangle, TrendingUp, Search } from 'lucide-react';
 
 export const VegetationAnalytics: React.FC = () => {
+    const { t } = useTranslation();
     const { selectedIndex, selectedEntityId, setSelectedEntityId, selectedGeometry } = useVegetationContext();
     const { isAuthenticated } = useAuth();
     const api = useVegetationApi();
@@ -175,7 +177,7 @@ export const VegetationAnalytics: React.FC = () => {
         // ... keep existing
         return (
             <div className="flex items-center justify-center h-64">
-                <p className="text-gray-500">Please log in to view analytics.</p>
+                <p className="text-gray-500">{t('analyticsPage.loginRequired')}</p>
             </div>
         );
     }
@@ -187,15 +189,15 @@ export const VegetationAnalytics: React.FC = () => {
                 {/* ... existing content for no selection ... */}
                 <div className="flex items-center justify-center h-32 bg-slate-50 rounded-xl border border-dashed border-slate-300">
                     <div className="text-center">
-                        <p className="text-slate-500 font-medium">No parcel selected.</p>
-                        <p className="text-xs text-slate-400">Select a recently analyzed parcel below or use the map.</p>
+                        <p className="text-slate-500 font-medium">{t('analyticsPage.noParcelSelected')}</p>
+                        <p className="text-xs text-slate-400">{t('analyticsPage.noParcelHint')}</p>
                     </div>
                 </div>
 
                 <div>
-                    <h3 className="text-lg font-semibold text-slate-800 mb-4">Recently Analyzed Parcels</h3>
+                    <h3 className="text-lg font-semibold text-slate-800 mb-4">{t('analyticsPage.recentParcels')}</h3>
                     {loadingJobs ? (
-                        <div className="text-center py-4 text-slate-500">Loading history...</div>
+                        <div className="text-center py-4 text-slate-500">{t('analyticsPage.loadingHistory')}</div>
                     ) : uniqueEntities.length > 0 ? (
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             {uniqueEntities.map(job => (
@@ -223,7 +225,7 @@ export const VegetationAnalytics: React.FC = () => {
                             ))}
                         </div>
                     ) : (
-                        <p className="text-slate-500 text-sm">No analysis history found.</p>
+                        <p className="text-slate-500 text-sm">{t('analyticsPage.noHistory')}</p>
                     )}
                 </div>
             </div>
@@ -235,12 +237,12 @@ export const VegetationAnalytics: React.FC = () => {
         return (
             <div className="space-y-6 max-w-4xl mx-auto py-8">
                 <div className="flex justify-between items-center">
-                    <h2 className="text-2xl font-bold text-slate-800">Parcel Analysis</h2>
+                    <h2 className="text-2xl font-bold text-slate-800">{t('analyticsPage.parcelAnalysis')}</h2>
                     <button
                         onClick={() => setSelectedEntityId(null)}
                         className="text-sm text-slate-500 hover:text-slate-700 underline"
                     >
-                        Change Parcel
+                        {t('analyticsPage.changeParcel')}
                     </button>
                 </div>
 
@@ -250,13 +252,13 @@ export const VegetationAnalytics: React.FC = () => {
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
                         </svg>
                     </div>
-                    <h3 className="text-xl font-semibold text-slate-900">Monitoreo Inactivo</h3>
+                    <h3 className="text-xl font-semibold text-slate-900">{t('analyticsPage.inactiveMonitoring')}</h3>
                     <p className="text-slate-500 max-w-md mx-auto">
-                        Esta parcela no tiene el monitoreo automático activado. Configúralo para descargar imágenes históricas y recibir actualizaciones semanales.
+                        {t('analyticsPage.inactiveMonitoringDesc')}
                     </p>
                     <div className="pt-4">
                         <Button variant="primary" onClick={() => setShowWizard(true)}>
-                            Configurar Monitoreo
+                            {t('analyticsPage.configureMonitoring')}
                         </Button>
                     </div>
                 </div>
@@ -264,7 +266,7 @@ export const VegetationAnalytics: React.FC = () => {
                 {/* Legacy/Manual Jobs if any */}
                 {recentJobs.length > 0 && (
                     <div className="opacity-70">
-                        <h4 className="text-md font-semibold text-slate-700 mb-2">Historial Manual</h4>
+                        <h4 className="text-md font-semibold text-slate-700 mb-2">{t('analyticsPage.manualHistory')}</h4>
                         {/* Simple list of manual jobs */}
                         <div className="space-y-2">
                             {recentJobs.map(job => (
@@ -299,12 +301,12 @@ export const VegetationAnalytics: React.FC = () => {
         return (
             <div className="space-y-6 max-w-4xl mx-auto py-8">
                 <div className="flex justify-between items-center">
-                    <h2 className="text-2xl font-bold text-slate-800">Analytics Dashboard</h2>
+                    <h2 className="text-2xl font-bold text-slate-800">{t('analyticsPage.analyticsDashboard')}</h2>
                     <button
                         onClick={() => setSelectedEntityId(null)}
                         className="text-sm text-slate-500 hover:text-slate-700 underline"
                     >
-                        Change Parcel
+                        {t('analyticsPage.changeParcel')}
                     </button>
                 </div>
 
@@ -315,13 +317,13 @@ export const VegetationAnalytics: React.FC = () => {
                             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                         </svg>
                     </div>
-                    <h3 className="text-xl font-semibold text-slate-900">Procesando Histórico</h3>
+                    <h3 className="text-xl font-semibold text-slate-900">{t('analyticsPage.processingHistoric')}</h3>
                     <p className="text-slate-500 max-w-md mx-auto">
-                        Estamos descargando y procesando imágenes históricas de Sentinel-2 para tu parcela. Esto puede tomar unos minutos.
+                        {t('analyticsPage.processingHistoricDesc')}
                     </p>
                     <div className="pt-4 flex justify-center gap-2">
                         <span className="text-sm text-blue-600 font-medium bg-blue-50 px-3 py-1 rounded-full border border-blue-100">
-                            Sincronizando...
+                            {t('analyticsPage.syncing')}
                         </span>
                     </div>
                     {/* Optionally show recent jobs progress here if available */}
@@ -335,17 +337,17 @@ export const VegetationAnalytics: React.FC = () => {
         <div className="space-y-6 max-w-4xl mx-auto py-8">
             <div className="flex justify-between items-center">
                 <div className="flex items-center gap-3">
-                    <h2 className="text-2xl font-bold text-slate-800">Analytics Dashboard</h2>
+                    <h2 className="text-2xl font-bold text-slate-800">{t('analyticsPage.analyticsDashboard')}</h2>
                     <span className="bg-green-100 text-green-800 text-xs px-2 py-1 rounded-full border border-green-200 flex items-center">
                         <span className="w-2 h-2 bg-green-500 rounded-full mr-1 animate-pulse"></span>
-                        Monitoreo Activo
+                        {t('analyticsPage.activeMonitoring')}
                     </span>
                 </div>
                 <button
                     onClick={() => setSelectedEntityId(null)}
                     className="text-sm text-slate-500 hover:text-slate-700 underline"
                 >
-                    Change Parcel
+                    {t('analyticsPage.changeParcel')}
                 </button>
             </div>
 
@@ -363,7 +365,7 @@ export const VegetationAnalytics: React.FC = () => {
                         </div>
                         <div className="ml-3">
                             <p className="text-sm text-amber-700">
-                                <span className="font-bold">Nota de Resolución:</span> Para entidades pequeñas (&lt; 100m²), el índice Sentinel-2 representa "Vigor Zonal" y no salud individual precisa.
+                                <span className="font-bold">{t('analyticsPage.resolutionNote')}</span> {t('analyticsPage.resolutionNoteDesc')}
                             </p>
                         </div>
                     </div>
@@ -374,16 +376,16 @@ export const VegetationAnalytics: React.FC = () => {
             <Card padding="lg" className="bg-white/90 backdrop-blur-md border border-slate-200/50 rounded-xl shadow-sm">
                 <div className="mb-4 flex justify-between items-center">
                     <div>
-                        <h3 className="text-lg font-semibold text-slate-800">Tendencias de Vegetación ({selectedIndex || 'NDVI'})</h3>
-                        <p className="text-sm text-slate-500">Evolución histórica del índice</p>
+                        <h3 className="text-lg font-semibold text-slate-800">{t('analyticsPage.vegetationTrends', { index: selectedIndex || 'NDVI' })}</h3>
+                        <p className="text-sm text-slate-500">{t('analyticsPage.historicEvolution')}</p>
                     </div>
                     <div className="text-xs text-slate-400">
-                        Última actualización: {subscription?.last_run_at ? new Date(subscription.last_run_at).toLocaleDateString() : 'Pendiente'}
+                        {t('analyticsPage.lastUpdate')} {subscription?.last_run_at ? new Date(subscription.last_run_at).toLocaleDateString() : t('analyticsPage.pending')}
                     </div>
                 </div>
                 <div className="h-64 bg-slate-50 rounded-lg flex items-center justify-center">
-                    {/* Placeholder for real component */}
-                    <TimeseriesChart series={[]} indexType={selectedIndex || 'NDVI'} />
+                    {/* Using the real Recharts-based TimeseriesChart that fetches its own data */}
+                    <TimeseriesChart entityId={selectedEntityId} indexType={selectedIndex || 'NDVI'} />
                 </div>
             </Card>
 
@@ -392,23 +394,23 @@ export const VegetationAnalytics: React.FC = () => {
                 <Card padding="lg" className="bg-white/90 backdrop-blur-md border border-slate-200/50 rounded-xl shadow-sm">
                     {/* ... existing table ... */}
                     <div className="mb-4">
-                        <h3 className="text-md font-semibold text-slate-800">Comparativa Anual</h3>
-                        <p className="text-xs text-slate-500">Mismo periodo en años anteriores</p>
+                        <h3 className="text-md font-semibold text-slate-800">{t('analyticsPage.yearComparison')}</h3>
+                        <p className="text-xs text-slate-500">{t('analyticsPage.yearComparisonDesc')}</p>
                     </div>
                     <div className="overflow-x-auto">
                         <table className="min-w-full divide-y divide-gray-200">
                             <thead>
                                 <tr>
-                                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Año</th>
-                                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Media</th>
-                                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Dif.</th>
+                                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{t('analyticsPage.year')}</th>
+                                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{t('analyticsPage.mean')}</th>
+                                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{t('analyticsPage.diff')}</th>
                                 </tr>
                             </thead>
                             <tbody className="bg-white divide-y divide-gray-200">
                                 {loadingStats ? (
                                     <tr>
                                         <td colSpan={3} className="px-3 py-4 text-center text-sm text-gray-500">
-                                            Cargando datos...
+                                            {t('analyticsPage.loadingData')}
                                         </td>
                                     </tr>
                                 ) : yearComparison.length > 0 ? (
@@ -424,7 +426,7 @@ export const VegetationAnalytics: React.FC = () => {
                                 ) : (
                                     <tr>
                                         <td colSpan={3} className="px-3 py-4 text-center text-sm text-gray-500">
-                                            No hay datos históricos suficientes
+                                            {t('analyticsPage.noHistoricData')}
                                         </td>
                                     </tr>
                                 )}
@@ -437,11 +439,11 @@ export const VegetationAnalytics: React.FC = () => {
                 <Card padding="lg" className="bg-white/90 backdrop-blur-md border border-slate-200/50 rounded-xl shadow-sm">
                     {/* ... existing stats ... */}
                     <div className="mb-4">
-                        <h3 className="text-md font-semibold text-slate-800">Estadísticas Rápidas</h3>
+                        <h3 className="text-md font-semibold text-slate-800">{t('analyticsPage.quickStats')}</h3>
                     </div>
                     {loadingStats ? (
                         <div className="flex items-center justify-center h-32 text-gray-500">
-                            Cargando estadísticas...
+                            {t('analyticsPage.loadingStats')}
                         </div>
                     ) : stats ? (
                         <div className="grid grid-cols-2 gap-4">
@@ -450,7 +452,7 @@ export const VegetationAnalytics: React.FC = () => {
                                 <span className="text-2xl font-bold text-green-700">{stats.max.toFixed(2)}</span>
                             </div>
                             <div className="p-3 bg-blue-50 rounded-lg border border-blue-100">
-                                <span className="block text-xs text-blue-600 uppercase font-bold">Media</span>
+                                <span className="block text-xs text-blue-600 uppercase font-bold">{t('analyticsPage.mean')}</span>
                                 <span className="text-2xl font-bold text-blue-700">{stats.mean.toFixed(2)}</span>
                             </div>
                             <div className="p-3 bg-amber-50 rounded-lg border border-amber-100">
@@ -464,7 +466,7 @@ export const VegetationAnalytics: React.FC = () => {
                         </div>
                     ) : (
                         <div className="flex items-center justify-center h-32 text-gray-500">
-                            Selecciona una parcela para ver estadísticas
+                            {t('analyticsPage.selectParcelForStats')}
                         </div>
                     )}
                 </Card>
@@ -475,7 +477,7 @@ export const VegetationAnalytics: React.FC = () => {
                 <div className="mb-4 flex items-center justify-between">
                     <div className="flex items-center gap-2">
                         <AlertTriangle className="w-5 h-5 text-amber-500" />
-                        <h3 className="text-md font-semibold text-slate-800">Detección de Anomalías</h3>
+                        <h3 className="text-md font-semibold text-slate-800">{t('analyticsPage.anomalyDetection')}</h3>
                     </div>
                 </div>
 
@@ -483,7 +485,7 @@ export const VegetationAnalytics: React.FC = () => {
                     {/* Date Range for Anomaly Check */}
                     <div className="flex flex-wrap gap-4 items-end">
                         <div>
-                            <label className="block text-xs font-medium text-slate-600 mb-1">Desde</label>
+                            <label className="block text-xs font-medium text-slate-600 mb-1">{t('analyticsPage.from')}</label>
                             <input
                                 type="date"
                                 value={anomalyDateRange.start}
@@ -492,7 +494,7 @@ export const VegetationAnalytics: React.FC = () => {
                             />
                         </div>
                         <div>
-                            <label className="block text-xs font-medium text-slate-600 mb-1">Hasta</label>
+                            <label className="block text-xs font-medium text-slate-600 mb-1">{t('analyticsPage.to')}</label>
                             <input
                                 type="date"
                                 value={anomalyDateRange.end}
@@ -506,7 +508,7 @@ export const VegetationAnalytics: React.FC = () => {
                             className="flex items-center gap-2 px-4 py-1.5 bg-amber-500 text-white rounded-lg text-sm font-medium hover:bg-amber-600 disabled:bg-slate-300 disabled:cursor-wait transition-colors"
                         >
                             <Search className="w-4 h-4" />
-                            {loadingAnomalies ? 'Analizando...' : 'Buscar Anomalías'}
+                            {loadingAnomalies ? t('analyticsPage.analyzing') : t('analyticsPage.searchAnomalies')}
                         </button>
                     </div>
 
@@ -516,15 +518,15 @@ export const VegetationAnalytics: React.FC = () => {
                             {anomalyResult.anomalies.length > 0 ? (
                                 <div className="space-y-2">
                                     <div className="text-sm text-amber-700 font-medium">
-                                        Se encontraron {anomalyResult.anomalies.length} anomalías:
+                                        {t('analyticsPage.anomaliesFound', { count: anomalyResult.anomalies.length })}
                                     </div>
                                     <div className="max-h-48 overflow-y-auto space-y-2">
                                         {anomalyResult.anomalies.map((anomaly, idx) => (
                                             <div
                                                 key={idx}
                                                 className={`p-3 rounded-lg border ${anomaly.severity === 'critical'
-                                                        ? 'bg-red-50 border-red-200'
-                                                        : 'bg-amber-50 border-amber-200'
+                                                    ? 'bg-red-50 border-red-200'
+                                                    : 'bg-amber-50 border-amber-200'
                                                     }`}
                                             >
                                                 <div className="flex justify-between items-start">
@@ -538,8 +540,8 @@ export const VegetationAnalytics: React.FC = () => {
                                                         <div className="text-sm font-bold text-slate-800">{anomaly.value.toFixed(3)}</div>
                                                         <div className={`text-xs ${anomaly.severity === 'critical' ? 'text-red-600' : 'text-amber-600'
                                                             }`}>
-                                                            {anomaly.anomaly_type === 'low' ? '↓ Bajo' :
-                                                                anomaly.anomaly_type === 'high' ? '↑ Alto' : '⚡ Cambio brusco'}
+                                                            {anomaly.anomaly_type === 'low' ? t('analyticsPage.anomalyLow') :
+                                                                anomaly.anomaly_type === 'high' ? t('analyticsPage.anomalyHigh') : t('analyticsPage.anomalySudden')}
                                                         </div>
                                                     </div>
                                                 </div>
@@ -550,7 +552,7 @@ export const VegetationAnalytics: React.FC = () => {
                             ) : (
                                 <div className="p-4 bg-green-50 border border-green-200 rounded-lg text-center">
                                     <span className="text-green-700 font-medium">
-                                        No se detectaron anomalías en el periodo seleccionado
+                                        {t('analyticsPage.noAnomalies')}
                                     </span>
                                 </div>
                             )}
@@ -564,18 +566,18 @@ export const VegetationAnalytics: React.FC = () => {
                 <Card padding="lg" className="bg-white/90 backdrop-blur-md border border-slate-200/50 rounded-xl shadow-sm">
                     <div className="mb-4 flex items-center gap-2">
                         <TrendingUp className="w-5 h-5 text-emerald-500" />
-                        <h3 className="text-md font-semibold text-slate-800">Predicción de Índice</h3>
+                        <h3 className="text-md font-semibold text-slate-800">{t('analyticsPage.indexPrediction')}</h3>
                     </div>
 
                     {loadingPredictions ? (
                         <div className="flex items-center justify-center py-8">
                             <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-emerald-600"></div>
-                            <span className="ml-2 text-slate-500">Cargando predicciones...</span>
+                            <span className="ml-2 text-slate-500">{t('analyticsPage.loadingPredictions')}</span>
                         </div>
                     ) : predictions && predictions.predictions.length > 0 ? (
                         <div className="space-y-4">
                             <div className="text-xs text-slate-500">
-                                Modelo: {predictions.model_type} | Próximos 7 días
+                                {t('analyticsPage.predictionModel', { model: predictions.model_type })}
                             </div>
                             <div className="grid grid-cols-7 gap-2">
                                 {predictions.predictions.map((pred, idx) => (
@@ -595,14 +597,14 @@ export const VegetationAnalytics: React.FC = () => {
                         </div>
                     ) : (
                         <div className="text-center py-4 text-slate-500 text-sm">
-                            No hay predicciones disponibles para esta parcela
+                            {t('analyticsPage.noPredictions')}
                         </div>
                     )}
                 </Card>
             ) : (
                 <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 text-center text-slate-500 text-sm">
                     <TrendingUp className="w-6 h-6 mx-auto mb-2 opacity-50" />
-                    Predicciones no disponibles para este tenant
+                    {t('analyticsPage.predictionsUnavailable')}
                 </div>
             )}
         </div>

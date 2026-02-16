@@ -17,6 +17,7 @@ import {
   ComposedChart,
 } from 'recharts';
 import { Calendar, TrendingUp, TrendingDown, CloudOff } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 
 interface SceneStats {
   scene_id: string;
@@ -66,23 +67,23 @@ export const SmartTimeline: React.FC<SmartTimelineProps> = ({
   showComparison = false,
   isLoading = false,
 }) => {
-  
+  const { t } = useTranslation();
   const colors = INDEX_COLORS[indexType] || INDEX_COLORS.NDVI;
-  
+
   // Prepare chart data - reverse to show oldest first (left to right)
   const chartData = useMemo(() => {
     // Filter out entries without mean_value for cleaner chart
     const validStats = stats.filter(s => s.mean_value !== null);
-    
+
     return validStats.reverse().map((stat) => {
       const prevYearStat = previousYearStats?.find(p => {
         // Match by month/day for comparison
         const currDate = new Date(stat.sensing_date);
         const prevDate = new Date(p.sensing_date);
-        return currDate.getMonth() === prevDate.getMonth() && 
-               Math.abs(currDate.getDate() - prevDate.getDate()) <= 7;
+        return currDate.getMonth() === prevDate.getMonth() &&
+          Math.abs(currDate.getDate() - prevDate.getDate()) <= 7;
       });
-      
+
       return {
         date: stat.sensing_date,
         displayDate: formatDate(stat.sensing_date),
@@ -133,7 +134,7 @@ export const SmartTimeline: React.FC<SmartTimelineProps> = ({
         <div className="flex items-center justify-center h-40">
           <div className="animate-pulse flex items-center gap-2 text-slate-500">
             <Calendar className="w-5 h-5" />
-            <span>Cargando historial...</span>
+            <span>{t('timeline.loadingHistory')}</span>
           </div>
         </div>
       </div>
@@ -145,7 +146,7 @@ export const SmartTimeline: React.FC<SmartTimelineProps> = ({
       <div className="bg-white/95 backdrop-blur-sm rounded-xl border border-slate-200/50 p-4">
         <div className="flex items-center justify-center h-40 text-slate-500">
           <CloudOff className="w-5 h-5 mr-2" />
-          <span>No hay datos disponibles para el período seleccionado</span>
+          <span>{t('timeline.noDataAvailable')}</span>
         </div>
       </div>
     );
@@ -156,31 +157,30 @@ export const SmartTimeline: React.FC<SmartTimelineProps> = ({
       {/* Header */}
       <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div 
+          <div
             className="w-3 h-3 rounded-full"
             style={{ backgroundColor: colors.primary }}
           />
           <h3 className="font-semibold text-slate-800">
-            Evolución {indexType}
+            {t('timeline.evolution', { index: indexType })}
           </h3>
           {trend && (
-            <span className={`flex items-center gap-1 text-sm px-2 py-0.5 rounded-full ${
-              trend === 'up' ? 'bg-green-100 text-green-700' :
-              trend === 'down' ? 'bg-red-100 text-red-700' :
-              'bg-slate-100 text-slate-600'
-            }`}>
+            <span className={`flex items-center gap-1 text-sm px-2 py-0.5 rounded-full ${trend === 'up' ? 'bg-green-100 text-green-700' :
+                trend === 'down' ? 'bg-red-100 text-red-700' :
+                  'bg-slate-100 text-slate-600'
+              }`}>
               {trend === 'up' ? <TrendingUp className="w-3 h-3" /> :
-               trend === 'down' ? <TrendingDown className="w-3 h-3" /> : null}
-              {trend === 'up' ? 'Mejorando' : trend === 'down' ? 'Decreciendo' : 'Estable'}
+                trend === 'down' ? <TrendingDown className="w-3 h-3" /> : null}
+              {trend === 'up' ? t('timeline.improving') : trend === 'down' ? t('timeline.declining') : t('timeline.stable')}
             </span>
           )}
         </div>
-        
+
         {summary && (
           <div className="flex items-center gap-4 text-xs text-slate-500">
-            <span>Actual: <strong className="text-slate-700">{summary.current?.toFixed(3)}</strong></span>
-            <span>Media: <strong>{summary.avg?.toFixed(3)}</strong></span>
-            <span>Rango: {summary.min?.toFixed(2)} - {summary.max?.toFixed(2)}</span>
+            <span>{t('timeline.current')}: <strong className="text-slate-700">{summary.current?.toFixed(3)}</strong></span>
+            <span>{t('timeline.mean')}: <strong>{summary.avg?.toFixed(3)}</strong></span>
+            <span>{t('timeline.range')}: {summary.min?.toFixed(2)} - {summary.max?.toFixed(2)}</span>
           </div>
         )}
       </div>
@@ -195,22 +195,22 @@ export const SmartTimeline: React.FC<SmartTimelineProps> = ({
           >
             <defs>
               <linearGradient id={`gradient-${indexType}`} x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor={colors.primary} stopOpacity={0.3}/>
-                <stop offset="95%" stopColor={colors.primary} stopOpacity={0}/>
+                <stop offset="5%" stopColor={colors.primary} stopOpacity={0.3} />
+                <stop offset="95%" stopColor={colors.primary} stopOpacity={0} />
               </linearGradient>
             </defs>
-            
+
             <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
-            
-            <XAxis 
-              dataKey="displayDate" 
+
+            <XAxis
+              dataKey="displayDate"
               tick={{ fontSize: 10, fill: '#64748b' }}
               tickLine={false}
               axisLine={{ stroke: '#e2e8f0' }}
               interval="preserveStartEnd"
             />
-            
-            <YAxis 
+
+            <YAxis
               tick={{ fontSize: 10, fill: '#64748b' }}
               tickLine={false}
               axisLine={false}
@@ -218,7 +218,7 @@ export const SmartTimeline: React.FC<SmartTimelineProps> = ({
               tickFormatter={(v) => v.toFixed(1)}
               width={35}
             />
-            
+
             <Tooltip
               content={({ active, payload }) => {
                 if (!active || !payload || !payload[0]) return null;
@@ -229,11 +229,11 @@ export const SmartTimeline: React.FC<SmartTimelineProps> = ({
                     <div className="space-y-1 text-slate-600">
                       <p><span className="font-medium">{indexType}:</span> {data.value?.toFixed(4)}</p>
                       {data.cloud !== null && (
-                        <p><span className="font-medium">Nubes:</span> {data.cloud?.toFixed(1)}%</p>
+                        <p><span className="font-medium">{t('timeline.clouds')}:</span> {data.cloud?.toFixed(1)}%</p>
                       )}
                       {data.prevYearValue !== null && showComparison && (
                         <p className="text-slate-400">
-                          Año anterior: {data.prevYearValue?.toFixed(4)}
+                          {t('timeline.previousYear')}: {data.prevYearValue?.toFixed(4)}
                         </p>
                       )}
                     </div>
@@ -241,7 +241,7 @@ export const SmartTimeline: React.FC<SmartTimelineProps> = ({
                 );
               }}
             />
-            
+
             {/* Filled area under line */}
             <Area
               type="monotone"
@@ -249,7 +249,7 @@ export const SmartTimeline: React.FC<SmartTimelineProps> = ({
               stroke="none"
               fill={`url(#gradient-${indexType})`}
             />
-            
+
             {/* Previous year comparison line */}
             {showComparison && previousYearStats && (
               <Line
@@ -259,10 +259,10 @@ export const SmartTimeline: React.FC<SmartTimelineProps> = ({
                 strokeDasharray="5 5"
                 strokeWidth={1.5}
                 dot={false}
-                name="Año anterior"
+                name={t('timeline.previousYear')}
               />
             )}
-            
+
             {/* Main data line */}
             <Line
               type="monotone"
@@ -303,7 +303,7 @@ export const SmartTimeline: React.FC<SmartTimelineProps> = ({
                 strokeWidth: 2,
               }}
             />
-            
+
             {/* Reference line for selected date */}
             {selectedDate && (
               <ReferenceLine
@@ -316,7 +316,7 @@ export const SmartTimeline: React.FC<SmartTimelineProps> = ({
           </ComposedChart>
         </ResponsiveContainer>
       </div>
-      
+
       {/* Date slider / scene buttons */}
       <div className="px-4 py-2 border-t border-slate-100 bg-slate-50/50">
         <div className="flex gap-1 overflow-x-auto pb-1 scrollbar-thin">

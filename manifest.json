@@ -42,10 +42,60 @@
     ]
   },
   "build_config": {
-    "type": "remote",
-    "remote_entry_url": "/modules/vegetation-prime/assets/remoteEntry.js",
+    "type": "iife",
+    "remote_entry_url": "/modules/vegetation-prime/nkz-module.js",
     "scope": "vegetation_prime_module",
-    "exposed_module": "./App"
+    "exposed_module": "./moduleEntry"
+  },
+  "slots": {
+    "layer-toggle": [
+      {
+        "id": "vegetation-layer-control",
+        "moduleId": "vegetation-prime",
+        "component": "VegetationLayerControl",
+        "priority": 10
+      }
+    ],
+    "context-panel": [
+      {
+        "id": "vegetation-config",
+        "moduleId": "vegetation-prime",
+        "component": "VegetationConfig",
+        "priority": 20,
+        "showWhen": {
+          "entityType": [
+            "AgriParcel"
+          ]
+        }
+      },
+      {
+        "id": "vegetation-analytics",
+        "moduleId": "vegetation-prime",
+        "component": "VegetationAnalytics",
+        "priority": 30,
+        "showWhen": {
+          "entityType": [
+            "AgriParcel"
+          ]
+        }
+      }
+    ],
+    "bottom-panel": [
+      {
+        "id": "vegetation-timeline",
+        "moduleId": "vegetation-prime",
+        "component": "TimelineWidget",
+        "priority": 10
+      }
+    ],
+    "map-layer": [
+      {
+        "id": "vegetation-prime-cesium-layer",
+        "moduleId": "vegetation-prime",
+        "component": "VegetationLayer",
+        "priority": 10
+      }
+    ]
   },
   "metadata": {
     "icon": "🌱",
@@ -60,44 +110,6 @@
     ],
     "screenshots": [
       "assets/screenshot1.png"
-    ],
-    "slots": {
-      "layer-toggle": [
-        {
-          "id": "vegetation-layer-control",
-          "component": "VegetationLayerControl",
-          "priority": 10
-        }
-      ],
-      "context-panel": [
-        {
-          "id": "vegetation-config",
-          "component": "VegetationConfig",
-          "priority": 20,
-          "showWhen": {
-            "entityType": [
-              "AgriParcel"
-            ]
-          }
-        },
-        {
-          "id": "vegetation-analytics",
-          "component": "VegetationAnalytics",
-          "priority": 30,
-          "showWhen": {
-            "entityType": [
-              "AgriParcel"
-            ]
-          }
-        }
-      ],
-      "bottom-panel": [
-        {
-          "id": "vegetation-timeline",
-          "component": "TimelineWidget",
-          "priority": 10
-        }
-      ]
-    }
+    ]
   }
 }

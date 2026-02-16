@@ -13,6 +13,7 @@ import { VegetationAnalytics } from './components/VegetationAnalytics';
 import { CalculationsPage } from './components/pages/CalculationsPage';
 import { useVegetationApi } from './services/api';
 import { Calendar, Layers, Leaf, ChevronRight, BarChart3, FileDown, Bell, Cloud, MapPin } from 'lucide-react';
+import { SkeletonCard } from './components/widgets/SkeletonCard';
 
 // Lazy load new tabs for code splitting
 const PrescriptionTab = lazy(() => import('./components/pages/PrescriptionTab'));
@@ -25,11 +26,13 @@ type TabType = 'dashboard' | 'analytics' | 'config' | 'calculations' | 'prescrip
 
 // Loading fallback for lazy loaded tabs
 const TabLoadingFallback: React.FC = () => {
-  const { t } = useTranslation();
   return (
-    <div className="flex items-center justify-center py-12">
-      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-emerald-600"></div>
-      <span className="ml-3 text-slate-500">{t('common.loading')}</span>
+    <div className="space-y-4 p-4">
+      <SkeletonCard variant="chart" />
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <SkeletonCard variant="stats" />
+        <SkeletonCard variant="table" rows={3} />
+      </div>
     </div>
   );
 };
@@ -161,6 +164,7 @@ const DashboardContent: React.FC = () => {
                   <thead className="bg-slate-50 text-slate-900 font-semibold border-b border-slate-200">
                     <tr>
                       <th className="p-4">{t('dashboard.parcelName')}</th>
+                      <th className="p-4">{t('dashboard.health')}</th>
                       <th className="p-4">{t('dashboard.detectedCrop')}</th>
                       <th className="p-4">{t('dashboard.area')}</th>
                       <th className="p-4 text-right">{t('dashboard.action')}</th>
@@ -172,6 +176,11 @@ const DashboardContent: React.FC = () => {
                       const parcelName = parcel.name?.value || parcel.name || parcel.id;
                       const cropSpecies = parcel.cropSpecies?.value || parcel.category?.value || t('dashboard.unassigned');
                       const area = parcel.area?.value || parcel.area;
+                      // NDVI health badge: green ≥ 0.6, yellow 0.3-0.6, red < 0.3
+                      const latestNdvi = parcel.vegetationIndex?.value ?? parcel.ndvi?.value ?? null;
+                      const healthColor = latestNdvi === null ? 'bg-slate-300' :
+                        latestNdvi >= 0.6 ? 'bg-emerald-500' :
+                          latestNdvi >= 0.3 ? 'bg-amber-400' : 'bg-red-500';
 
                       return (
                         <tr
@@ -184,6 +193,11 @@ const DashboardContent: React.FC = () => {
                               <Leaf className="w-4 h-4" />
                             </div>
                             {parcelName}
+                          </td>
+                          <td className="p-4">
+                            <span className={`inline-block w-3 h-3 rounded-full ${healthColor} shadow-sm`}
+                              title={latestNdvi !== null ? `NDVI: ${latestNdvi.toFixed(2)}` : 'N/A'}
+                            />
                           </td>
                           <td className="p-4">
                             {cropSpecies}
@@ -207,7 +221,7 @@ const DashboardContent: React.FC = () => {
                     })}
                     {parcels.length === 0 && (
                       <tr>
-                        <td colSpan={4} className="p-8 text-center text-slate-400">
+                        <td colSpan={5} className="p-8 text-center text-slate-400">
                           {t('dashboard.noParcels')}
                         </td>
                       </tr>
@@ -238,7 +252,7 @@ const DashboardContent: React.FC = () => {
           <h2 className="font-semibold text-slate-800">
             {parcels.find((p: any) => p.id === selectedEntityId)?.name?.value ||
               parcels.find((p: any) => p.id === selectedEntityId)?.name ||
-              'Análisis detallado'}
+              t('dashboard.detailAnalysis')}
           </h2>
         </div>
       </div>

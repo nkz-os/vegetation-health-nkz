@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Button } from '@nekazari/ui-kit';
 import { Calendar, Layers, Activity, CheckCircle, ArrowRight, ArrowLeft, X } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 
 // Simple Modal component with fixed header/footer and scrollable content
 const Modal: React.FC<{
@@ -13,12 +14,6 @@ const Modal: React.FC<{
     footer?: React.ReactNode;
 }> = ({ isOpen, onClose, title, children, footer }) => {
     if (!isOpen) return null;
-
-    // Debug logging for portal issue
-    console.log('Rendering Modal, Portal check:', {
-        createPortal,
-        isFunction: typeof createPortal === 'function'
-    });
 
     try {
         return createPortal(
@@ -66,14 +61,17 @@ interface SetupWizardProps {
 import { getEntityGeometry } from '../../utils/geometry';
 
 export const SetupWizard: React.FC<SetupWizardProps> = ({
-    open, onClose, entityId, entityName = 'Parcela seleccionada', geometry, onComplete
+    open, onClose, entityId, entityName, geometry, onComplete
 }) => {
+    const { t } = useTranslation();
     const api = useVegetationApi();
     const [step, setStep] = useState(1);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [localGeometry, setLocalGeometry] = useState<any>(geometry);
     const [fetchingGeometry, setFetchingGeometry] = useState(false);
+
+    const displayName = entityName || t('setup.stepParcel');
 
     // Fetch geometry if missing
     React.useEffect(() => {
@@ -85,18 +83,18 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
                     if (geom) {
                         setLocalGeometry(geom);
                     } else {
-                        setError("No se pudo obtener la geometría de la parcela.");
+                        setError(t('setup.geometryError'));
                     }
                 })
                 .catch(err => {
                     console.error("Error fetching entity:", err);
-                    setError("Error al cargar datos de la parcela.");
+                    setError(t('setup.entityLoadError'));
                 })
                 .finally(() => setFetchingGeometry(false));
         } else if (geometry) {
             setLocalGeometry(geometry);
         }
-    }, [entityId, geometry, open, api]);
+    }, [entityId, geometry, open, api, t]);
 
     const [startDate, setStartDate] = useState<string>(() => {
         const date = new Date();
@@ -118,11 +116,11 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
     const [frequency, setFrequency] = useState<'weekly' | 'daily' | 'biweekly'>('weekly');
 
     const availableIndices = [
-        { id: 'NDVI', name: 'NDVI (Vigor General)', desc: 'Índice de Diferencia Normalizada de Vegetación. Estándar para salud vegetal.' },
-        { id: 'EVI', name: 'EVI (Alta Densidad)', desc: 'Índice de Vegetación Mejorado. Mejor para zonas con mucha biomasa.' },
-        { id: 'GNDVI', name: 'GNDVI (Clorofila)', desc: 'Sensible al contenido de clorofila y estrés hídrico.' },
-        { id: 'SAVI', name: 'SAVI (Suelo)', desc: 'Ajustado al suelo. Recomendado para etapas tempranas de cultivo.' },
-        { id: 'NDRE', name: 'NDRE (Borde Rojo)', desc: 'Usa banda Red Edge. Útil para cultivos permanentes y etapas finales.' },
+        { id: 'NDVI', name: 'NDVI (Vigor General)', desc: t('calculations.formulaHelp') },
+        { id: 'EVI', name: 'EVI (Alta Densidad)', desc: t('calculations.formulaHelp') },
+        { id: 'GNDVI', name: 'GNDVI (Clorofila)', desc: t('calculations.formulaHelp') },
+        { id: 'SAVI', name: 'SAVI (Suelo)', desc: t('calculations.formulaHelp') },
+        { id: 'NDRE', name: 'NDRE (Borde Rojo)', desc: t('calculations.formulaHelp') },
     ];
 
     const handleToggleIndex = (id: string) => {
@@ -135,7 +133,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
 
     const handleSubmit = async () => {
         if (!localGeometry) {
-            setError("Falta la geometría de la parcela. No se puede continuar.");
+            setError(t('setup.missingGeometry'));
             return;
         }
 
@@ -143,7 +141,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
         setError(null);
         const payload = {
             entity_id: entityId,
-            geometry: localGeometry, // Use fetched or prop geometry
+            geometry: localGeometry,
             start_date: startDate,
             index_types: selectedIndices,
             frequency: frequency,
@@ -158,12 +156,11 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
             onClose();
         } catch (err: any) {
             console.error('[SetupWizard] Error creating subscription:', err);
-            // Handle 422 explicitly
             if (err.response && err.response.status === 422) {
                 console.error('[SetupWizard] Validation Error Data:', err.response.data);
-                setError('Datos inválidos (422). Revisa la consola para más detalles.');
+                setError(t('setup.validationError'));
             } else {
-                setError(err.message || 'Error al guardar la configuración');
+                setError(err.message || t('setup.saveError'));
             }
         } finally {
             setLoading(false);
@@ -174,13 +171,13 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
         <Modal
             isOpen={open}
             onClose={onClose}
-            title={`Configurar Monitoreo: ${entityName}`}
+            title={t('setup.configureMonitoring', { name: displayName })}
             size="lg"
             footer={
                 <div className="flex justify-between">
                     {step > 1 ? (
                         <Button variant="ghost" onClick={() => setStep(step - 1)} disabled={loading}>
-                            <ArrowLeft className="w-4 h-4 mr-2" /> Atrás
+                            <ArrowLeft className="w-4 h-4 mr-2" /> {t('setup.back')}
                         </Button>
                     ) : (
                         <div />
@@ -188,11 +185,11 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
 
                     {step < 3 ? (
                         <Button variant="primary" onClick={() => setStep(step + 1)}>
-                            Continuar <ArrowRight className="w-4 h-4 ml-2" />
+                            {t('setup.continue')} <ArrowRight className="w-4 h-4 ml-2" />
                         </Button>
                     ) : (
                         <Button variant="primary" onClick={handleSubmit} disabled={loading} className="bg-green-600 hover:bg-green-700">
-                            {loading ? 'Activando...' : 'Activar Monitoreo'}
+                            {loading ? t('setup.activating') : t('setup.activateMonitoring')}
                         </Button>
                     )}
                 </div>
@@ -203,17 +200,17 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
                 <div className="flex items-center justify-between mb-8 px-8">
                     <div className={`flex flex-col items-center ${step >= 1 ? 'text-green-600' : 'text-slate-400'}`}>
                         <div className={`w-8 h-8 rounded-full flex items-center justify-center mb-2 ${step >= 1 ? 'bg-green-100 font-bold' : 'bg-slate-100'}`}>1</div>
-                        <span className="text-xs font-medium">Parcela</span>
+                        <span className="text-xs font-medium">{t('setup.stepParcel')}</span>
                     </div>
                     <div className={`h-1 flex-1 mx-4 ${step >= 2 ? 'bg-green-500' : 'bg-slate-200'}`} />
                     <div className={`flex flex-col items-center ${step >= 2 ? 'text-green-600' : 'text-slate-400'}`}>
                         <div className={`w-8 h-8 rounded-full flex items-center justify-center mb-2 ${step >= 2 ? 'bg-green-100 font-bold' : 'bg-slate-100'}`}>2</div>
-                        <span className="text-xs font-medium">Configuración</span>
+                        <span className="text-xs font-medium">{t('setup.stepConfig')}</span>
                     </div>
                     <div className={`h-1 flex-1 mx-4 ${step >= 3 ? 'bg-green-500' : 'bg-slate-200'}`} />
                     <div className={`flex flex-col items-center ${step >= 3 ? 'text-green-600' : 'text-slate-400'}`}>
                         <div className={`w-8 h-8 rounded-full flex items-center justify-center mb-2 ${step >= 3 ? 'bg-green-100 font-bold' : 'bg-slate-100'}`}>3</div>
-                        <span className="text-xs font-medium">Confirmar</span>
+                        <span className="text-xs font-medium">{t('setup.stepConfirm')}</span>
                     </div>
                 </div>
 
@@ -225,14 +222,14 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
                                 <Activity size={32} />
                             </div>
                             <div>
-                                <h3 className="text-xl font-bold text-slate-800">Activar Monitoreo Automático</h3>
+                                <h3 className="text-xl font-bold text-slate-800">{t('setup.activateAutoMonitoring')}</h3>
                                 <p className="text-slate-500 mt-2 max-w-md mx-auto">
-                                    Vamos a configurar la descarga automática de imágenes satelitales y el cálculo semanal de índices de vegetación para esta parcela.
+                                    {t('setup.autoMonitoringDesc')}
                                 </p>
                             </div>
                             {fetchingGeometry && (
                                 <div className="text-sm text-blue-600 animate-pulse">
-                                    Obteniendo geometría de la parcela...
+                                    {t('setup.fetchingGeometry')}
                                 </div>
                             )}
                             {error && step === 1 && (
@@ -241,8 +238,8 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
                                 </div>
                             )}
                             <div className="bg-slate-50 p-4 rounded-lg inline-block text-left border border-slate-200">
-                                <p className="text-sm font-semibold text-slate-700">Parcela seleccionada:</p>
-                                <p className="text-slate-600">{entityName}</p>
+                                <p className="text-sm font-semibold text-slate-700">{t('setup.selectedParcel')}</p>
+                                <p className="text-slate-600">{displayName}</p>
                                 <p className="text-xs text-slate-400 mt-1">ID: {entityId}</p>
                             </div>
                         </div>
@@ -253,7 +250,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
                             {/* Date Selection */}
                             <div>
                                 <label className="block text-sm font-medium text-slate-700 mb-2">
-                                    <Calendar className="inline w-4 h-4 mr-1" /> Fecha de inicio de monitoreo
+                                    <Calendar className="inline w-4 h-4 mr-1" /> {t('setup.startDateLabel')}
                                 </label>
                                 <input
                                     type="date"
@@ -263,12 +260,11 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
                                     className={`w-full rounded-md shadow-sm focus:border-green-500 focus:ring-green-500 ${isDateRangeTooShort ? 'border-amber-400' : 'border-slate-300'}`}
                                 />
                                 <p className="text-xs text-slate-500 mt-1">
-                                    Buscaremos imágenes de Sentinel-2 desde esta fecha. Recomendamos mínimo 21 días para garantizar disponibilidad.
+                                    {t('setup.startDateHelp')}
                                 </p>
                                 {isDateRangeTooShort && (
                                     <div className="mt-2 p-2 bg-amber-50 border border-amber-200 rounded text-xs text-amber-700">
-                                        ⚠️ <strong>Rango corto ({daysFromStartToToday} días)</strong>: Sentinel-2 pasa cada 5 días.
-                                        Con nubes, puede que no haya imágenes disponibles. Recomendamos mínimo 14-21 días.
+                                        ⚠️ <strong>{t('setup.shortRange', { days: daysFromStartToToday })}</strong>: {t('setup.shortRangeWarning')}
                                     </div>
                                 )}
                             </div>
@@ -276,7 +272,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
                             {/* Index Selection */}
                             <div>
                                 <label className="block text-sm font-medium text-slate-700 mb-2">
-                                    <Layers className="inline w-4 h-4 mr-1" /> Índices a calcular automáticamente
+                                    <Layers className="inline w-4 h-4 mr-1" /> {t('setup.indicesLabel')}
                                 </label>
                                 <div className="space-y-2 max-h-48 overflow-y-auto border border-slate-200 rounded-md p-2">
                                     {availableIndices.map(idx => (
@@ -298,7 +294,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
 
                             {/* Frequency */}
                             <div>
-                                <label className="block text-sm font-medium text-slate-700 mb-2">Frecuencia de actualización</label>
+                                <label className="block text-sm font-medium text-slate-700 mb-2">{t('setup.frequencyLabel')}</label>
                                 <div className="flex gap-4">
                                     <label className="flex items-center">
                                         <input
@@ -309,7 +305,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
                                             onChange={() => setFrequency('weekly')}
                                             className="focus:ring-green-500 h-4 w-4 text-green-600 border-gray-300"
                                         />
-                                        <span className="ml-2 text-sm text-slate-700">Semanal (Recomendado)</span>
+                                        <span className="ml-2 text-sm text-slate-700">{t('setup.weeklyRecommended')}</span>
                                     </label>
                                     <label className="flex items-center">
                                         <input
@@ -320,7 +316,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
                                             onChange={() => setFrequency('daily')}
                                             className="focus:ring-green-500 h-4 w-4 text-green-600 border-gray-300"
                                         />
-                                        <span className="ml-2 text-sm text-slate-700">Diaria (Consume más créditos)</span>
+                                        <span className="ml-2 text-sm text-slate-700">{t('setup.dailyCredits')}</span>
                                     </label>
                                 </div>
                             </div>
@@ -331,31 +327,31 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
                         <div className="space-y-6">
                             <div className="bg-green-50 border border-green-200 rounded-lg p-4">
                                 <h4 className="font-semibold text-green-800 flex items-center">
-                                    <CheckCircle className="w-5 h-5 mr-2" /> Resumen de Configuración
+                                    <CheckCircle className="w-5 h-5 mr-2" /> {t('setup.summaryTitle')}
                                 </h4>
                                 <ul className="mt-2 space-y-1 text-sm text-green-700">
-                                    <li>• <strong>Parcela:</strong> {entityName}</li>
-                                    <li>• <strong>Inicio Histórico:</strong> {startDate}</li>
-                                    <li>• <strong>Índices:</strong> {selectedIndices.join(', ')}</li>
-                                    <li>• <strong>Frecuencia:</strong> {frequency === 'weekly' ? 'Semanal' : 'Diaria'}</li>
+                                    <li>• <strong>{t('setup.summaryParcel')}</strong> {displayName}</li>
+                                    <li>• <strong>{t('setup.summaryStartDate')}</strong> {startDate}</li>
+                                    <li>• <strong>{t('setup.summaryIndices')}</strong> {selectedIndices.join(', ')}</li>
+                                    <li>• <strong>{t('setup.summaryFrequency')}</strong> {frequency === 'weekly' ? t('setup.summaryWeekly') : t('setup.summaryDaily')}</li>
                                 </ul>
                             </div>
 
                             <div className="text-sm text-slate-600">
-                                <p>Al hacer clic en "Activar", el sistema comenzará a:</p>
+                                <p>{t('setup.activateDesc')}</p>
                                 <ol className="list-decimal list-inside mt-2 space-y-1 ml-2">
-                                    <li>Buscar imágenes satelitales históricas disponibles.</li>
-                                    <li>Calcular los índices seleccionados.</li>
-                                    <li>Programar las próximas actualizaciones automáticas.</li>
+                                    <li>{t('setup.activateStep1')}</li>
+                                    <li>{t('setup.activateStep2')}</li>
+                                    <li>{t('setup.activateStep3')}</li>
                                 </ol>
                                 <p className="mt-4 text-xs text-slate-500 italic">
-                                    Nota: El proceso inicial puede tomar unos minutos dependiendo del rango de fechas seleccionado. Recibirás una notificación cuando los datos estén listos.
+                                    {t('setup.activateNote')}
                                 </p>
                             </div>
 
                             {error && (
                                 <div className="bg-red-50 border border-red-200 text-red-700 p-3 rounded text-sm">
-                                    Error: {error}
+                                    {t('common.error')}: {error}
                                 </div>
                             )}
                         </div>

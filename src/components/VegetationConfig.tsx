@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useVegetationContext } from '../services/vegetationContext';
 import { useVegetationConfig } from '../hooks/useVegetationConfig';
 import { ModeSelector } from './widgets/ModeSelector';
@@ -22,6 +23,7 @@ const QuickActionsToolbar: React.FC<{
   onZoningTrigger: () => void;
   isZoningLoading: boolean;
 }> = ({ entityId, onZoningTrigger, isZoningLoading }) => {
+  const { t } = useTranslation();
   // Note: api hook available for future ISOBUS features
 
   const handleNavigateToModule = (tab: string) => {
@@ -67,7 +69,7 @@ const QuickActionsToolbar: React.FC<{
         <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
         </svg>
-        <span>Exportar Mapa</span>
+        <span>{t('configPanel.exportMap')}</span>
       </button>
 
       {/* Carbon Shortcut */}
@@ -79,7 +81,7 @@ const QuickActionsToolbar: React.FC<{
         <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707" />
         </svg>
-        <span>Carbono</span>
+        <span>{t('configPanel.carbonCalcLUE').split(' ')[0]}</span>
       </button>
 
       {/* Open in Vegetation Prime */}
@@ -91,7 +93,7 @@ const QuickActionsToolbar: React.FC<{
         <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
         </svg>
-        <span>Abrir en Vegetation</span>
+        <span>{t('configPanel.openInVegetation')}</span>
       </button>
     </div>
   );
@@ -112,6 +114,9 @@ export const VegetationConfig: React.FC<VegetationConfigProps> = ({ mode = 'pane
   const api = useVegetationApi();
   const [showCarbonConfig, setShowCarbonConfig] = useState(false);
   const [formula, setFormula] = useState('');
+  const [formulaValid, setFormulaValid] = useState<boolean | null>(null);
+  const formulaRef = useRef<HTMLTextAreaElement>(null);
+  const { t } = useTranslation();
   const [recentJobs, setRecentJobs] = useState<any[]>([]);
 
   // Quick Actions state
@@ -178,18 +183,18 @@ export const VegetationConfig: React.FC<VegetationConfigProps> = ({ mode = 'pane
         {/* Crop Recommendation (if available) */}
         {recommendation && !cropLoading && (
           <div className="p-2 bg-blue-50 rounded-lg border border-blue-200 text-xs">
-            <span className="font-medium text-blue-800">Índice recomendado:</span>{' '}
+            <span className="font-medium text-blue-800">{t('configPanel.recommendedIndex')}</span>{' '}
             <span className="text-blue-600">{recommendation.default_index}</span>
             {recommendation.valid_indices.length > 1 && (
               <span className="text-blue-500 ml-1">
-                (Válidos: {recommendation.valid_indices.join(', ')})
+                ({t('configPanel.validIndices', { indices: recommendation.valid_indices.join(', ') })})
               </span>
             )}
           </div>
         )}
 
         <section>
-          <h3 className="text-sm font-semibold text-slate-700 mb-2">Índice & Cálculo</h3>
+          <h3 className="text-sm font-semibold text-slate-700 mb-2">{t('configPanel.indexAndCalc')}</h3>
           <IndexPillSelector
             selectedIndex={selectedIndex || 'NDVI'}
             onIndexChange={setSelectedIndex}
@@ -198,27 +203,96 @@ export const VegetationConfig: React.FC<VegetationConfigProps> = ({ mode = 'pane
           />
 
           {selectedIndex === 'CUSTOM' && (
-            <div className="mb-4 p-3 bg-purple-50 rounded-md border border-purple-100">
-              <label className="block text-xs font-medium text-purple-800 mb-1">Fórmula Personalizada</label>
+            <div className={`mb-4 p-3 rounded-md border transition-colors ${formulaValid === true ? 'bg-emerald-50 border-emerald-300' :
+              formulaValid === false ? 'bg-red-50 border-red-300' :
+                'bg-purple-50 border-purple-100'
+              }`}>
+              <label className="block text-xs font-medium text-purple-800 mb-1">{t('configPanel.customFormula')}</label>
               <textarea
+                ref={formulaRef}
                 value={formula}
-                onChange={(e) => setFormula(e.target.value)}
-                placeholder="Ej: (B08 - B04) / (B08 + B04)"
-                className="w-full text-xs border-purple-200 rounded p-2 h-20 focus:ring-purple-500 focus:border-purple-500 font-mono"
+                onChange={(e) => {
+                  setFormula(e.target.value);
+                  // Basic paren-balance validation
+                  const val = e.target.value.trim();
+                  if (!val) { setFormulaValid(null); return; }
+                  const opens = (val.match(/\(/g) || []).length;
+                  const closes = (val.match(/\)/g) || []).length;
+                  const hasBands = /B\d{2}/i.test(val);
+                  setFormulaValid(opens === closes && hasBands);
+                }}
+                placeholder={t('configPanel.formulaPlaceholder')}
+                className="w-full text-xs rounded p-2 h-20 font-mono bg-white border border-slate-200 focus:ring-purple-500 focus:border-purple-500"
               />
-              <div className="flex flex-wrap gap-1 mt-2">
-                {['B02', 'B03', 'B04', 'B08', 'B11', 'B12'].map(b => (
-                  <span key={b} className="text-[10px] px-1.5 py-0.5 bg-white border border-purple-200 rounded text-purple-600 font-mono cursor-pointer hover:bg-purple-100" onClick={() => setFormula(prev => prev + b)}>
-                    {b}
-                  </span>
+
+              {/* Band chips — color-coded by spectrum */}
+              <div className="mt-2">
+                <span className="text-[10px] uppercase font-bold text-slate-400 mr-1">{t('configPanel.bands')}</span>
+                <div className="flex flex-wrap gap-1 mt-1">
+                  {/* Visible (Blue/Green/Red) */}
+                  {[{ band: 'B02', label: 'B02 (Blue)', color: 'bg-blue-100 text-blue-700 border-blue-200 hover:bg-blue-200' },
+                  { band: 'B03', label: 'B03 (Green)', color: 'bg-green-100 text-green-700 border-green-200 hover:bg-green-200' },
+                  { band: 'B04', label: 'B04 (Red)', color: 'bg-red-100 text-red-700 border-red-200 hover:bg-red-200' },
+                  { band: 'B05', label: 'B05 (RE1)', color: 'bg-orange-100 text-orange-700 border-orange-200 hover:bg-orange-200' },
+                  /* NIR */
+                  { band: 'B08', label: 'B08 (NIR)', color: 'bg-emerald-100 text-emerald-700 border-emerald-200 hover:bg-emerald-200' },
+                  { band: 'B8A', label: 'B8A (NIR)', color: 'bg-emerald-100 text-emerald-700 border-emerald-200 hover:bg-emerald-200' },
+                  /* SWIR */
+                  { band: 'B11', label: 'B11 (SWIR)', color: 'bg-amber-100 text-amber-700 border-amber-200 hover:bg-amber-200' },
+                  { band: 'B12', label: 'B12 (SWIR)', color: 'bg-amber-100 text-amber-700 border-amber-200 hover:bg-amber-200' },
+                  ].map(({ band, label, color }) => (
+                    <button key={band} type="button" title={label}
+                      className={`text-[10px] px-2 py-0.5 border rounded font-mono cursor-pointer transition-colors ${color}`}
+                      onClick={() => { setFormula(prev => prev + band); formulaRef.current?.focus(); }}
+                    >
+                      {band}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Operator chips */}
+              <div className="mt-2">
+                <span className="text-[10px] uppercase font-bold text-slate-400 mr-1">{t('configPanel.operators')}</span>
+                <div className="flex flex-wrap gap-1 mt-1">
+                  {['+', '-', '*', '/', '(', ')'].map(op => (
+                    <button key={op} type="button"
+                      className="text-xs px-2 py-0.5 bg-slate-100 border border-slate-200 rounded font-mono cursor-pointer hover:bg-slate-200 text-slate-600 transition-colors"
+                      onClick={() => { setFormula(prev => prev + ` ${op} `); formulaRef.current?.focus(); }}
+                    >
+                      {op}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Preset formulas */}
+              <div className="mt-2 flex items-center gap-2">
+                <span className="text-[10px] uppercase font-bold text-slate-400">{t('configPanel.presets')}</span>
+                {[{ name: 'NDVI', formula: '(B08 - B04) / (B08 + B04)' },
+                { name: 'EVI', formula: '2.5 * (B08 - B04) / (B08 + 6 * B04 - 7.5 * B02 + 1)' },
+                { name: 'SAVI', formula: '1.5 * (B08 - B04) / (B08 + B04 + 0.5)' },
+                ].map(preset => (
+                  <button key={preset.name} type="button"
+                    className="text-[10px] px-2 py-0.5 bg-purple-100 border border-purple-200 rounded text-purple-700 font-semibold cursor-pointer hover:bg-purple-200 transition-colors"
+                    onClick={() => { setFormula(preset.formula); setFormulaValid(true); formulaRef.current?.focus(); }}
+                  >
+                    {preset.name}
+                  </button>
                 ))}
+                <button type="button"
+                  className="text-[10px] px-2 py-0.5 bg-slate-50 border border-slate-200 rounded text-slate-500 cursor-pointer hover:bg-red-50 hover:text-red-500 hover:border-red-200 transition-colors ml-auto"
+                  onClick={() => { setFormula(''); setFormulaValid(null); }}
+                >
+                  ✕ {t('configPanel.clear')}
+                </button>
               </div>
             </div>
           )}
         </section>
 
         <section>
-          <h3 className="text-sm font-semibold text-slate-700 mb-2">Periodo de Análisis</h3>
+          <h3 className="text-sm font-semibold text-slate-700 mb-2">{t('configPanel.analysisPeriod')}</h3>
           <DateRangePicker
             dateRange={dateRange}
             onChange={setDateRange}
@@ -270,7 +344,7 @@ export const VegetationConfig: React.FC<VegetationConfigProps> = ({ mode = 'pane
 
         <section>
           <div className="flex items-center justify-between mb-2">
-            <h3 className="text-sm font-semibold text-slate-700">Opciones Avanzadas</h3>
+            <h3 className="text-sm font-semibold text-slate-700">{t('configPanel.advancedOptions')}</h3>
             <button
               onClick={() => setShowCarbonConfig(!showCarbonConfig)}
               className="text-xs text-blue-600 hover:text-blue-800"
@@ -288,7 +362,7 @@ export const VegetationConfig: React.FC<VegetationConfigProps> = ({ mode = 'pane
               />
 
               <div className="pt-2 border-t border-slate-100">
-                <h4 className="text-xs font-medium text-slate-700 mb-2">Credenciales Copernicus</h4>
+                <h4 className="text-xs font-medium text-slate-700 mb-2">{t('configPanel.copernicusCredentials')}</h4>
                 <div className="space-y-2">
                   <input
                     type="text"
@@ -303,7 +377,7 @@ export const VegetationConfig: React.FC<VegetationConfigProps> = ({ mode = 'pane
                     className="block w-full text-xs border-slate-300 rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500"
                     onChange={(e) => saveConfig({ ...config, copernicus_client_secret: e.target.value } as any)}
                   />
-                  <p className="text-[10px] text-slate-400">Dejar en blanco para usar credenciales de plataforma.</p>
+                  <p className="text-[10px] text-slate-400">{t('configPanel.credentialsHint')}</p>
                 </div>
               </div>
             </div>
@@ -313,7 +387,7 @@ export const VegetationConfig: React.FC<VegetationConfigProps> = ({ mode = 'pane
         <div className="border-t border-slate-200 my-2" />
 
         <section>
-          <h3 className="text-sm font-semibold text-slate-700 mb-2">Actividad Reciente</h3>
+          <h3 className="text-sm font-semibold text-slate-700 mb-2">{t('configPanel.recentActivity')}</h3>
           {recentJobs && recentJobs.length > 0 ? (
             <div className="space-y-2">
               {recentJobs.map(job => (
@@ -329,7 +403,7 @@ export const VegetationConfig: React.FC<VegetationConfigProps> = ({ mode = 'pane
               ))}
             </div>
           ) : (
-            <p className="text-xs text-slate-400 italic">No hay actividad reciente.</p>
+            <p className="text-xs text-slate-400 italic">{t('configPanel.noRecentActivity')}</p>
           )}
         </section>
       </div>
@@ -338,11 +412,11 @@ export const VegetationConfig: React.FC<VegetationConfigProps> = ({ mode = 'pane
 
   return (
     <div className="p-6 max-w-4xl mx-auto">
-      <h1 className="text-2xl font-bold text-slate-900 mb-6">Configuración Avanzada</h1>
+      <h1 className="text-2xl font-bold text-slate-900 mb-6">{t('configPanel.advancedConfig')}</h1>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-          <h2 className="text-lg font-semibold mb-4">Análisis de Vegetación</h2>
+          <h2 className="text-lg font-semibold mb-4">{t('configPanel.vegetationAnalysis')}</h2>
           <ModeSelector
             currentIndex={selectedIndex || 'NDVI'}
             onChange={handleModeChange}
@@ -350,7 +424,7 @@ export const VegetationConfig: React.FC<VegetationConfigProps> = ({ mode = 'pane
         </div>
 
         <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-          <h2 className="text-lg font-semibold mb-4">Cálculo de Carbono (LUE)</h2>
+          <h2 className="text-lg font-semibold mb-4">{t('configPanel.carbonCalcLUE')}</h2>
           <CarbonInputsWidget
             entityId={selectedEntityId || undefined}
             onSave={(cfg) => saveConfig({ ...config, ...cfg } as any)}
