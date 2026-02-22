@@ -3,8 +3,9 @@ Celery tasks for processing vegetation indices.
 """
 
 import logging
+import os
 from typing import Dict, Any, List
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 import uuid
 
 from app.celery_app import celery_app
@@ -14,6 +15,66 @@ from app.services.storage import create_storage_service, generate_tenant_bucket_
 from app.database import get_db_session
 
 logger = logging.getLogger(__name__)
+
+# Indices published to Orion-LD by default (lazy evaluation).
+# All others are calculated on demand or when tenant opts in via vegetation_config.
+_ORION_PUBLISHED_INDICES = {"NDVI", "NDRE"}
+
+
+def _patch_vegetation_status_to_orion(
+    tenant_id: str,
+    parcel_id: str,
+    index_type: str,
+    mean_value: float,
+    sensing_date: date,
+) -> None:
+    """PATCH the latest vegetation index as a flat property on AgriParcel in Orion-LD.
+
+    Uses a flat property per index so the DataHub entity normalization can expose
+    each index as an individually selectable attribute:
+
+        ndviMean  → source: "vegetation_health"   (→ env var TIMESERIES_ADAPTER_VEGETATION_HEALTH_URL)
+        ndreMean  → source: "vegetation_health"
+
+    The 'observedAt' temporal metadata follows NGSI-LD §5.2.3.
+
+    This is a best-effort, non-critical operation: if Orion-LD is unavailable
+    the PostgreSQL cache (vegetation_indices_cache) remains the source of truth
+    and the DataHub adapter will still serve data correctly.
+    """
+    from app.services.fiware_integration import FIWAREClient
+
+    try:
+        url = os.getenv("FIWARE_CONTEXT_BROKER_URL", "http://orion-ld-service:1026")
+        client = FIWAREClient(url, tenant_id=tenant_id)
+
+        attr_name = f"{index_type.lower()}Mean"  # e.g. "ndviMean", "ndreMean"
+        observed_at = (
+            datetime(sensing_date.year, sensing_date.month, sensing_date.day,
+                     tzinfo=timezone.utc)
+            .isoformat()
+            .replace("+00:00", "Z")
+        )
+
+        client.update_entity({
+            "id": parcel_id,
+            attr_name: {
+                "type": "Property",
+                "value": round(float(mean_value), 6),
+                "observedAt": observed_at,
+                "source": {
+                    "type": "Property",
+                    # Underscore name → maps to env var TIMESERIES_ADAPTER_VEGETATION_HEALTH_URL
+                    "value": "vegetation_health",
+                },
+            },
+        })
+        logger.info("Orion-LD PATCH: %s=%s on %s", attr_name, mean_value, parcel_id)
+    except Exception as exc:
+        logger.warning(
+            "Non-critical: could not PATCH Orion-LD for parcel %s (%s): %s",
+            parcel_id, index_type, exc,
+        )
 
 
 @celery_app.task(bind=True, name='vegetation.calculate_vegetation_index')
@@ -260,11 +321,22 @@ def calculate_vegetation_index(
         
         job.mark_completed(job_result)
         db.commit()
-        
+
         # Update job status in usage stats
         from app.services.usage_tracker import UsageTracker
         UsageTracker.update_job_status(db, tenant_id, str(job.id), 'completed')
-        
+
+        # Publish current state to Orion-LD for DataHub discovery.
+        # Lazy evaluation: only default indices to avoid compute spikes.
+        if index_type in _ORION_PUBLISHED_INDICES and job.entity_id:
+            _patch_vegetation_status_to_orion(
+                tenant_id=tenant_id,
+                parcel_id=job.entity_id,
+                index_type=index_type,
+                mean_value=float(statistics['mean']),
+                sensing_date=scenes_to_process[0].sensing_date,
+            )
+
         mode_str = "temporal composite" if is_temporal_composite else "single scene"
         logger.info(f"Index {index_type} calculated successfully ({mode_str}, {source_image_count} scenes)")
         

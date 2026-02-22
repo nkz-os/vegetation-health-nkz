@@ -3,7 +3,9 @@ import pkg from '../package.json';
 
 const MODULE_ID = 'vegetation-prime';
 
-console.log(`[${MODULE_ID}] Initializing module v${pkg.version}`);
+if (typeof console !== 'undefined' && console.debug) {
+  console.debug(`[${MODULE_ID}] init v${pkg.version}`);
+}
 
 if (window.__NKZ__) {
     window.__NKZ__.register({

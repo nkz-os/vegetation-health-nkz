@@ -12,16 +12,9 @@ import os
 
 logger = logging.getLogger(__name__)
 
-# JWT configuration (align with Nekazari platform: auth.artotxiki.com)
 JWT_ALGORITHM = os.getenv('JWT_ALGORITHM', 'RS256')
-JWT_ISSUER = os.getenv(
-    'JWT_ISSUER',
-    'https://auth.artotxiki.com/auth/realms/nekazari'
-)
-JWKS_URL = os.getenv(
-    'JWKS_URL',
-    'https://auth.artotxiki.com/auth/realms/nekazari/protocol/openid-connect/certs'
-)
+JWT_ISSUER = os.getenv('JWT_ISSUER', '')
+JWKS_URL = os.getenv('JWKS_URL', f'{JWT_ISSUER}/protocol/openid-connect/certs' if JWT_ISSUER else '')
 
 # Cache for JWKS
 _jwks_client: Optional[PyJWKClient] = None

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Carbon Capture Engine (Phase F3)
---------------------------------
-Implementation of LUE (Light Use Efficiency) Model.
-GPP = PAR * fAPAR * LUE
-Updates co2SequesteredTotal in Orion-LD.
+DEPRECATED — Carbon logic has been extracted to nkz-module-carbon.
+This file is kept temporarily to avoid breaking the Celery task registry.
+
+Migration: nkz-module-carbon/backend/app/services/carbon_engine.py
+Remove this file once the carbon module Celery worker is deployed and running.
 """
 
 import sys

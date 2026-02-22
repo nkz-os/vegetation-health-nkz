@@ -40,6 +40,9 @@ sentinelsat==1.2.1
 # Image processing
 Pillow==10.1.0
 
+# Apache Arrow — required for DataHub timeseries adapter
+pyarrow==15.0.2
+
 # Storage (S3/MinIO)
 boto3==1.29.7
 botocore==1.32.7

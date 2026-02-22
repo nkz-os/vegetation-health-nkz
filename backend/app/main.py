@@ -35,6 +35,7 @@ from app.services.limits import LimitsValidator
 from app.api.tiles import router as tiles_router
 from app.api.crops import router as crops_router
 from app.api.subscriptions import router as subscriptions_router
+from app.api.internal import router as internal_router
 
 from app.services.usage_tracker import UsageTracker
 from app.middleware.limits import validate_limits_dependency
@@ -85,7 +86,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
 # CORS middleware - restricted to known Nekazari domains
 import os
-ALLOWED_ORIGINS = os.getenv("CORS_ALLOWED_ORIGINS", "https://nekazari.artotxiki.com,https://nkz.artotxiki.com").split(",")
+ALLOWED_ORIGINS = os.getenv("CORS_ALLOWED_ORIGINS", "http://localhost:3000").split(",")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
@@ -94,10 +95,11 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type", "X-Tenant-ID"],
 )
 
-# Include tile router
+# Include routers
 app.include_router(tiles_router)
 app.include_router(crops_router, prefix="/api/vegetation", tags=["crop-intelligence"])
 app.include_router(subscriptions_router, prefix="/api/vegetation", tags=["subscriptions"])
+app.include_router(internal_router)  # DataHub federation — no prefix, path defined in router
 
 
 # =============================================================================
