@@ -10,6 +10,14 @@ interface VegetationLayerProps {
   viewer?: any; // Injected by CesiumMap
 }
 
+// Get base API URL from window.__ENV__ (injected by nginx at runtime)
+const getApiBaseUrl = (): string => {
+  if (typeof window !== 'undefined' && window.__ENV__) {
+    return window.__ENV__.API_URL || window.__ENV__.VITE_API_URL || '';
+  }
+  return '';
+};
+
 export const VegetationLayer: React.FC<VegetationLayerProps> = ({ viewer }) => {
   const { selectedIndex, selectedDate, selectedSceneId } = useVegetationContext();
   
@@ -42,7 +50,8 @@ export const VegetationLayer: React.FC<VegetationLayerProps> = ({ viewer }) => {
 
     // 2. HANDLE VECTOR LAYER (VRA ZONES)
     if (selectedIndex === 'VRA_ZONES' && selectedSceneId) {
-        const geoJsonUrl = `/api/jobs/zoning/${selectedSceneId}/geojson`;
+        const apiBaseUrl = getApiBaseUrl();
+        const geoJsonUrl = `${apiBaseUrl}/api/vegetation/jobs/zoning/${selectedSceneId}/geojson`;
         console.log('[VegetationLayer] Loading VRA Zones:', geoJsonUrl);
 
         Cesium.GeoJsonDataSource.load(geoJsonUrl, {
@@ -85,9 +94,9 @@ export const VegetationLayer: React.FC<VegetationLayerProps> = ({ viewer }) => {
 
     // 3. HANDLE RASTER LAYER (NDVI, etc.)
     if (selectedIndex && selectedSceneId) {
-        // Construct Tile URL (XYZ format)
-        // Note: Backend must support /tiles/{z}/{x}/{y}.png
-        const tileUrl = `/api/vegetation/tiles/{z}/{x}/{y}.png?scene_id=${selectedSceneId}&index_type=${selectedIndex}`;
+        const apiBaseUrl = getApiBaseUrl();
+        // Construct Tile URL (XYZ format) with absolute URL
+        const tileUrl = `${apiBaseUrl}/api/vegetation/tiles/{z}/{x}/{y}.png?scene_id=${selectedSceneId}&index_type=${selectedIndex}`;
         console.log('[VegetationLayer] Adding Raster Layer:', tileUrl);
 
         const provider = new Cesium.UrlTemplateImageryProvider({

@@ -2,22 +2,31 @@ import React, { useState, useEffect } from 'react';
 import { Card } from '@nekazari/ui-kit';
 import { useVegetationContext } from '../services/vegetationContext';
 import { useVegetationApi } from '../services/api';
+import { useVegetationScenes } from '../hooks/useVegetationScenes';
 import TimeseriesChart from './widgets/TimeseriesChart';
+import { DateSelector } from '../components/widgets/DateSelector';
 import { useAuth } from '../hooks/useAuth';
 import { useTranslation } from 'react-i18next';
 import type { VegetationJob, AnomalyCheckResponse, PredictionResponse, ModuleCapabilities, VegetationIndexType } from '../types';
 
 import { SetupWizard } from './pages/SetupWizard';
 import { Button } from '@nekazari/ui-kit';
-import { AlertTriangle, TrendingUp, Search } from 'lucide-react';
+import { AlertTriangle, TrendingUp, Search, Calendar, Loader2 } from 'lucide-react';
 
 export const VegetationAnalytics: React.FC = () => {
     const { t } = useTranslation();
-    const { selectedIndex, selectedEntityId, setSelectedEntityId, selectedGeometry } = useVegetationContext();
+    const { selectedIndex, selectedEntityId, setSelectedEntityId, selectedGeometry, setSelectedSceneId } = useVegetationContext();
     const { isAuthenticated } = useAuth();
     const api = useVegetationApi();
     const [recentJobs, setRecentJobs] = useState<VegetationJob[]>([]);
     const [loadingJobs, setLoadingJobs] = useState(false);
+
+    // Load available Sentinel-2 scenes for selected entity
+    const { scenes, loading: loadingScenes, error: scenesError, refresh: refreshScenes } = useVegetationScenes({
+        entityId: selectedEntityId || undefined,
+        limit: 100,
+        autoRefresh: false,
+    });
 
     // Subscription state
     const [subscription, setSubscription] = useState<any>(null);
@@ -371,6 +380,51 @@ export const VegetationAnalytics: React.FC = () => {
                     </div>
                 </div>
             )}
+
+            {/* Sentinel-2 Scene Selector */}
+            <Card padding="lg" className="bg-white/90 backdrop-blur-md border border-slate-200/50 rounded-xl shadow-sm">
+                <div className="mb-4">
+                    <div className="flex items-center gap-2 mb-2">
+                        <Calendar className="w-5 h-5 text-slate-600" />
+                        <h3 className="text-lg font-semibold text-slate-800">Imágenes Sentinel-2 Disponibles</h3>
+                    </div>
+                    <p className="text-sm text-slate-500">Selecciona una fecha para visualizar el índice de vegetación</p>
+                </div>
+                
+                {loadingScenes ? (
+                    <div className="h-24 flex items-center justify-center">
+                        <Loader2 className="w-6 h-6 animate-spin text-slate-400" />
+                        <span className="ml-2 text-sm text-slate-500">Cargando escenas...</span>
+                    </div>
+                ) : scenesError ? (
+                    <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                        <p className="text-sm text-red-700">Error al cargar escenas: {scenesError}</p>
+                        <button 
+                            onClick={refreshScenes}
+                            className="mt-2 text-xs text-red-800 underline hover:text-red-900"
+                        >
+                            Reintentar
+                        </button>
+                    </div>
+                ) : scenes.length === 0 ? (
+                    <div className="bg-slate-50 rounded-lg p-6 text-center">
+                        <p className="text-sm text-slate-600">
+                            No hay imágenes Sentinel-2 procesadas para esta parcela aún.
+                        </p>
+                        <p className="text-xs text-slate-500 mt-1">
+                            Las nuevas imágenes se procesan automáticamente cada 3-5 días (dependiendo de la cobertura de nubes).
+                        </p>
+                    </div>
+                ) : (
+                    <DateSelector
+                        scenes={scenes}
+                        selectedSceneId={undefined}
+                        onSelect={(sceneId) => {
+                            setSelectedSceneId?.(sceneId);
+                        }}
+                    />
+                )}
+            </Card>
 
             {/* Main Timeseries */}
             <Card padding="lg" className="bg-white/90 backdrop-blur-md border border-slate-200/50 rounded-xl shadow-sm">

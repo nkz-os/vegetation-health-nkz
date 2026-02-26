@@ -4,7 +4,7 @@ Celery tasks for processing vegetation indices.
 
 import logging
 import os
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from datetime import datetime, date, timezone
 import uuid
 
@@ -17,8 +17,8 @@ from app.database import get_db_session
 logger = logging.getLogger(__name__)
 
 # Indices published to Orion-LD by default (lazy evaluation).
-# All others are calculated on demand or when tenant opts in via vegetation_config.
-_ORION_PUBLISHED_INDICES = {"NDVI", "NDRE"}
+# All supported indices are published for full discovery by DataHub and Intelligence module.
+_ORION_PUBLISHED_INDICES = {"NDVI", "EVI", "SAVI", "GNDVI", "NDRE", "NDWI"}
 
 
 def _patch_vegetation_status_to_orion(
@@ -27,6 +27,7 @@ def _patch_vegetation_status_to_orion(
     index_type: str,
     mean_value: float,
     sensing_date: date,
+    custom_attr_name: Optional[str] = None,
 ) -> None:
     """PATCH the latest vegetation index as a flat property on AgriParcel in Orion-LD.
 
@@ -35,12 +36,17 @@ def _patch_vegetation_status_to_orion(
 
         ndviMean  → source: "vegetation_health"   (→ env var TIMESERIES_ADAPTER_VEGETATION_HEALTH_URL)
         ndreMean  → source: "vegetation_health"
+        custom_<hash>Mean → source: "vegetation_health" (for CUSTOM indices)
 
     The 'observedAt' temporal metadata follows NGSI-LD §5.2.3.
 
     This is a best-effort, non-critical operation: if Orion-LD is unavailable
     the PostgreSQL cache (vegetation_indices_cache) remains the source of truth
     and the DataHub adapter will still serve data correctly.
+    
+    Args:
+        custom_attr_name: Optional custom attribute name for CUSTOM indices.
+                         If provided, uses '{custom_attr_name}Mean' format.
     """
     from app.services.fiware_integration import FIWAREClient
 
@@ -48,7 +54,8 @@ def _patch_vegetation_status_to_orion(
         url = os.getenv("FIWARE_CONTEXT_BROKER_URL", "http://orion-ld-service:1026")
         client = FIWAREClient(url, tenant_id=tenant_id)
 
-        attr_name = f"{index_type.lower()}Mean"  # e.g. "ndviMean", "ndreMean"
+        # Use custom attribute name if provided, otherwise derive from index_type
+        attr_name = f"{custom_attr_name}Mean" if custom_attr_name else f"{index_type.lower()}Mean"
         observed_at = (
             datetime(sensing_date.year, sensing_date.month, sensing_date.day,
                      tzinfo=timezone.utc)
@@ -327,14 +334,23 @@ def calculate_vegetation_index(
         UsageTracker.update_job_status(db, tenant_id, str(job.id), 'completed')
 
         # Publish current state to Orion-LD for DataHub discovery.
-        # Lazy evaluation: only default indices to avoid compute spikes.
-        if index_type in _ORION_PUBLISHED_INDICES and job.entity_id:
+        # All indices are published including CUSTOM with dynamic attribute naming.
+        if job.entity_id:
+            # For CUSTOM indices, generate unique attribute name from formula hash
+            custom_attr_name = None
+            if index_type == 'CUSTOM' and formula:
+                import hashlib
+                formula_hash = hashlib.md5(formula.encode()).hexdigest()[:8]
+                custom_attr_name = f"custom_{formula_hash}"
+                logger.info(f"CUSTOM index published as '{custom_attr_name}Mean' in Orion-LD")
+            
             _patch_vegetation_status_to_orion(
                 tenant_id=tenant_id,
                 parcel_id=job.entity_id,
                 index_type=index_type,
                 mean_value=float(statistics['mean']),
                 sensing_date=scenes_to_process[0].sensing_date,
+                custom_attr_name=custom_attr_name,
             )
 
         mode_str = "temporal composite" if is_temporal_composite else "single scene"
