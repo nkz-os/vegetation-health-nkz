@@ -68,7 +68,7 @@ export default defineConfig({
     },
     outDir: 'dist',
     emptyOutDir: true,
-    sourcemap: true,
+    sourcemap: false, // avoid 404 for nkz-module.js.map in production (not uploaded to MinIO)
     minify: 'esbuild',
     copyPublicDir: false,
   },
