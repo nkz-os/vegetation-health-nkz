@@ -78,7 +78,9 @@ RUN pip install --no-cache-dir \
     pytest-asyncio==0.21.1 \
     pytest-cov==4.1.0 \
     scipy==1.11.4 \
-    scikit-learn==1.3.2
+    scikit-learn==1.3.2 \
+    pyarrow==15.0.2 \
+    pyarrow==15.0.2
 
 # Copy application code (this invalidates cache most often)
 COPY backend/app ./app
