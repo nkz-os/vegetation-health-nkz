@@ -64,12 +64,11 @@ spec:
               value: "redis://:$(REDIS_PASSWORD)@redis-service:6379/1"
             # Authentication (Keycloak)
             # JWT_ISSUER must match the 'iss' claim in the JWT token from Keycloak
-            # Keycloak with KC_HTTP_RELATIVE_PATH=/auth uses: https://auth.artotxiki.com/auth/realms/nekazari
+            # Domain: robotika.cloud (migrated from artotxiki.com 2026-02-14)
             - name: JWT_ISSUER
-              value: "https://auth.artotxiki.com/auth/realms/nekazari"
-            # JWKS URL for Keycloak with /auth path: /auth/realms/{realm}/protocol/openid-connect/certs
+              value: "https://auth.robotika.cloud/auth/realms/nekazari"
             - name: JWKS_URL
-              value: "https://auth.artotxiki.com/auth/realms/nekazari/protocol/openid-connect/certs"
+              value: "https://auth.robotika.cloud/auth/realms/nekazari/protocol/openid-connect/certs"
             - name: JWT_ALGORITHM
               value: "RS256"
             # Service-to-Service Authentication
