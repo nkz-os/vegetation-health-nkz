@@ -16,11 +16,17 @@ if (!window.__NKZ__) {
 } else {
   const LazyApp = React.lazy(() => import('./App'));
 
-  const MainWrapper = () => (
-    <React.Suspense fallback={<div className="p-8 text-center">Loading Vegetation Prime…</div>}>
-      <LazyApp />
-    </React.Suspense>
-  );
+  const MainWrapper = () =>
+    React.createElement(
+      React.Suspense,
+      {
+        fallback: React.createElement('div', {
+          className: 'p-8 text-center',
+          children: 'Loading Vegetation Prime…',
+        }),
+      },
+      React.createElement(LazyApp)
+    );
 
   window.__NKZ__.register({
     id: MODULE_ID,
