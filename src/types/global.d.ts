@@ -4,6 +4,11 @@
 
 declare global {
   interface Window {
+    __ENV__?: {
+      API_URL?: string;
+      VITE_API_URL?: string;
+      [key: string]: unknown;
+    };
     __nekazariModuleData?: {
       vegetation?: {
         sceneId?: string | null;

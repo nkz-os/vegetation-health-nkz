@@ -54,11 +54,13 @@ const VegetationLayerControl: React.FC = () => {
     }
   }, [selectedDate, setCurrentDate]);
 
-  // Handle date change from DateSelector (returns string)
-  const handleDateChange = (dateStr: string, sceneId: string) => {
-    // setSelectedDate expects Date | null
-    setSelectedDate(new Date(dateStr));
-    setSelectedSceneId(sceneId);
+  // Handle date change from DateSelector (receives only sceneId)
+  const handleDateChange = (sceneId: string) => {
+    const scene = scenes.find((s) => s.id === sceneId);
+    if (scene) {
+      setSelectedDate(new Date(scene.sensing_date));
+      setSelectedSceneId(sceneId);
+    }
   };
 
   if (!selectedEntityId) {
@@ -71,9 +73,6 @@ const VegetationLayerControl: React.FC = () => {
       </Card>
     );
   }
-
-  // Convert Date to string for DateSelector prop
-  const selectedDateStr = selectedDate ? selectedDate.toISOString().split('T')[0] : '';
 
   return (
     <>
@@ -108,7 +107,7 @@ const VegetationLayerControl: React.FC = () => {
               {scenesLoading && <span className="text-slate-400">Cargando...</span>}
             </label>
             <DateSelector 
-              selectedDate={selectedDateStr} // Passing string
+              selectedSceneId={selectedSceneId}
               scenes={scenes}
               onSelect={handleDateChange}
             />
