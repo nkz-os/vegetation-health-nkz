@@ -84,6 +84,34 @@ export class VegetationApiClient {
     return response as unknown as { tileUrlTemplate: string; expiresAt: string };
   }
 
+  /** Phase 6: Sparse timeline — lightweight availability metadata (§12.8.1). */
+  async getScenesAvailable(
+    entityId: string,
+    indexType: string,
+    startDate?: string,
+    endDate?: string
+  ): Promise<{
+    entity_id: string;
+    index_type: string;
+    count: number;
+    timeline: Array<{
+      scene_id: string;
+      id: string;
+      date: string;
+      acquisition_datetime: string | null;
+      local_cloud_pct: number | null;
+      mean_value: number | null;
+    }>;
+  }> {
+    const params = new URLSearchParams({ index_type: indexType });
+    if (startDate) params.append('start_date', startDate);
+    if (endDate) params.append('end_date', endDate);
+    const response = await this.client.get(
+      `/entities/${encodeURIComponent(entityId)}/scenes/available?${params.toString()}`
+    );
+    return response as any;
+  }
+
   async listScenes(
     entityId?: string,
     startDate?: string,

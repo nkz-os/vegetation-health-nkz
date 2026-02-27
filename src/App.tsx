@@ -12,17 +12,16 @@ import { VegetationConfig } from './components/VegetationConfig';
 import { VegetationAnalytics } from './components/VegetationAnalytics';
 import { CalculationsPage } from './components/pages/CalculationsPage';
 import { useVegetationApi } from './services/api';
-import { Calendar, Layers, Leaf, ChevronRight, BarChart3, FileDown, Bell, Cloud, MapPin } from 'lucide-react';
+import { Calendar, Layers, Leaf, ChevronRight, BarChart3, FileDown, Bell, MapPin } from 'lucide-react';
 import { SkeletonCard } from './components/widgets/SkeletonCard';
 
 // Lazy load new tabs for code splitting
 const PrescriptionTab = lazy(() => import('./components/pages/PrescriptionTab'));
 const AlertsTab = lazy(() => import('./components/pages/AlertsTab'));
-const WeatherTab = lazy(() => import('./components/pages/WeatherTab'));
 const ZoningTab = lazy(() => import('./components/pages/ZoningTab'));
 
-// Tab types for the Ferrari frontend
-type TabType = 'dashboard' | 'analytics' | 'config' | 'calculations' | 'prescription' | 'alerts' | 'weather' | 'zoning';
+// Tab types for the Ferrari frontend (§12.3: Eguraldia/weather tab removed)
+type TabType = 'dashboard' | 'analytics' | 'config' | 'calculations' | 'prescription' | 'alerts' | 'zoning';
 
 // Loading fallback for lazy loaded tabs
 const TabLoadingFallback: React.FC = () => {
@@ -300,14 +299,6 @@ const DashboardContent: React.FC = () => {
             label={t('tabs.alerts')}
           />
 
-          {/* Weather Tab (NEW) */}
-          <TabButton
-            active={activeTab === 'weather'}
-            onClick={() => setActiveTab('weather')}
-            icon={<Cloud className="w-4 h-4" />}
-            label={t('tabs.weather')}
-          />
-
           {/* Zoning Tab (NEW) */}
           <TabButton
             active={activeTab === 'zoning'}
@@ -326,7 +317,6 @@ const DashboardContent: React.FC = () => {
           {activeTab === 'calculations' && <CalculationsPage />}
           {activeTab === 'prescription' && <PrescriptionTab />}
           {activeTab === 'alerts' && <AlertsTab />}
-          {activeTab === 'weather' && <WeatherTab />}
           {activeTab === 'zoning' && <ZoningTab />}
         </Suspense>
       </div>

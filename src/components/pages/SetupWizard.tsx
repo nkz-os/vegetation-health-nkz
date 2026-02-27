@@ -292,10 +292,11 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
                                 </div>
                             </div>
 
-                            {/* Frequency */}
+                            {/* Frequency: "comprobación" only — no promise of daily data (§12.2) */}
                             <div>
                                 <label className="block text-sm font-medium text-slate-700 mb-2">{t('setup.frequencyLabel')}</label>
-                                <div className="flex gap-4">
+                                <p className="text-xs text-slate-500 mb-2">{t('setup.frequencyHelp')}</p>
+                                <div className="flex flex-wrap gap-4">
                                     <label className="flex items-center">
                                         <input
                                             type="radio"
@@ -318,6 +319,17 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
                                         />
                                         <span className="ml-2 text-sm text-slate-700">{t('setup.dailyCredits')}</span>
                                     </label>
+                                    <label className="flex items-center">
+                                        <input
+                                            type="radio"
+                                            name="frequency"
+                                            value="biweekly"
+                                            checked={frequency === 'biweekly'}
+                                            onChange={() => setFrequency('biweekly')}
+                                            className="focus:ring-green-500 h-4 w-4 text-green-600 border-gray-300"
+                                        />
+                                        <span className="ml-2 text-sm text-slate-700">{t('setup.biweeklyOption')}</span>
+                                    </label>
                                 </div>
                             </div>
                         </div>
@@ -333,7 +345,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
                                     <li>• <strong>{t('setup.summaryParcel')}</strong> {displayName}</li>
                                     <li>• <strong>{t('setup.summaryStartDate')}</strong> {startDate}</li>
                                     <li>• <strong>{t('setup.summaryIndices')}</strong> {selectedIndices.join(', ')}</li>
-                                    <li>• <strong>{t('setup.summaryFrequency')}</strong> {frequency === 'weekly' ? t('setup.summaryWeekly') : t('setup.summaryDaily')}</li>
+                                    <li>• <strong>{t('setup.summaryFrequency')}</strong> {frequency === 'weekly' ? t('setup.summaryWeekly') : frequency === 'biweekly' ? t('setup.summaryBiweekly') : t('setup.summaryDaily')}</li>
                                 </ul>
                             </div>
 

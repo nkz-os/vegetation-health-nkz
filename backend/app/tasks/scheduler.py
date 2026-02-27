@@ -41,8 +41,7 @@ def process_subscriptions():
         print(f"INFO: Processing {len(subscriptions)} due subscriptions.")
         
         for sub in subscriptions:
-            # Determine date range to check
-            # From last run (or start date) to today
+            # Backfill + incremental: first run uses start_date (full history), then last_run_at
             start_check = (sub.last_run_at.date() if sub.last_run_at else sub.start_date)
             
             # Simple logic: Trigger a new task that discovers and processes scenes for this entity

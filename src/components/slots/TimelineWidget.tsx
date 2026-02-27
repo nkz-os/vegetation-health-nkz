@@ -26,6 +26,7 @@ export const TimelineWidget: React.FC<TimelineWidgetProps> = ({ entityId }) => {
     selectedEntityId,
     setSelectedDate,
     setSelectedSceneId,
+    dateRange,
   } = useVegetationContext();
 
   const api = useVegetationApi();
@@ -38,30 +39,46 @@ export const TimelineWidget: React.FC<TimelineWidgetProps> = ({ entityId }) => {
 
   const effectiveEntityId = entityId || selectedEntityId;
 
-  // Load stats for the timeline chart
+  // Load timeline from availability API (§12.8.1) — sparse ticks, mean_value for heatmap, local_cloud_pct for tooltips
   const loadStats = useCallback(async () => {
     if (!effectiveEntityId) return;
-    
+
     setLoading(true);
     setError(null);
 
     try {
-      const response = await api.getSceneStats(effectiveEntityId, selectedIndex || 'NDVI', 12);
-      setStats(response.stats);
+      const startStr = dateRange?.startDate?.toISOString().split('T')[0];
+      const endStr = dateRange?.endDate?.toISOString().split('T')[0];
+      const response = await api.getScenesAvailable(
+        effectiveEntityId,
+        selectedIndex || 'NDVI',
+        startStr,
+        endStr
+      );
+      const timeline = response?.timeline || [];
+      const mapped: SceneStats[] = timeline.map((item: any) => ({
+        scene_id: item.scene_id,
+        sensing_date: item.date,
+        mean_value: item.mean_value ?? null,
+        min_value: null,
+        max_value: null,
+        std_dev: null,
+        cloud_coverage: item.local_cloud_pct != null ? Number(item.local_cloud_pct) : null,
+      }));
+      setStats(mapped);
 
-      // Auto-select most recent scene if none selected
-      if (!selectedDate && response.stats.length > 0) {
-        const mostRecent = response.stats[0]; 
-        setSelectedDate(new Date(mostRecent.sensing_date)); // Fix: Convert string to Date
+      if (!selectedDate && mapped.length > 0) {
+        const mostRecent = mapped[mapped.length - 1];
+        setSelectedDate(new Date(mostRecent.sensing_date));
         setSelectedSceneId(mostRecent.scene_id);
       }
     } catch (err) {
-      console.error('[TimelineWidget] Error fetching stats:', err);
+      console.error('[TimelineWidget] Error fetching availability:', err);
       setError(err instanceof Error ? err.message : 'Failed to load timeline data');
     } finally {
       setLoading(false);
     }
-  }, [effectiveEntityId, selectedIndex, api, selectedDate, setSelectedDate, setSelectedSceneId]);
+  }, [effectiveEntityId, selectedIndex, api, dateRange?.startDate, dateRange?.endDate, selectedDate, setSelectedDate, setSelectedSceneId]);
 
   // Load comparison data when enabled
   const loadComparison = useCallback(async () => {

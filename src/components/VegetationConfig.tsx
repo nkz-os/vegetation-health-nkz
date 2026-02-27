@@ -92,7 +92,9 @@ export const VegetationConfig: React.FC<VegetationConfigProps> = ({ mode = 'pane
     selectedIndex,
     setSelectedIndex,
     dateRange,
-    setDateRange
+    setDateRange,
+    setSelectedSceneId,
+    setSelectedDate,
   } = useVegetationContext();
 
   // Hook returns { config, loading, error, saveConfig, ... }
@@ -104,6 +106,8 @@ export const VegetationConfig: React.FC<VegetationConfigProps> = ({ mode = 'pane
   const formulaRef = useRef<HTMLTextAreaElement>(null);
   const { t } = useTranslation();
   const [recentJobs, setRecentJobs] = useState<any[]>([]);
+  const [singleDateForCalc, setSingleDateForCalc] = useState<string>('');
+  const [forceLatestLoading, setForceLatestLoading] = useState(false);
 
   // Quick Actions state
   const [isZoningLoading, setIsZoningLoading] = useState(false);
@@ -278,7 +282,7 @@ export const VegetationConfig: React.FC<VegetationConfigProps> = ({ mode = 'pane
         </section>
 
         <section>
-          <h3 className="text-sm font-semibold text-slate-700 mb-2">{t('configPanel.analysisPeriod')}</h3>
+          <h3 className="text-sm font-semibold text-slate-700 mb-2">{t('configPanel.timelineFilterLabel')}</h3>
           <DateRangePicker
             dateRange={dateRange}
             onChange={setDateRange}
@@ -286,11 +290,50 @@ export const VegetationConfig: React.FC<VegetationConfigProps> = ({ mode = 'pane
         </section>
 
         <section>
+          <h3 className="text-sm font-semibold text-slate-700 mb-2">{t('configPanel.calculateThisDate')}</h3>
+          <div className="flex flex-wrap items-center gap-2 mb-2">
+            <input
+              type="date"
+              value={singleDateForCalc}
+              onChange={(e) => setSingleDateForCalc(e.target.value)}
+              className="text-sm border border-slate-300 rounded px-2 py-1.5 focus:ring-green-500 focus:border-green-500"
+            />
+            <CalculationButton
+              formula={selectedIndex === 'CUSTOM' ? formula : undefined}
+              singleDate={singleDateForCalc || undefined}
+              entityId={selectedEntityId || undefined}
+            />
+          </div>
+          <button
+            type="button"
+            onClick={async () => {
+              if (!selectedEntityId || !selectedIndex) return;
+              setForceLatestLoading(true);
+              try {
+                const res = await api.getScenesAvailable(selectedEntityId, selectedIndex);
+                const timeline = res?.timeline || [];
+                if (timeline.length > 0) {
+                  const last = timeline[timeline.length - 1];
+                  setSelectedSceneId(last.scene_id);
+                  setSelectedDate(last.date ? new Date(last.date) : null);
+                }
+              } catch (e) {
+                console.error('Force latest scene:', e);
+              } finally {
+                setForceLatestLoading(false);
+              }
+            }}
+            disabled={forceLatestLoading || !selectedEntityId || !selectedIndex}
+            className="text-sm px-3 py-1.5 rounded border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+          >
+            {forceLatestLoading ? '...' : t('configPanel.forceLatestScene')}
+          </button>
+        </section>
+
+        <section>
           <div className="flex gap-2">
             <CalculationButton
               formula={selectedIndex === 'CUSTOM' ? formula : undefined}
-              startDate={dateRange.startDate?.toISOString().split('T')[0]}
-              endDate={dateRange.endDate?.toISOString().split('T')[0]}
               entityId={selectedEntityId || undefined}
             />
             <button

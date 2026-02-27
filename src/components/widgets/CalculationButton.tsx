@@ -10,8 +10,11 @@ interface CalculationButtonProps {
   variant?: 'primary' | 'secondary';
   size?: 'sm' | 'md' | 'lg';
   className?: string;
+  /** Date range (used together); range is for filtering timeline only when not using singleDate. */
   startDate?: string;
   endDate?: string;
+  /** Single date to calculate: triggers calculation for this day only (§12.6). */
+  singleDate?: string;
   formula?: string;
 }
 
@@ -24,6 +27,7 @@ export const CalculationButton: React.FC<CalculationButtonProps> = ({
   className = '',
   startDate,
   endDate,
+  singleDate,
   formula,
 }) => {
   const { selectedIndex, selectedSceneId, selectedEntityId, setSelectedIndex } = useVegetationContext();
@@ -33,14 +37,21 @@ export const CalculationButton: React.FC<CalculationButtonProps> = ({
   const effectiveEntityId = entityId || selectedEntityId;
   const effectiveIndexType = (indexType || selectedIndex) as any;
 
+  const canCalculate = Boolean(
+    effectiveEntityId && effectiveIndexType &&
+    (effectiveSceneId || singleDate || (startDate && endDate))
+  );
+
   const handleClick = async () => {
     resetState();
+    const useStart = singleDate ? singleDate : startDate;
+    const useEnd = singleDate ? singleDate : endDate;
     const jobId = await calculateIndex({
       sceneId: effectiveSceneId || undefined,
       entityId: effectiveEntityId || undefined,
       indexType: effectiveIndexType,
-      startDate: startDate,
-      endDate: endDate,
+      startDate: useStart,
+      endDate: useEnd,
       formula: formula,
     });
 
@@ -54,7 +65,7 @@ export const CalculationButton: React.FC<CalculationButtonProps> = ({
     <div className="flex flex-col gap-2">
       <button
         onClick={handleClick}
-        disabled={isCalculating || (!effectiveSceneId && !startDate)}
+        disabled={isCalculating || !canCalculate}
         className={`
           px-4 py-2 rounded-md font-medium transition-all
           disabled:opacity-50 disabled:cursor-not-allowed

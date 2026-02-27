@@ -898,6 +898,77 @@ async def get_viewer_url(
     return {"tileUrlTemplate": tile_url_template, "expiresAt": expires_at}
 
 
+# -----------------------------------------------------------------------------
+# Phase 6: Sparse timeline — availability metadata (§12.8.1)
+# -----------------------------------------------------------------------------
+
+@app.get("/api/vegetation/entities/{entity_id}/scenes/available")
+async def get_entities_scenes_available(
+    entity_id: str,
+    index_type: str,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    current_user: dict = Depends(require_auth),
+    db: Session = Depends(get_db_with_tenant),
+):
+    """
+    Lightweight metadata for sparse timeline: which dates have valid data for this entity+index.
+    Frontend uses this to render only selectable ticks (no empty dates). Payload includes
+    mean_value (heatmap) and local_cloud_pct (tooltips). On click, frontend calls viewer-url
+    with scene_id to load the map.
+    """
+    tenant_id = current_user["tenant_id"]
+    query = (
+        db.query(VegetationScene, VegetationIndexCache)
+        .join(VegetationIndexCache, VegetationIndexCache.scene_id == VegetationScene.id)
+        .filter(
+            VegetationIndexCache.tenant_id == tenant_id,
+            VegetationIndexCache.entity_id == entity_id,
+            VegetationIndexCache.index_type == index_type.strip().upper(),
+            VegetationScene.tenant_id == tenant_id,
+            VegetationScene.is_valid == True,
+        )
+    )
+    if start_date:
+        try:
+            start_d = date.fromisoformat(start_date[:10])
+            query = query.filter(VegetationScene.sensing_date >= start_d)
+        except ValueError:
+            pass
+    if end_date:
+        try:
+            end_d = date.fromisoformat(end_date[:10])
+            query = query.filter(VegetationScene.sensing_date <= end_d)
+        except ValueError:
+            pass
+    rows = query.order_by(VegetationScene.sensing_date.asc()).all()
+    timeline = []
+    for scene, cache in rows:
+        # local_cloud_pct from quality_flags (SCL) or fallback to global cloud_coverage
+        local_cloud_pct = None
+        if scene.quality_flags and isinstance(scene.quality_flags, dict):
+            local_cloud_pct = scene.quality_flags.get("local_cloud_pct")
+        if local_cloud_pct is None and scene.cloud_coverage is not None:
+            try:
+                local_cloud_pct = float(scene.cloud_coverage)
+            except (TypeError, ValueError):
+                pass
+        timeline.append({
+            "scene_id": scene.scene_id,
+            "id": str(scene.id),
+            "date": scene.sensing_date.isoformat(),
+            "acquisition_datetime": scene.acquisition_datetime.isoformat() if scene.acquisition_datetime else None,
+            "local_cloud_pct": round(float(local_cloud_pct), 1) if local_cloud_pct is not None else None,
+            "mean_value": round(float(cache.mean_value), 4) if cache.mean_value is not None else None,
+        })
+    return {
+        "entity_id": entity_id,
+        "index_type": index_type.strip().upper(),
+        "count": len(timeline),
+        "timeline": timeline,
+    }
+
+
 @app.get("/api/vegetation/scenes")
 async def list_scenes(
     entity_id: Optional[str] = None,

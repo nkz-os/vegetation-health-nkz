@@ -15,6 +15,8 @@ interface ModeOption {
   indexType: string;
   color: string;
   bgColor: string;
+  /** §12.7: Disable and show "Próximamente" (e.g. Sentinel-1 SAR) */
+  comingSoon?: boolean;
 }
 
 const MODES: ModeOption[] = [
@@ -43,7 +45,8 @@ const MODES: ModeOption[] = [
     icon: Waves,
     indexType: 'SAMI',
     color: 'text-indigo-600',
-    bgColor: 'bg-indigo-50'
+    bgColor: 'bg-indigo-50',
+    comingSoon: true
   },
   {
     id: 'nutrition',
@@ -89,25 +92,31 @@ export const ModeSelector: React.FC<ModeSelectorProps> = ({
     <div className="grid grid-cols-2 gap-2">
       {MODES.map((mode) => {
         const isSelected = currentIndex === mode.indexType;
+        const isDisabled = disabled || mode.comingSoon;
         const Icon = mode.icon;
         
         return (
           <button
             key={mode.id}
-            onClick={() => onChange(mode.indexType)}
-            disabled={disabled}
+            onClick={() => !mode.comingSoon && onChange(mode.indexType)}
+            disabled={isDisabled}
             className={`
               relative p-3 rounded-xl border text-left transition-all duration-200
-              ${isSelected 
+              ${isSelected && !mode.comingSoon
                 ? `border-${mode.color.split('-')[1]}-500 ring-1 ring-${mode.color.split('-')[1]}-500 ${mode.bgColor}` 
                 : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'
               }
-              ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}
+              ${isDisabled ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}
             `}
           >
+            {mode.comingSoon && (
+              <span className="absolute top-2 right-2 text-[10px] font-medium text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">
+                Próximamente
+              </span>
+            )}
             <div className={`
               w-8 h-8 rounded-lg flex items-center justify-center mb-2
-              ${isSelected ? 'bg-white shadow-sm' : 'bg-white border border-slate-100'}
+              ${isSelected && !mode.comingSoon ? 'bg-white shadow-sm' : 'bg-white border border-slate-100'}
             `}>
               <Icon className={`w-5 h-5 ${mode.color}`} />
             </div>
@@ -121,7 +130,7 @@ export const ModeSelector: React.FC<ModeSelectorProps> = ({
               </p>
             </div>
             
-            {isSelected && (
+            {isSelected && !mode.comingSoon && (
               <div className={`absolute top-2 right-2 w-2 h-2 rounded-full bg-${mode.color.split('-')[1]}-500`} />
             )}
           </button>

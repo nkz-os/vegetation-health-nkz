@@ -229,28 +229,7 @@ const AlertsTab: React.FC = () => {
             </div>
           </div>
 
-          {/* Webhook URL */}
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">
-              URL de Webhook (N8N)
-              {!n8nAvailable && (
-                <span className="ml-2 text-xs text-amber-600">(N8N no configurado)</span>
-              )}
-            </label>
-            <input
-              type="url"
-              value={config.webhook_url || ''}
-              onChange={(e) => setConfig(prev => ({ ...prev, webhook_url: e.target.value }))}
-              placeholder="https://n8n.example.com/webhook/..."
-              disabled={!n8nAvailable}
-              className={`w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:ring-emerald-500 focus:border-emerald-500 ${
-                !n8nAvailable ? 'bg-slate-50 text-slate-400' : ''
-              }`}
-            />
-            <p className="text-xs text-slate-500 mt-1">
-              Opcional. Si se configura, se enviará una notificación al webhook cuando se active la alerta.
-            </p>
-          </div>
+          {/* Webhook URL hidden per §12.5 — only threshold (and channel) shown */}
 
           {/* Enable Toggle */}
           <div className="flex items-center gap-2">

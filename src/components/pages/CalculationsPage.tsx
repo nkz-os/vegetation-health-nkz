@@ -1,14 +1,13 @@
 /**
- * CalculationsPage - Grid view of historical calculations
- * Shows all completed jobs with histograms and download options
+ * CalculationsPage - Flat table of historical calculations (§12.4)
+ * Columns: Scene date, Index, Status (Success/Clouds/Failed)
  */
 
 import React, { useState, useEffect } from 'react';
 import { useVegetationApi } from '../../services/api';
 import { useVegetationContext } from '../../services/vegetationContext';
-import { CalculationCard } from '../widgets/CalculationCard';
 import { VegetationJob } from '../../types';
-import { Loader2, Search, Filter, Grid, List, RefreshCw } from 'lucide-react';
+import { Loader2, Search, Filter, RefreshCw, MapPin, Download, Trash2 } from 'lucide-react';
 
 interface CalculationsPageProps {
     onViewInMap?: (job: VegetationJob) => void;
@@ -23,7 +22,6 @@ export const CalculationsPage: React.FC<CalculationsPageProps> = ({
     const [jobs, setJobs] = useState<VegetationJob[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
-    const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
     const [filterIndex, setFilterIndex] = useState<string>('all');
     const [searchQuery, setSearchQuery] = useState('');
 
@@ -97,6 +95,24 @@ export const CalculationsPage: React.FC<CalculationsPageProps> = ({
 
     // Get unique index types for filter
     const indexTypes = ['all', ...new Set(jobs.map(j => j.index_type).filter(Boolean))];
+
+    const sceneDate = (job: VegetationJob) =>
+        (job.result as any)?.sensing_date || job.completed_at || job.created_at || '—';
+
+    // Domain status: derive from explicit backend flags instead of error message text (§12.4 review)
+    const statusLabel = (job: VegetationJob): 'Éxito' | 'Nubes' | 'Fallo' => {
+        const result = (job.result as any) || {};
+        if (result.skipped_due_to_clouds === true) {
+            return 'Nubes';
+        }
+        if (job.status === 'completed') {
+            return 'Éxito';
+        }
+        if (job.status === 'failed') {
+            return 'Fallo';
+        }
+        return 'Fallo';
+    };
 
     // Handle delete
     const handleDelete = async (job: VegetationJob) => {
@@ -176,26 +192,6 @@ export const CalculationsPage: React.FC<CalculationsPageProps> = ({
                     </select>
                 </div>
 
-                {/* View toggle */}
-                <div className="flex items-center bg-slate-100 rounded-lg p-1">
-                    <button
-                        onClick={() => setViewMode('grid')}
-                        className={`p-2 rounded-md transition-colors ${viewMode === 'grid' ? 'bg-white shadow-sm text-green-700' : 'text-slate-500'
-                            }`}
-                        title="Vista cuadrícula"
-                    >
-                        <Grid className="w-4 h-4" />
-                    </button>
-                    <button
-                        onClick={() => setViewMode('list')}
-                        className={`p-2 rounded-md transition-colors ${viewMode === 'list' ? 'bg-white shadow-sm text-green-700' : 'text-slate-500'
-                            }`}
-                        title="Vista lista"
-                    >
-                        <List className="w-4 h-4" />
-                    </button>
-                </div>
-
                 {/* Refresh */}
                 <button
                     onClick={fetchJobs}
@@ -212,7 +208,7 @@ export const CalculationsPage: React.FC<CalculationsPageProps> = ({
                 {filterIndex !== 'all' && ` para ${filterIndex}`}
             </div>
 
-            {/* Grid/List of calculations */}
+            {/* Flat table: Scene date, Index, Status (§12.4) */}
             {filteredJobs.length === 0 ? (
                 <div className="bg-white rounded-xl border border-slate-200 p-12 text-center">
                     <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4">
@@ -226,20 +222,60 @@ export const CalculationsPage: React.FC<CalculationsPageProps> = ({
                     </p>
                 </div>
             ) : (
-                <div className={
-                    viewMode === 'grid'
-                        ? 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4'
-                        : 'flex flex-col gap-3'
-                }>
-                    {filteredJobs.map(job => (
-                        <CalculationCard
-                            key={job.id}
-                            job={job}
-                            onViewInMap={handleViewInMap}
-                            onDownload={handleDownload}
-                            onDelete={handleDelete}
-                        />
-                    ))}
+                <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+                    <table className="w-full text-sm">
+                        <thead className="bg-slate-50 border-b border-slate-200">
+                            <tr>
+                                <th className="text-left py-3 px-4 font-medium text-slate-700">Fecha escena</th>
+                                <th className="text-left py-3 px-4 font-medium text-slate-700">Índice</th>
+                                <th className="text-left py-3 px-4 font-medium text-slate-700">Estado</th>
+                                <th className="text-right py-3 px-4 font-medium text-slate-700">Acciones</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {filteredJobs.map(job => (
+                                <tr key={job.id} className="border-b border-slate-100 hover:bg-slate-50/50">
+                                    <td className="py-2.5 px-4 text-slate-700">
+                                        {sceneDate(job) !== '—'
+                                            ? new Date(sceneDate(job)).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' })
+                                            : '—'}
+                                    </td>
+                                    <td className="py-2.5 px-4 font-medium text-slate-800">{job.index_type || '—'}</td>
+                                    <td className="py-2.5 px-4">
+                                        <span className={
+                                            statusLabel(job) === 'Éxito' ? 'text-emerald-600 font-medium' :
+                                                statusLabel(job) === 'Nubes' ? 'text-amber-600' : 'text-red-600'
+                                        }>
+                                            {statusLabel(job)}
+                                        </span>
+                                    </td>
+                                    <td className="py-2.5 px-4 text-right">
+                                        <button
+                                            onClick={() => handleViewInMap(job)}
+                                            className="p-1.5 text-slate-500 hover:text-green-600 rounded"
+                                            title="Ver en mapa"
+                                        >
+                                            <MapPin className="w-4 h-4 inline" />
+                                        </button>
+                                        <button
+                                            onClick={() => handleDownload(job, 'geotiff')}
+                                            className="p-1.5 text-slate-500 hover:text-green-600 rounded"
+                                            title="Descargar"
+                                        >
+                                            <Download className="w-4 h-4 inline" />
+                                        </button>
+                                        <button
+                                            onClick={() => handleDelete(job)}
+                                            className="p-1.5 text-slate-500 hover:text-red-600 rounded"
+                                            title="Eliminar"
+                                        >
+                                            <Trash2 className="w-4 h-4 inline" />
+                                        </button>
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
                 </div>
             )}
         </div>
