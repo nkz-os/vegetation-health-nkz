@@ -1,20 +1,13 @@
 /**
- * Zoning Layer Component (Phase F6 Frontend)
- * Renders VRA Management Zones on the map using Deck.gl GeoJsonLayer.
- * Fetches zone polygons from backend /api/jobs/zoning/{parcel_id}/geojson
+ * Zoning Layer Control (VRA Management Zones)
+ * Fetches zone polygons from backend and shows UI/legend. Map drawing is done
+ * by VegetationLayer (Cesium GeoJsonDataSource) when index is VRA_ZONES.
+ * Deck.gl removed (Phase 4) — single visor is Cesium-only.
  */
 
 import React, { useEffect, useState } from 'react';
-import { GeoJsonLayer } from '@deck.gl/layers';
 import { useVegetationContext } from '../../services/vegetationContext';
 import { useAuth } from '../../hooks/useAuth';
-
-// Zone colors based on cluster ID (vigor levels)
-const ZONE_COLORS: Record<number, [number, number, number, number]> = {
-  0: [220, 53, 69, 180],   // Low vigor - Red
-  1: [255, 193, 7, 180],   // Medium vigor - Yellow
-  2: [40, 167, 69, 180],   // High vigor - Green
-};
 
 interface ZoningLayerProps {
   parcelId?: string;
@@ -38,45 +31,6 @@ interface ZoneFeature {
 interface ZoningGeoJSON {
   type: 'FeatureCollection';
   features: ZoneFeature[];
-}
-
-export function createZoningLayer(
-  geojsonData: ZoningGeoJSON | null,
-  visible: boolean = true,
-  onZoneClick?: (zoneId: number, properties: Record<string, unknown>) => void
-): GeoJsonLayer | null {
-  if (!geojsonData || !visible) return null;
-
-  return new GeoJsonLayer({
-    id: 'vra-zoning-layer',
-    data: geojsonData as any, // Cast to any to avoid strict Deck.gl GeoJSON mismatches
-    pickable: true,
-    stroked: true,
-    filled: true,
-    extruded: false,
-    lineWidthScale: 1,
-    lineWidthMinPixels: 2,
-    
-    // Explicitly cast return type to any or Color to satisfy Deck.gl typings
-    getFillColor: ((feature: ZoneFeature) => {
-      const zoneId = feature.properties?.zone_id ?? 1;
-      return (ZONE_COLORS[zoneId] || [128, 128, 128, 150]) as [number, number, number, number];
-    }) as any,
-    
-    getLineColor: [255, 255, 255, 255],
-    getLineWidth: 2,
-    
-    onClick: (info: any) => {
-      if (info.object && onZoneClick) {
-        const props = (info.object as ZoneFeature).properties;
-        onZoneClick(props.zone_id, props);
-      }
-    },
-    
-    updateTriggers: {
-      getFillColor: [geojsonData],
-    },
-  });
 }
 
 export const ZoningLayerControl: React.FC<ZoningLayerProps> = ({
@@ -138,9 +92,8 @@ export const ZoningLayerControl: React.FC<ZoningLayerProps> = ({
     fetchZones();
   }, [shouldShowZoning, effectiveParcelId, token]);
 
-  // This component just manages the data - the actual layer is created
-  // by the parent (VegetationLayer) using createZoningLayer()
-  
+  // Drawing is done in VegetationLayer (Cesium GeoJsonDataSource) when index === 'VRA_ZONES'.
+
   if (loading) {
     return (
       <div className="absolute bottom-4 left-4 bg-white/90 rounded-lg px-3 py-2 shadow-lg">

@@ -531,34 +531,28 @@ docker-compose up -d
 
 3. **Deploy Kubernetes Resources**:
    ```bash
-   # Apply deployments (backend, frontend, worker)
+   # Apply backend and worker (no separate frontend deployment — IIFE bundle is served from MinIO)
    kubectl apply -f k8s/backend-deployment.yaml
-   kubectl apply -f k8s/frontend-deployment.yaml
    kubectl apply -f k8s/worker-deployment.yaml
    ```
 
-4. **Update Ingress** (in Core Platform repository):
-   - Add route `/api/vegetation` → `vegetation-prime-api-service:8000`
-   - Add route `/modules/vegetation-prime` → `vegetation-prime-frontend-service:80`
-   - Specific routes must come before generic `/modules` route
+4. **Ingress** (Core Platform — `nkz` repo):
+   - **Only** add route `/api/vegetation` → `vegetation-prime-api-service:8000`.
+   - **Do NOT** add a route `/modules/vegetation-prime` to any per-module service. The platform serves the module IIFE from MinIO via `frontend-static` at `https://<frontend-domain>/modules/vegetation-prime/nkz-module.js`. A per-module ingress for `/modules/vegetation-prime` would intercept that URL and return HTML (SPA fallback), breaking registration.
 
-5. **Verify Deployment**:
+5. **Deploy module bundle to MinIO** (after `pnpm run build`):
+   - Upload `dist/nkz-module.js` to bucket `nekazari-frontend`, key `modules/vegetation-prime/nkz-module.js` (via `mc` or S3 API). Set `marketplace_modules.remote_entry_url = '/modules/vegetation-prime/nkz-module.js'`.
+
+6. **Verify Deployment**:
    ```bash
-   # Check pods are running
    kubectl get pods -n nekazari | grep vegetation-prime
-   
-   # Verify frontend is accessible
-   curl -I https://nekazari.artotxiki.com/modules/vegetation-prime/assets/remoteEntry.js
-   # Should return HTTP 200
-   
-   # Check module appears in marketplace
-   # Access Nekazari Platform → Marketplace → should see "Vegetation Prime"
+   curl -sI "https://nekazari.robotika.cloud/modules/vegetation-prime/nkz-module.js"
+   # Must return 200 and Content-Type: text/javascript (not text/html)
    ```
 
 ### Important Notes
 
 - **Image Versions**: Deployments use versioned tags (e.g., `v1.0.0`) instead of `latest` for stability
-- **Frontend Nginx Configuration**: The frontend includes `nginx.conf` with regex location pattern (`~ ^/modules/vegetation-prime/(.*)$`) and rewrite directive to properly map the ingress path `/modules/vegetation-prime/*` to the filesystem root. This ensures Module Federation chunks (`__federation_expose_*.js`) are served correctly.
 - **Environment Variables**: Secrets (including `MODULE_MANAGEMENT_KEY`, `DATABASE_URL`, etc.) are managed by Core Platform and injected via ConfigMaps/Secrets
 - **Image Pull Policy**: Set to `Always` to ensure latest images are pulled (consider using specific versions in production)
 

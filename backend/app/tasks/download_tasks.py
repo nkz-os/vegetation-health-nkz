@@ -5,7 +5,7 @@ UPDATED: Real implementation with Copernicus Data Space Ecosystem.
 
 import logging
 from typing import Dict, Any
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta, date, timezone
 import uuid
 import os
 from pathlib import Path
@@ -67,60 +67,114 @@ def download_sentinel2_scene(self, job_id: str, tenant_id: str, parameters: Dict
             client_secret=creds['client_secret']
         )
         
-        # Update progress
-        self.update_state(state='PROGRESS', meta={'progress': 10, 'message': 'Searching for scenes'})
-        
-        # Extract parameters
-        bounds = parameters.get('bounds')  # GeoJSON polygon
-        start_date = parameters.get('start_date')
-        end_date = parameters.get('end_date')
-        cloud_threshold = parameters.get('cloud_coverage_threshold', config.cloud_coverage_threshold)
-        
-        # Convert bounds to bbox [min_lon, min_lat, max_lon, max_lat]
-        if bounds and bounds.get('type') == 'Polygon':
-            coords = bounds['coordinates'][0]
-            lons = [c[0] for c in coords]
-            lats = [c[1] for c in coords]
-            bbox = [min(lons), min(lats), max(lons), max(lats)]
+        # Extract parameters (bounds/bbox for SCL clip and scene selection)
+        bounds = parameters.get('bounds')
+        bbox = parameters.get('bbox')
+        if bbox and len(bbox) >= 4:
+            bbox = [float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])]
+        elif bounds:
+            from shapely.geometry import shape as shp
+            geom = shp(bounds)
+            if hasattr(geom, 'geoms'):
+                geom = geom.geoms[0] if geom.geoms else geom
+            bbox = list(geom.bounds)
         else:
-            raise ValueError("Invalid bounds provided")
+            raise ValueError("Invalid bounds or bbox provided")
         
-        # Parse dates with default to last 30 days if not provided
-        if isinstance(start_date, str):
-            start_date = date.fromisoformat(start_date)
-        elif start_date is None:
-            # Default: 30 days ago
-            start_date = date.today() - timedelta(days=30)
-            logger.info(f"No start_date provided, using default: {start_date} (30 days ago)")
+        preset_scene_id = parameters.get('scene_id')
+        if preset_scene_id:
+            # Phase 3 subscription flow: single scene, run SCL micro validation first
+            self.update_state(state='PROGRESS', meta={'progress': 15, 'message': 'Fetching scene item'})
+            best_scene = copernicus_client.get_scene_item(preset_scene_id)
+            scene_id = best_scene['id']
+            local_threshold = float(os.getenv('LOCAL_CLOUD_THRESHOLD_PCT', '10'))
+            self.update_state(state='PROGRESS', meta={'progress': 18, 'message': 'SCL validation (micro filter)'})
+            import tempfile
+            from app.services.scl_validation import compute_local_cloud_pct
+            with tempfile.TemporaryDirectory() as tmpdir:
+                scl_path = os.path.join(tmpdir, f"{scene_id}_SCL.tif")
+                try:
+                    copernicus_client.download_band(scene_id, 'SCL', scl_path)
+                except Exception as e:
+                    logger.warning("SCL band not available for %s: %s; proceeding without micro filter", scene_id, e)
+                    scl_path = None
+            if scl_path:
+                # Use exact parcel polygon (bounds GeoJSON), not bbox, so we only count clouds over the client parcel
+                parcel_geojson = parameters.get('bounds') or {
+                    'type': 'Polygon',
+                    'coordinates': [[[bbox[0], bbox[1]], [bbox[2], bbox[1]], [bbox[2], bbox[3]], [bbox[0], bbox[3]], [bbox[0], bbox[1]]]],
+                }
+                local_cloud_pct = compute_local_cloud_pct(scl_path, parcel_geojson)
+                if local_cloud_pct > local_threshold:
+                    logger.info("Scene %s skipped: local_cloud_pct=%.1f > threshold=%.1f", scene_id, local_cloud_pct, local_threshold)
+                    from shapely.geometry import shape as shp
+                    from geoalchemy2.shape import from_shape
+                    geom = shp(best_scene.get('geometry') or {'type': 'Polygon', 'coordinates': [[[bbox[0], bbox[1]], [bbox[2], bbox[1]], [bbox[2], bbox[3]], [bbox[0], bbox[3]], [bbox[0], bbox[1]]]]})
+                    if hasattr(geom, 'geoms') and geom.geoms:
+                        geom = geom.geoms[0]
+                    footprint = from_shape(geom, srid=4326)
+                    acquisition_dt = None
+                    if best_scene.get('datetime'):
+                        try:
+                            iso = best_scene['datetime'].replace('Z', '+00:00')
+                            acquisition_dt = datetime.fromisoformat(iso)
+                            if acquisition_dt.tzinfo is None:
+                                acquisition_dt = acquisition_dt.replace(tzinfo=timezone.utc)
+                        except (ValueError, TypeError):
+                            pass
+                    skipped_scene = VegetationScene(
+                        tenant_id=tenant_id,
+                        scene_id=scene_id,
+                        sensing_date=date.fromisoformat(best_scene['sensing_date']),
+                        acquisition_datetime=acquisition_dt,
+                        footprint=footprint,
+                        cloud_coverage=str(best_scene.get('cloud_cover', '')),
+                        storage_path='',
+                        storage_bucket=None,
+                        bands=None,
+                        is_valid=False,
+                        quality_flags={'skipped_due_to_clouds': True, 'local_cloud_pct': round(local_cloud_pct, 2)},
+                        job_id=job.id,
+                    )
+                    db.add(skipped_scene)
+                    db.commit()
+                    job.mark_completed({
+                        'skipped_due_to_clouds': True,
+                        'local_cloud_pct': round(local_cloud_pct, 2),
+                        'message': f'Scene skipped: local cloud {local_cloud_pct:.1f}% > {local_threshold}%',
+                    })
+                    db.commit()
+                    return
+                self.update_state(state='PROGRESS', meta={'progress': 30, 'message': f'Scene {scene_id} passed SCL'})
+        else:
+            # Manual flow: search then pick best scene
+            start_date = parameters.get('start_date')
+            end_date = parameters.get('end_date')
+            cloud_threshold = parameters.get('cloud_coverage_threshold', config.cloud_coverage_threshold)
+            if isinstance(start_date, str):
+                start_date = date.fromisoformat(start_date)
+            elif start_date is None:
+                start_date = date.today() - timedelta(days=30)
+            if isinstance(end_date, str):
+                end_date = date.fromisoformat(end_date)
+            elif end_date is None:
+                end_date = date.today()
+            self.update_state(state='PROGRESS', meta={'progress': 20, 'message': 'Searching Copernicus catalog'})
+            scenes = copernicus_client.search_scenes(
+                bbox=bbox,
+                start_date=start_date,
+                end_date=end_date,
+                cloud_cover_max=float(cloud_threshold),
+                limit=10,
+            )
+            if not scenes:
+                raise ValueError("No scenes found matching criteria")
+            best_scene = sorted(scenes, key=lambda s: (s['cloud_cover'], s['sensing_date']), reverse=True)[0]
+            scene_id = best_scene['id']
+            self.update_state(state='PROGRESS', meta={'progress': 30, 'message': f'Found scene {scene_id}'})
         
-        if isinstance(end_date, str):
-            end_date = date.fromisoformat(end_date)
-        elif end_date is None:
-            # Default: today
-            end_date = date.today()
-            logger.info(f"No end_date provided, using default: {end_date} (today)")
-        
-        # Search for scenes
-        self.update_state(state='PROGRESS', meta={'progress': 20, 'message': 'Searching Copernicus catalog'})
-        scenes = copernicus_client.search_scenes(
-            bbox=bbox,
-            start_date=start_date,
-            end_date=end_date,
-            cloud_cover_max=float(cloud_threshold),
-            limit=10  # Get top 10 matches
-        )
-        
-        if not scenes:
-            raise ValueError("No scenes found matching criteria")
-        
-        # Select best scene (lowest cloud cover, most recent)
-        best_scene = sorted(scenes, key=lambda s: (s['cloud_cover'], s['sensing_date']), reverse=True)[0]
-        scene_id = best_scene['id']
-        
-        self.update_state(state='PROGRESS', meta={'progress': 30, 'message': f'Found scene {scene_id}'})
-        
-        # Determine which bands to download (Critical Fix: Always download full agricultural set)
-        required_bands = ['B02', 'B03', 'B04', 'B08', 'B11', 'B12']
+        # Determine which bands to download (SCL for cloud masking; rest for indices)
+        required_bands = ['B02', 'B03', 'B04', 'B08', 'B11', 'B12', 'SCL']
         
         # =============================================================================
         # HYBRID CACHE LOGIC: Check global cache first, then download if needed
@@ -275,11 +329,22 @@ def download_sentinel2_scene(self, job_id: str, tenant_id: str, parameters: Dict
         
         # Step 4: Create tenant scene record
         self.update_state(state='PROGRESS', meta={'progress': 90, 'message': 'Creating scene record'})
-        
+
+        acquisition_dt = None
+        if best_scene.get('datetime'):
+            try:
+                iso = best_scene['datetime'].replace('Z', '+00:00')
+                acquisition_dt = datetime.fromisoformat(iso)
+                if acquisition_dt.tzinfo is None:
+                    acquisition_dt = acquisition_dt.replace(tzinfo=timezone.utc)
+            except (ValueError, TypeError):
+                pass
+
         scene = VegetationScene(
             tenant_id=tenant_id,
             scene_id=scene_id,
             sensing_date=date.fromisoformat(best_scene['sensing_date']),
+            acquisition_datetime=acquisition_dt,
             footprint=None,  # TODO: Convert geometry to PostGIS
             cloud_coverage=str(best_scene['cloud_cover']),
             storage_path=f"{config.storage_path}scenes/{scene_id}/",

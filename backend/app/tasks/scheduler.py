@@ -81,7 +81,7 @@ def check_and_process_entity(self, subscription_id, start_date, end_date):
     import uuid
     from app.services.copernicus_client import CopernicusDataSpaceClient
     from app.services.platform_credentials import get_copernicus_credentials_with_fallback
-    from app.models import VegetationScene, VegetationConfig
+    from app.models import VegetationScene, VegetationConfig, VegetationJob
     from geoalchemy2.shape import to_shape
 
     db_gen = get_db_session()
@@ -97,12 +97,11 @@ def check_and_process_entity(self, subscription_id, start_date, end_date):
             sub.status = 'syncing'
             db.commit()
 
-        # Parse geometry to get bbox using GeoAlchemy2
+        # Parse geometry: bbox for SCL clip and GeoJSON for STAC intersects (Phase 3 SOTA)
         try:
-            # sub.geometry is WKBElement
             geom_shape = to_shape(sub.geometry)
-            # Returns (minx, miny, maxx, maxy)
-            bbox = list(geom_shape.bounds)
+            bbox = list(geom_shape.bounds)  # [minx, miny, maxx, maxy]
+            intersects_geojson = geom_shape.__geo_interface__  # GeoJSON for strict intersection
         except Exception as e:
             print(f"Error parsing geometry for {subscription_id}: {e}")
             sub.last_error = f"Geometry error: {str(e)}"
@@ -135,7 +134,14 @@ def check_and_process_entity(self, subscription_id, start_date, end_date):
         end = datetime.fromisoformat(end_date).date()
         
         try:
-            scenes = client.search_scenes(bbox=bbox, start_date=start, end_date=end, limit=20)
+            # Phase 3 macro filter: intersects (exact parcel) + cloud_cover_lte 60
+            scenes = client.search_scenes(
+                intersects=intersects_geojson,
+                start_date=start,
+                end_date=end,
+                cloud_cover_lte=60,
+                limit=20,
+            )
         except Exception as e:
             print(f"Error searching scenes: {e}")
             sub.last_error = f"Search failed: {str(e)}"
@@ -151,33 +157,39 @@ def check_and_process_entity(self, subscription_id, start_date, end_date):
                 db.commit()
             return
 
-        # Filter existing scenes for this tenant
+        # Filter existing scenes for this tenant (scene_id unique per tenant)
         scene_ids = [s['id'] for s in scenes]
         existing = db.query(VegetationScene.scene_id).filter(
             VegetationScene.scene_id.in_(scene_ids),
             VegetationScene.tenant_id == sub.tenant_id,
-            VegetationScene.entity_id == sub.entity_id 
         ).all()
         existing_ids = {r[0] for r in existing}
         
         triggered_count = 0
         for scene in scenes:
             if scene['id'] not in existing_ids:
-                job_id = str(uuid.uuid4())
-                
-                # Parameters for download task
                 dl_params = {
                     'scene_id': scene['id'],
+                    'bounds': intersects_geojson,
                     'bbox': bbox,
                     'date': scene['sensing_date'],
                     'entity_id': sub.entity_id,
-                    'calculate_indices': sub.index_types, 
-                    'subscription_id': subscription_id
+                    'calculate_indices': sub.index_types,
+                    'subscription_id': subscription_id,
                 }
-                
+                job = VegetationJob(
+                    id=uuid.uuid4(),
+                    tenant_id=sub.tenant_id,
+                    entity_id=sub.entity_id,
+                    job_type='download',
+                    status='pending',
+                    parameters=dl_params,
+                )
+                db.add(job)
+                db.commit()
                 print(f"Triggering download for scene {scene['id']}")
                 download_sentinel2_scene.delay(
-                    job_id=job_id,
+                    job_id=str(job.id),
                     tenant_id=sub.tenant_id,
                     parameters=dl_params
                 )

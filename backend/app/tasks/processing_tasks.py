@@ -7,12 +7,14 @@ import os
 from typing import Dict, Any, List, Optional
 from datetime import datetime, date, timezone
 import uuid
+from pathlib import Path
 
 from app.celery_app import celery_app
 from app.models import VegetationJob, VegetationScene, VegetationIndexCache
 from app.services.processor import VegetationIndexProcessor
 from app.services.storage import create_storage_service, generate_tenant_bucket_name
 from app.database import get_db_session
+from app.services.vegetation_timeseries import write_index_timeseries_point
 
 logger = logging.getLogger(__name__)
 
@@ -137,7 +139,7 @@ def calculate_vegetation_index(
         db.commit()
         
         # Get storage service
-        bucket_name = generate_tenant_bucket_name(tenant_id)
+        bucket_name = os.getenv("VEGETATION_COG_BUCKET") or generate_tenant_bucket_name(tenant_id)
         from app.models import VegetationConfig
         config = db.query(VegetationConfig).filter(
             VegetationConfig.tenant_id == tenant_id
@@ -187,18 +189,108 @@ def calculate_vegetation_index(
             # SINGLE SCENE MODE
             if not scene_id:
                 raise ValueError("scene_id is required for single scene mode")
-            
+
             logger.info(f"Single scene mode: {scene_id}")
-            self.update_state(state='PROGRESS', meta={'progress': 10, 'message': 'Loading scene'})
-            
-            scene = db.query(VegetationScene).filter(
-                VegetationScene.id == uuid.UUID(scene_id),
-                VegetationScene.tenant_id == tenant_id
-            ).first()
-            
+            self.update_state(
+                state="PROGRESS",
+                meta={"progress": 10, "message": "Loading scene"},
+            )
+
+            scene = (
+                db.query(VegetationScene)
+                .filter(
+                    VegetationScene.id == uuid.UUID(scene_id),
+                    VegetationScene.tenant_id == tenant_id,
+                )
+                .first()
+            )
+
             if not scene:
                 raise ValueError(f"Scene {scene_id} not found")
-            
+
+            # Idempotency guardrail: if this (entity_id, scene_id, index_type)
+            # is already in vegetation_indices_cache, skip heavy processing and
+            # return the cached result.
+            existing_cache = (
+                db.query(VegetationIndexCache)
+                .filter(
+                    VegetationIndexCache.tenant_id == tenant_id,
+                    VegetationIndexCache.scene_id == scene.id,
+                    VegetationIndexCache.index_type == index_type,
+                    # entity_id is part of the logical key when present
+                    *(
+                        [VegetationIndexCache.entity_id == job.entity_id]
+                        if job.entity_id
+                        else []
+                    ),
+                )
+                .first()
+            )
+
+            if existing_cache:
+                logger.info(
+                    "Index %s for scene %s (entity=%s, tenant=%s) already exists; "
+                    "ensuring TimescaleDB write then skipping recalculation.",
+                    index_type,
+                    scene.id,
+                    job.entity_id,
+                    tenant_id,
+                )
+
+                stats_payload: Dict[str, Any] = {
+                    "mean": float(existing_cache.mean_value)
+                    if existing_cache.mean_value is not None
+                    else None,
+                    "min": float(existing_cache.min_value)
+                    if existing_cache.min_value is not None
+                    else None,
+                    "max": float(existing_cache.max_value)
+                    if existing_cache.max_value is not None
+                    else None,
+                    "std": float(existing_cache.std_dev)
+                    if existing_cache.std_dev is not None
+                    else None,
+                    "pixel_count": existing_cache.pixel_count,
+                }
+
+                # Dual persistence: ensure TimescaleDB has the point (retry-safe).
+                # If the original run failed after writing cache but before TimescaleDB,
+                # this retry will write it; ON CONFLICT DO NOTHING makes repeated calls safe.
+                if job.entity_id and scene.sensing_date and existing_cache.mean_value is not None:
+                    if scene.acquisition_datetime is not None:
+                        observed_at = scene.acquisition_datetime
+                    else:
+                        observed_at = datetime(
+                            scene.sensing_date.year,
+                            scene.sensing_date.month,
+                            scene.sensing_date.day,
+                            10,
+                            50,
+                            0,
+                            tzinfo=timezone.utc,
+                        )
+                    write_index_timeseries_point(
+                        tenant_id=tenant_id,
+                        entity_id=job.entity_id,
+                        index_type=index_type,
+                        observed_at=observed_at,
+                        value=float(existing_cache.mean_value),
+                        device_id="vegetation_prime",
+                        unit="index",
+                    )
+
+                job_result = {
+                    "index_type": index_type,
+                    "statistics": stats_payload,
+                    "raster_path": existing_cache.result_raster_path,
+                    "source_image_count": 1,
+                    "is_composite": False,
+                }
+
+                job.mark_completed(job_result)
+                db.commit()
+                return
+
             scenes_to_process = [scene]
         
         # Calculate indices for all scenes
@@ -277,21 +369,40 @@ def calculate_vegetation_index(
         statistics = processor.calculate_statistics(composite_array)
         
         # Save raster
-        self.update_state(state='PROGRESS', meta={'progress': 90, 'message': 'Saving results'})
-        
-        # Use first scene's storage path or create composite path
+        self.update_state(
+            state="PROGRESS",
+            meta={"progress": 90, "message": "Saving results"},
+        )
+
+        # Determine canonical remote path for raster in object storage.
+        # For single-scene mode we follow the convention:
+        #   {tenant_id}/entities/{entity_id}/scenes/{scene_id}/{index_type}.tif
+        # The bucket is resolved from storage configuration / env.
+        primary_scene = scenes_to_process[0]
+
         if is_temporal_composite:
-            output_path = f"composites/{job_id}/{index_type}.tif"
+            remote_raster_path = (
+                f"{tenant_id}/entities/{job.entity_id or 'unknown'}/"
+                f"composites/{job.id}/{index_type}.tif"
+            )
         else:
-            output_path = f"{scenes_to_process[0].storage_path}/indices/{index_type}.tif"
-        
-        processor.save_index_raster(composite_array, output_path)
-        
-        # Upload to storage
-        storage.upload_file(output_path, output_path, bucket_name)
+            remote_raster_path = (
+                f"{tenant_id}/entities/{job.entity_id or 'unknown'}/"
+                f"scenes/{primary_scene.id}/{index_type}.tif"
+            )
+
+        # Store local file under /tmp before uploading to MinIO/S3.
+        local_dir = Path(f"/tmp/vegetation_indices/{tenant_id}/{job_id}")
+        local_dir.mkdir(parents=True, exist_ok=True)
+        local_output_path = local_dir / f"{index_type}.tif"
+
+        processor.save_index_raster(composite_array, str(local_output_path))
+
+        # Upload to storage using the canonical remote path.
+        storage.upload_file(str(local_output_path), remote_raster_path, bucket_name)
         
         # Create cache entry (use first scene's ID for reference, or create composite entry)
-        primary_scene_id = scenes_to_process[0].id
+        primary_scene_id = primary_scene.id
         
         cache_entry = VegetationIndexCache(
             tenant_id=tenant_id,
@@ -304,18 +415,18 @@ def calculate_vegetation_index(
             max_value=statistics['max'],
             std_dev=statistics['std'],
             pixel_count=statistics['pixel_count'],
-            result_raster_path=output_path,
+            result_raster_path=remote_raster_path,
             calculated_at=datetime.utcnow().isoformat(),
             calculation_time_ms=None
         )
         
         db.add(cache_entry)
-        
+
         # Mark job as completed with metadata
         job_result = {
             'index_type': index_type,
             'statistics': statistics,
-            'raster_path': output_path,
+            'raster_path': remote_raster_path,
             'source_image_count': source_image_count,
             'is_composite': is_temporal_composite,
         }
@@ -328,6 +439,31 @@ def calculate_vegetation_index(
         
         job.mark_completed(job_result)
         db.commit()
+
+        # Persist aggregated value into TimescaleDB (critical: failure propagates
+        # so the task fails and retries; idempotency avoids re-uploading COG).
+        if primary_scene.sensing_date and job.entity_id:
+            if primary_scene.acquisition_datetime is not None:
+                observed_at = primary_scene.acquisition_datetime
+            else:
+                observed_at = datetime(
+                    primary_scene.sensing_date.year,
+                    primary_scene.sensing_date.month,
+                    primary_scene.sensing_date.day,
+                    10,
+                    50,
+                    0,
+                    tzinfo=timezone.utc,
+                )
+            write_index_timeseries_point(
+                tenant_id=tenant_id,
+                entity_id=job.entity_id,
+                index_type=index_type,
+                observed_at=observed_at,
+                value=float(statistics['mean']),
+                device_id="vegetation_prime",
+                unit="index",
+            )
 
         # Update job status in usage stats
         from app.services.usage_tracker import UsageTracker

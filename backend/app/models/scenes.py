@@ -25,6 +25,7 @@ class VegetationScene(BaseModel, TenantMixin):
     
     # Temporal information
     sensing_date = Column(Date, nullable=False, index=True)
+    acquisition_datetime = Column(DateTime(timezone=True), nullable=True)  # Exact STAC acquisition time (e.g. 10:51 UTC)
     ingestion_date = Column(DateTime(timezone=True), nullable=True)
     
     # Geographic information

@@ -77,6 +77,13 @@ export class VegetationApiClient {
     return response as unknown as { status: string };
   }
 
+  /** Phase 4: TiTiler proxy — get presigned tile URL template for Cesium. */
+  async getViewerUrl(sceneId: string, indexType: string): Promise<{ tileUrlTemplate: string; expiresAt: string }> {
+    const params = new URLSearchParams({ scene_id: sceneId, index_type: indexType });
+    const response = await this.client.get(`/viewer-url?${params.toString()}`);
+    return response as unknown as { tileUrlTemplate: string; expiresAt: string };
+  }
+
   async listScenes(
     entityId?: string,
     startDate?: string,
@@ -330,35 +337,6 @@ export class VegetationApiClient {
       console.warn('[API] Prediction not available:', error);
       return null;
     }
-  }
-
-  /**
-   * Get carbon configuration for an entity
-   */
-  async getCarbonConfig(entityId: string): Promise<{
-    entity_id: string;
-    strawRemoved: boolean;
-    soilType: string;
-    tillageType?: string;
-    lue_factor: number;
-  } | null> {
-    try {
-      const response = await this.client.get(`/carbon/${encodeURIComponent(entityId)}`);
-      return response as any;
-    } catch (error) {
-      console.warn('[API] Carbon config not found:', error);
-      return null;
-    }
-  }
-
-  /**
-   * Save carbon configuration for an entity
-   */
-  async saveCarbonConfig(
-    entityId: string,
-    config: { strawRemoved: boolean; soilType: string; tillageType?: string }
-  ): Promise<void> {
-    await this.client.post(`/carbon/${encodeURIComponent(entityId)}`, config);
   }
 
   /**

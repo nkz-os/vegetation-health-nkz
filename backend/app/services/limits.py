@@ -15,8 +15,6 @@ from sqlalchemy.orm import Session
 
 from app.models import VegetationPlanLimits, VegetationUsageStats
 from app.services.usage_tracker import UsageTracker
-from app.services.cache import get_tile_cache
-
 logger = logging.getLogger(__name__)
 
 # Default limits (fallback if not synced from Core)

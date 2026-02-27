@@ -116,8 +116,7 @@
         "recentActivity": "Recent Activity",
         "noRecentActivity": "No recent activity.",
         "advancedConfig": "Advanced Configuration",
-        "vegetationAnalysis": "Vegetation Analysis",
-        "carbonCalcLUE": "Carbon Calculation (LUE)"
+        "vegetationAnalysis": "Vegetation Analysis"
     },
     "prescription": {
         "title": "Prescription Maps",

@@ -107,112 +107,129 @@ class CopernicusDataSpaceClient:
     
     def search_scenes(
         self,
-        bbox: List[float],  # [min_lon, min_lat, max_lon, max_lat]
-        start_date: date,
-        end_date: date,
-        cloud_cover_max: float = 20.0,
+        bbox: Optional[List[float]] = None,  # [min_lon, min_lat, max_lon, max_lat]
+        intersects: Optional[Dict[str, Any]] = None,  # GeoJSON geometry for strict intersection
+        start_date: Optional[date] = None,
+        end_date: Optional[date] = None,
+        cloud_cover_max: Optional[float] = None,
+        cloud_cover_lte: Optional[float] = None,
         product_type: str = "S2MSI2A",
         limit: int = 100
     ) -> List[Dict[str, Any]]:
         """Search for Sentinel-2 scenes.
         
+        Phase 3 SOTA: Use intersects (exact parcel geometry) + cloud_cover_lte (e.g. 60)
+        to avoid discarding useful scenes where the tile is partly cloudy but the parcel is clear.
+        
         Args:
-            bbox: Bounding box [min_lon, min_lat, max_lon, max_lat]
+            bbox: Bounding box [min_lon, min_lat, max_lon, max_lat] (use when intersects not provided)
+            intersects: GeoJSON geometry (Polygon) for strict intersection; preferred for subscriptions
             start_date: Start date for search
             end_date: End date for search
-            cloud_cover_max: Maximum cloud coverage percentage
+            cloud_cover_max: Max cloud (lt) when using bbox
+            cloud_cover_lte: Max cloud (lte) when using intersects; default 60 for macro filter
             product_type: Product type (default: S2MSI2A for L2A)
             limit: Maximum number of results
             
         Returns:
-            List of scene metadata dictionaries
+            List of scene metadata dictionaries with id, sensing_date, datetime, assets, geometry, etc.
         """
         token = self._get_access_token()
-        
-        # Build search query
-        query = {
-            "collections": ["sentinel-s2-l2a-cogs"],  # L2A COG products
-            "bbox": bbox,
-            "datetime": f"{start_date.isoformat()}/{end_date.isoformat()}",
-            "limit": limit,
-            "query": {
-                "eo:cloud_cover": {"lt": cloud_cover_max}
+        start_date = start_date or date.today() - timedelta(days=30)
+        end_date = end_date or date.today()
+
+        if intersects:
+            query = {
+                "collections": ["sentinel-s2-l2a-cogs"],
+                "intersects": intersects,
+                "datetime": f"{start_date.isoformat()}/{end_date.isoformat()}",
+                "limit": limit,
+                "query": {
+                    "eo:cloud_cover": {"lte": cloud_cover_lte if cloud_cover_lte is not None else 60}
+                }
             }
-        }
-        
+        else:
+            bbox = bbox or [-180, -90, 180, 90]
+            query = {
+                "collections": ["sentinel-s2-l2a-cogs"],
+                "bbox": bbox,
+                "datetime": f"{start_date.isoformat()}/{end_date.isoformat()}",
+                "limit": limit,
+                "query": {
+                    "eo:cloud_cover": {"lt": cloud_cover_max if cloud_cover_max is not None else 20.0}
+                }
+            }
+
         try:
             headers = {
                 'Authorization': f'Bearer {token}',
                 'Content-Type': 'application/json'
             }
-            
-            # Use STAC search endpoint
             response = requests.post(
                 f"{self.CATALOG_URL}/search",
                 json=query,
                 headers=headers
             )
             response.raise_for_status()
-            
             results = response.json()
             scenes = []
-            
             for feature in results.get('features', []):
+                dt_raw = feature['properties'].get('datetime') or ''
                 scene = {
                     'id': feature['id'],
-                    'sensing_date': feature['properties'].get('datetime', '').split('T')[0],
+                    'sensing_date': dt_raw.split('T')[0] if dt_raw else '',
+                    'datetime': dt_raw if dt_raw else None,
                     'cloud_cover': feature['properties'].get('eo:cloud_cover', 0),
                     'geometry': feature.get('geometry'),
                     'assets': feature.get('assets', {}),
                     'links': feature.get('links', [])
                 }
                 scenes.append(scene)
-            
             logger.info(f"Found {len(scenes)} scenes matching criteria")
             return scenes
-            
         except requests.RequestException as e:
             logger.error(f"Failed to search scenes: {str(e)}")
             raise Exception(f"Scene search failed: {str(e)}")
+
+    def get_scene_item(self, scene_id: str) -> Dict[str, Any]:
+        """Fetch a single STAC item by id (for SCL validation and asset URLs)."""
+        token = self._get_access_token()
+        url = f"{self.CATALOG_URL}/collections/sentinel-s2-l2a-cogs/items/{scene_id}"
+        headers = {'Authorization': f'Bearer {token}'}
+        response = requests.get(url, headers=headers)
+        response.raise_for_status()
+        feature = response.json()
+        dt_raw = feature.get('properties', {}).get('datetime') or ''
+        return {
+            'id': feature['id'],
+            'sensing_date': dt_raw.split('T')[0] if dt_raw else '',
+            'datetime': dt_raw if dt_raw else None,
+            'cloud_cover': feature.get('properties', {}).get('eo:cloud_cover', 0),
+            'geometry': feature.get('geometry'),
+            'assets': feature.get('assets', {}),
+            'links': feature.get('links', []),
+        }
     
     def download_band(
         self,
         scene_id: str,
-        band: str,  # e.g., "B04", "B08"
+        band: str,  # e.g., "B04", "B08", "SCL"
         output_path: str
     ) -> str:
         """Download a specific band from a scene.
         
         Args:
             scene_id: Sentinel-2 scene ID
-            band: Band name (B02, B03, B04, B08, etc.)
+            band: Band name (B02, B03, B04, B08, SCL, etc.)
             output_path: Local path to save the file
             
         Returns:
             Path to downloaded file
         """
         token = self._get_access_token()
-        
-        # Get scene metadata first
-        scenes = self.search_scenes(
-            bbox=[-180, -90, 180, 90],  # Dummy bbox, we'll filter by ID
-            start_date=date.today() - timedelta(days=365),
-            end_date=date.today(),
-            limit=1000
-        )
-        
-        scene = next((s for s in scenes if s['id'] == scene_id), None)
-        if not scene:
-            raise ValueError(f"Scene {scene_id} not found")
-        
-        # Find band asset
-        # Sentinel-2 L2A COG assets are typically named like "B04" or "visual"
+        scene = self.get_scene_item(scene_id)
         assets = scene.get('assets', {})
-        band_asset = assets.get(band)
-        
-        if not band_asset:
-            # Try alternative naming
-            band_asset = assets.get(f"{band}.tif") or assets.get(f"B{band}")
+        band_asset = assets.get(band) or assets.get(f"{band}.tif") or (assets.get(f"B{band}") if band.startswith("B") else None)
         
         if not band_asset:
             raise ValueError(f"Band {band} not found in scene {scene_id}")

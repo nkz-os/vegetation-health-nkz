@@ -314,17 +314,6 @@ export interface FormulaPreviewResponse {
 }
 
 /**
- * Carbon configuration
- */
-export interface CarbonConfig {
-  entity_id: string;
-  strawRemoved: boolean;
-  soilType: 'clay' | 'loam' | 'sandy' | 'organic';
-  tillageType?: 'conventional' | 'reduced' | 'no-till';
-  lue_factor?: number;
-}
-
-/**
  * Prediction response (Intelligence module integration)
  */
 export interface PredictionResponse {

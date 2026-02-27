@@ -4,7 +4,6 @@ import { useVegetationContext } from '../services/vegetationContext';
 import { useVegetationConfig } from '../hooks/useVegetationConfig';
 import { ModeSelector } from './widgets/ModeSelector';
 import { CalculationButton } from './widgets/CalculationButton';
-import { CarbonInputsWidget } from './widgets/CarbonInputsWidget';
 import { DateRangePicker } from './widgets/DateRangePicker';
 import { IndexPillSelector } from './widgets/IndexPillSelector';
 import { useVegetationApi } from '../services/api';
@@ -72,18 +71,6 @@ const QuickActionsToolbar: React.FC<{
         <span>{t('configPanel.exportMap')}</span>
       </button>
 
-      {/* Carbon Shortcut */}
-      <button
-        onClick={() => handleNavigateToModule('config')}
-        className="flex items-center gap-1.5 px-3 py-1.5 bg-white rounded-md text-xs font-medium text-amber-700 hover:bg-amber-50 border border-amber-200 transition-colors"
-        title="Configurar cálculo de carbono"
-      >
-        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707" />
-        </svg>
-        <span>{t('configPanel.carbonCalcLUE').split(' ')[0]}</span>
-      </button>
-
       {/* Open in Vegetation Prime */}
       <button
         onClick={() => handleNavigateToModule('analytics')}
@@ -112,7 +99,6 @@ export const VegetationConfig: React.FC<VegetationConfigProps> = ({ mode = 'pane
   // NOT updateConfig
   const { config, saveConfig } = useVegetationConfig();
   const api = useVegetationApi();
-  const [showCarbonConfig, setShowCarbonConfig] = useState(false);
   const [formula, setFormula] = useState('');
   const [formulaValid, setFormulaValid] = useState<boolean | null>(null);
   const formulaRef = useRef<HTMLTextAreaElement>(null);
@@ -343,45 +329,23 @@ export const VegetationConfig: React.FC<VegetationConfigProps> = ({ mode = 'pane
         <div className="border-t border-slate-200 my-2" />
 
         <section>
-          <div className="flex items-center justify-between mb-2">
-            <h3 className="text-sm font-semibold text-slate-700">{t('configPanel.advancedOptions')}</h3>
-            <button
-              onClick={() => setShowCarbonConfig(!showCarbonConfig)}
-              className="text-xs text-blue-600 hover:text-blue-800"
-            >
-              {showCarbonConfig ? 'Ocultar' : 'Mostrar'}
-            </button>
+          <h3 className="text-sm font-semibold text-slate-700 mb-2">{t('configPanel.copernicusCredentials')}</h3>
+          <div className="space-y-2">
+            <input
+              type="text"
+              placeholder="Client ID (Opcional)"
+              className="block w-full text-xs border-slate-300 rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500"
+              value={config.copernicus_client_id || ''}
+              onChange={(e) => saveConfig({ ...config, copernicus_client_id: e.target.value } as any)}
+            />
+            <input
+              type="password"
+              placeholder="Client Secret (Opcional)"
+              className="block w-full text-xs border-slate-300 rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500"
+              onChange={(e) => saveConfig({ ...config, copernicus_client_secret: e.target.value } as any)}
+            />
+            <p className="text-[10px] text-slate-400">{t('configPanel.credentialsHint')}</p>
           </div>
-
-          {showCarbonConfig && (
-            <div className="space-y-4">
-              <CarbonInputsWidget
-                entityId={selectedEntityId || undefined}
-                compact={true}
-                onSave={(cfg) => saveConfig({ ...config, ...cfg } as any)}
-              />
-
-              <div className="pt-2 border-t border-slate-100">
-                <h4 className="text-xs font-medium text-slate-700 mb-2">{t('configPanel.copernicusCredentials')}</h4>
-                <div className="space-y-2">
-                  <input
-                    type="text"
-                    placeholder="Client ID (Opcional)"
-                    className="block w-full text-xs border-slate-300 rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500"
-                    value={config.copernicus_client_id || ''}
-                    onChange={(e) => saveConfig({ ...config, copernicus_client_id: e.target.value } as any)}
-                  />
-                  <input
-                    type="password"
-                    placeholder="Client Secret (Opcional)"
-                    className="block w-full text-xs border-slate-300 rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500"
-                    onChange={(e) => saveConfig({ ...config, copernicus_client_secret: e.target.value } as any)}
-                  />
-                  <p className="text-[10px] text-slate-400">{t('configPanel.credentialsHint')}</p>
-                </div>
-              </div>
-            </div>
-          )}
         </section>
 
         <div className="border-t border-slate-200 my-2" />
@@ -424,11 +388,23 @@ export const VegetationConfig: React.FC<VegetationConfigProps> = ({ mode = 'pane
         </div>
 
         <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-          <h2 className="text-lg font-semibold mb-4">{t('configPanel.carbonCalcLUE')}</h2>
-          <CarbonInputsWidget
-            entityId={selectedEntityId || undefined}
-            onSave={(cfg) => saveConfig({ ...config, ...cfg } as any)}
-          />
+          <h2 className="text-lg font-semibold mb-4">{t('configPanel.copernicusCredentials')}</h2>
+          <div className="space-y-3">
+            <input
+              type="text"
+              placeholder="Client ID (Opcional)"
+              className="block w-full text-sm border-slate-300 rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500"
+              value={config.copernicus_client_id || ''}
+              onChange={(e) => saveConfig({ ...config, copernicus_client_id: e.target.value } as any)}
+            />
+            <input
+              type="password"
+              placeholder="Client Secret (Opcional)"
+              className="block w-full text-sm border-slate-300 rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500"
+              onChange={(e) => saveConfig({ ...config, copernicus_client_secret: e.target.value } as any)}
+            />
+            <p className="text-xs text-slate-400">{t('configPanel.credentialsHint')}</p>
+          </div>
         </div>
       </div>
     </div>

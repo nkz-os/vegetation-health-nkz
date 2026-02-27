@@ -4,9 +4,11 @@ FastAPI main application for Vegetation Prime module.
 
 import logging
 import io
+import os
 from typing import List, Optional, Dict, Any
-from datetime import date, datetime
+from datetime import date, datetime, timezone, timedelta
 from uuid import UUID
+from urllib.parse import quote
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Depends, HTTPException, status, Request, BackgroundTasks
@@ -27,15 +29,15 @@ from app.models import (
     VegetationSubscription
 )
 from app.tasks import download_sentinel2_scene, calculate_vegetation_index
-from app.services.storage import create_storage_service
+from app.services.storage import create_storage_service, generate_tenant_bucket_name
 from app.services.fiware_integration import FIWAREMapper, FIWAREClient
 from app.services.limits import LimitsValidator
 
 # Import Routers
-from app.api.tiles import router as tiles_router
 from app.api.crops import router as crops_router
 from app.api.subscriptions import router as subscriptions_router
 from app.api.internal import router as internal_router
+from app.api.timeseries_adapter import router as timeseries_adapter_router
 
 from app.services.usage_tracker import UsageTracker
 from app.middleware.limits import validate_limits_dependency
@@ -92,14 +94,14 @@ app.add_middleware(
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "X-Tenant-ID"],
+    allow_headers=["Authorization", "Content-Type", "X-Tenant-ID", "Fiware-Service"],
 )
 
-# Include routers
-app.include_router(tiles_router)
+# Include routers (Phase 4: tiles removed — TiTiler + viewer-url)
 app.include_router(crops_router, prefix="/api/vegetation", tags=["crop-intelligence"])
 app.include_router(subscriptions_router, prefix="/api/vegetation", tags=["subscriptions"])
 app.include_router(internal_router)  # DataHub federation — no prefix, path defined in router
+app.include_router(timeseries_adapter_router)  # Phase 5: GET /api/timeseries/entities/{id}/data (ADAPTER_SPEC)
 
 
 # =============================================================================
@@ -829,6 +831,71 @@ async def get_indices(
                 for idx in indices
             ]
         }
+
+
+# =============================================================================
+# Phase 4: TiTiler proxy/signer — presigned COG URL for Cesium (no custom tile server)
+# =============================================================================
+
+@app.get("/api/vegetation/viewer-url")
+async def get_viewer_url(
+    scene_id: str,
+    index_type: str,
+    current_user: dict = Depends(require_auth),
+    db: Session = Depends(get_db_with_tenant),
+):
+    """
+    Return a TiTiler tile URL template with a short-lived presigned MinIO URL.
+    Frontend uses this with Cesium UrlTemplateImageryProvider. No COG data is read here.
+    """
+    tenant_id = current_user["tenant_id"]
+    # Resolve scene: scene_id from frontend is the internal UUID (VegetationScene.id)
+    try:
+        scene_uuid = UUID(scene_id)
+    except ValueError:
+        scene_uuid = None
+    if scene_uuid:
+        scene = db.query(VegetationScene).filter(
+            VegetationScene.id == scene_uuid,
+            VegetationScene.tenant_id == tenant_id,
+        ).first()
+    else:
+        scene = db.query(VegetationScene).filter(
+            VegetationScene.scene_id == scene_id,
+            VegetationScene.tenant_id == tenant_id,
+        ).first()
+    if not scene:
+        raise HTTPException(status_code=403, detail="Scene not found or access denied")
+    cache_entry = db.query(VegetationIndexCache).filter(
+        VegetationIndexCache.tenant_id == tenant_id,
+        VegetationIndexCache.scene_id == scene.id,
+        VegetationIndexCache.index_type == index_type,
+    ).first()
+    if not cache_entry or not cache_entry.result_raster_path:
+        raise HTTPException(status_code=403, detail="Index not found or no COG path")
+    object_key = cache_entry.result_raster_path
+    bucket_name = os.getenv("VEGETATION_COG_BUCKET") or generate_tenant_bucket_name(tenant_id)
+    config = db.query(VegetationConfig).filter(VegetationConfig.tenant_id == tenant_id).first()
+    storage_type = (config.storage_type if config else None) or os.getenv("STORAGE_TYPE", "minio")
+    # Internal MinIO URL so TiTiler (in-cluster) can fetch the COG. Prefer MINIO_ENDPOINT_URL.
+    endpoint_url = os.getenv("MINIO_ENDPOINT_URL") or os.getenv("S3_ENDPOINT_URL")
+    storage = create_storage_service(
+        storage_type=storage_type,
+        endpoint_url=endpoint_url,
+        default_bucket=bucket_name,
+    )
+    expires_in = 7200
+    presigned = storage.get_file_url(object_key, bucket_name, expires_in=expires_in)
+    encoded_url = quote(presigned, safe="")
+    titiler_base = os.getenv("TITILER_BASE_URL", "https://nkz.robotika.cloud/titiler")
+    colormap = "rdylgn"
+    rescale = "-1,1"
+    tile_url_template = (
+        f"{titiler_base.rstrip('/')}/cog/tiles/WebMercatorQuad/{{z}}/{{x}}/{{y}}@1x"
+        f"?url={encoded_url}&colormap_name={colormap}&rescale={quote(rescale)}"
+    )
+    expires_at = (datetime.now(timezone.utc) + timedelta(seconds=expires_in)).isoformat().replace("+00:00", "Z")
+    return {"tileUrlTemplate": tile_url_template, "expiresAt": expires_at}
 
 
 @app.get("/api/vegetation/scenes")
@@ -2191,86 +2258,41 @@ async def calculate_formula_preview(
 
 
 # =============================================================================
-# Carbon Config Endpoints
+# Carbon Config Endpoints (DEPRECATED — Phase 1 Cleanup)
+# Carbon logic moved to nkz-module-carbon. These endpoints return 410 Gone.
 # =============================================================================
 
-class CarbonConfigRequest(BaseModel):
-    """Carbon configuration for a parcel."""
-    strawRemoved: bool = False
-    soilType: str = "loam"  # clay, loam, sandy, organic
-    tillageType: Optional[str] = "conventional"  # conventional, reduced, no-till
-
-
-class CarbonConfigResponse(BaseModel):
-    """Response for carbon config."""
-    entity_id: str
-    strawRemoved: bool
-    soilType: str
-    tillageType: Optional[str]
-    lue_factor: float = 1.0
-    updated_at: Optional[datetime] = None
-
-
-@app.get("/api/vegetation/carbon/{entity_id}", response_model=CarbonConfigResponse)
+@app.get("/api/vegetation/carbon/{entity_id}")
 async def get_carbon_config(
     entity_id: str,
     current_user: dict = Depends(require_auth),
-    db: Session = Depends(get_db_with_tenant)
 ):
-    """Get carbon configuration for an entity.
-    
-    Returns stored config or defaults if not configured.
-    """
-    # For MVP, return defaults (config would be stored in a separate table)
-    # In production, query a CarbonConfig table
-    return CarbonConfigResponse(
-        entity_id=entity_id,
-        strawRemoved=False,
-        soilType="loam",
-        tillageType="conventional",
-        lue_factor=1.0,
-        updated_at=None
+    """Deprecated. Carbon config moved to nkz-module-carbon."""
+    from fastapi.responses import JSONResponse
+    return JSONResponse(
+        status_code=410,
+        content={
+            "detail": "Carbon endpoints deprecated. Use nkz-module-carbon.",
+            "deprecated": True,
+            "entity_id": entity_id,
+        },
     )
 
 
-@app.post("/api/vegetation/carbon/{entity_id}", response_model=CarbonConfigResponse)
+@app.post("/api/vegetation/carbon/{entity_id}")
 async def save_carbon_config(
     entity_id: str,
-    config: CarbonConfigRequest,
     current_user: dict = Depends(require_auth),
-    db: Session = Depends(get_db_with_tenant)
 ):
-    """Save carbon configuration for an entity.
-    
-    Stores user preferences for carbon calculation parameters.
-    """
-    # Calculate LUE factor based on soil type and tillage
-    tillage_factors = {
-        "conventional": 0.7,
-        "reduced": 0.85,
-        "no-till": 1.0
-    }
-    soil_factors = {
-        "clay": 1.1,
-        "loam": 1.0,
-        "sandy": 0.85,
-        "organic": 1.2
-    }
-    
-    lue = tillage_factors.get(config.tillageType, 1.0) * soil_factors.get(config.soilType, 1.0)
-    if config.strawRemoved:
-        lue *= 0.85  # Penalty for removing organic matter
-    
-    # For MVP, we just return the config (in production, store in DB)
-    logger.info(f"Saving carbon config for {entity_id}: {config.dict()}, LUE={lue}")
-    
-    return CarbonConfigResponse(
-        entity_id=entity_id,
-        strawRemoved=config.strawRemoved,
-        soilType=config.soilType,
-        tillageType=config.tillageType,
-        lue_factor=round(lue, 3),
-        updated_at=datetime.utcnow()
+    """Deprecated. Carbon config moved to nkz-module-carbon."""
+    from fastapi.responses import JSONResponse
+    return JSONResponse(
+        status_code=410,
+        content={
+            "detail": "Carbon endpoints deprecated. Use nkz-module-carbon.",
+            "deprecated": True,
+            "entity_id": entity_id,
+        },
     )
 
 
