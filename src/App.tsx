@@ -51,8 +51,8 @@ function useDeepLinkParams(): { entityId: string | null; tab: TabType | null } {
     const entityId = searchParams.get('entityId');
     const tab = searchParams.get('tab') as TabType | null;
 
-    // Validate tab is a known type
-    const validTabs: TabType[] = ['dashboard', 'analytics', 'config', 'calculations', 'prescription', 'alerts', 'weather', 'zoning'];
+    // Validate tab is a known type (weather removed in Phase 6)
+    const validTabs: TabType[] = ['dashboard', 'analytics', 'config', 'calculations', 'prescription', 'alerts', 'zoning'];
     const validatedTab = tab && validTabs.includes(tab) ? tab : null;
 
     setParams({ entityId, tab: validatedTab });
