@@ -30,7 +30,7 @@ export const CalculationsPage: React.FC<CalculationsPageProps> = ({
         setLoading(true);
         setError(null);
         try {
-            const response = await api.listJobs('completed', 50, 0);
+            const response = await api.listJobs(undefined, 50, 0);
             if (response && response.jobs) {
                 setJobs(response.jobs);
             }
@@ -46,15 +46,15 @@ export const CalculationsPage: React.FC<CalculationsPageProps> = ({
         fetchJobs();
     }, []);
 
-    // Handle view in map
+    // Handle view in map: set context and navigate so host shows map with entity/scene
     const handleViewInMap = (job: VegetationJob) => {
-        if (job.entity_id) {
-            setSelectedEntityId(job.entity_id);
-        }
-        if (job.scene_id) {
-            setSelectedSceneId(job.scene_id);
-        }
+        if (job.entity_id) setSelectedEntityId(job.entity_id);
+        if (job.scene_id) setSelectedSceneId(String(job.scene_id));
         onViewInMap?.(job);
+        const nav = (window as any).__nekazariNavigate;
+        if (typeof nav === 'function') {
+            nav(`/vegetation?entityId=${encodeURIComponent(job.entity_id || '')}&tab=analytics`);
+        }
     };
 
     // Handle download
@@ -116,9 +116,9 @@ export const CalculationsPage: React.FC<CalculationsPageProps> = ({
 
     // Handle delete
     const handleDelete = async (job: VegetationJob) => {
+        if (!confirm('¿Eliminar este cálculo del historial?')) return;
         try {
             await api.deleteJob(job.id);
-            // Remove from local state
             setJobs(prev => prev.filter(j => j.id !== job.id));
         } catch (err) {
             console.error('Delete error:', err);
@@ -257,6 +257,7 @@ export const CalculationsPage: React.FC<CalculationsPageProps> = ({
                                         >
                                             <MapPin className="w-4 h-4 inline" />
                                         </button>
+                                        {(job.status === 'completed' && !(job.result as any)?.skipped_due_to_clouds) && (
                                         <button
                                             onClick={() => handleDownload(job, 'geotiff')}
                                             className="p-1.5 text-slate-500 hover:text-green-600 rounded"
@@ -264,6 +265,7 @@ export const CalculationsPage: React.FC<CalculationsPageProps> = ({
                                         >
                                             <Download className="w-4 h-4 inline" />
                                         </button>
+                                        )}
                                         <button
                                             onClick={() => handleDelete(job)}
                                             className="p-1.5 text-slate-500 hover:text-red-600 rounded"

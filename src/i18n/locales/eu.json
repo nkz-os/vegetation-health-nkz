@@ -188,6 +188,7 @@
         "shortRange": "Tarte laburra ({{days}} egun)",
         "shortRangeWarning": "Sentinel-2 5 egunero pasatzen da. Lainoekin, baliteke irudirik ez egotea. Gutxienez 14-21 egun gomendatzen ditugu.",
         "indicesLabel": "Automatikoki kalkulatzeko indizeak",
+        "customIndexHelp": "Konfigurazioan formula ezarri aktibatu ondoren.",
         "frequencyLabel": "Egiaztatze maiztasuna",
         "frequencyHelp": "Sistemak katalogo satelitala maiztasun honetan egiaztatuko du; datu berri bat soilik sortuko da satelitea pasatzen denean eta eszena garbi denean (Sentinel-2 ~5 egun).",
         "weeklyRecommended": "Egiaztatze astero (gomendatua)",

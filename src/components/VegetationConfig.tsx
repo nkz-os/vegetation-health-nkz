@@ -332,10 +332,6 @@ export const VegetationConfig: React.FC<VegetationConfigProps> = ({ mode = 'pane
 
         <section>
           <div className="flex gap-2">
-            <CalculationButton
-              formula={selectedIndex === 'CUSTOM' ? formula : undefined}
-              entityId={selectedEntityId || undefined}
-            />
             <button
               onClick={async () => {
                 // Check if geometry is available

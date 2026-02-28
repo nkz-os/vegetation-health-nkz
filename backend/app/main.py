@@ -760,20 +760,34 @@ async def list_jobs(
         query = query.filter(VegetationJob.status == status_filter)
     
     jobs = query.order_by(VegetationJob.created_at.desc()).offset(offset).limit(limit).all()
-    
+    count_query = db.query(VegetationJob).filter(VegetationJob.tenant_id == current_user['tenant_id'])
+    if status_filter:
+        count_query = count_query.filter(VegetationJob.status == status_filter)
+    total = count_query.count()
+
+    def _job_payload(job):
+        params = job.parameters or {}
+        result = job.result if isinstance(job.result, dict) else {}
+        scene_id = params.get("scene_id") or result.get("scene_id")
+        if scene_id is not None:
+            scene_id = str(scene_id)
+        return {
+            "id": str(job.id),
+            "job_type": job.job_type,
+            "status": job.status,
+            "progress_percentage": job.progress_percentage,
+            "created_at": job.created_at.isoformat(),
+            "completed_at": job.completed_at.isoformat() if job.completed_at else None,
+            "entity_id": getattr(job, "entity_id", None),
+            "scene_id": scene_id,
+            "index_type": params.get("index_type"),
+            "result": job.result,
+            "error_message": job.error_message,
+        }
+
     return {
-        "jobs": [
-            {
-                "id": str(job.id),
-                "job_type": job.job_type,
-                "status": job.status,
-                "progress_percentage": job.progress_percentage,
-                "created_at": job.created_at.isoformat(),
-                "completed_at": job.completed_at.isoformat() if job.completed_at else None
-            }
-            for job in jobs
-        ],
-        "total": query.count()
+        "jobs": [_job_payload(j) for j in jobs],
+        "total": total,
     }
 
 

@@ -188,6 +188,7 @@
         "shortRange": "Rango corto ({{days}} días)",
         "shortRangeWarning": "Sentinel-2 pasa cada 5 días. Con nubes, puede que no haya imágenes disponibles. Recomendamos mínimo 14-21 días.",
         "indicesLabel": "Índices a calcular automáticamente",
+        "customIndexHelp": "Configura la fórmula en Configuración tras activar.",
         "frequencyLabel": "Frecuencia de comprobación",
         "frequencyHelp": "El sistema comprobará el catálogo satelital según la frecuencia; solo se generará un dato nuevo cuando pase el satélite y la escena esté despejada (Sentinel-2 ~5 días).",
         "weeklyRecommended": "Comprobación semanal (recomendado)",

@@ -130,7 +130,7 @@ const DashboardContent: React.FC = () => {
     }
   }, [deepLinkParams, deepLinkApplied, setSelectedEntityId]);
 
-  // If a parcel is selected and we're on dashboard, auto-switch to analytics
+  // If a parcel is selected and we're on dashboard, auto-switch to analytics (unless user opened calculations from dashboard)
   useEffect(() => {
     if (selectedEntityId && activeTab === 'dashboard' && !deepLinkParams.tab) {
       setActiveTab('analytics');
@@ -157,6 +157,16 @@ const DashboardContent: React.FC = () => {
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-4">
+            <div className="flex justify-end mb-2">
+              <button
+                type="button"
+                onClick={() => setActiveTab('calculations')}
+                className="inline-flex items-center gap-2 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-sm font-medium transition-colors"
+              >
+                <BarChart3 className="w-4 h-4" />
+                {t('tabs.calculations')}
+              </button>
+            </div>
             <Card className="overflow-hidden">
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-sm text-slate-600">
@@ -249,9 +259,11 @@ const DashboardContent: React.FC = () => {
           </button>
           <div className="h-4 w-px bg-gray-300"></div>
           <h2 className="font-semibold text-slate-800">
-            {parcels.find((p: any) => p.id === selectedEntityId)?.name?.value ||
-              parcels.find((p: any) => p.id === selectedEntityId)?.name ||
-              t('dashboard.detailAnalysis')}
+            {selectedEntityId
+              ? (parcels.find((p: any) => p.id === selectedEntityId)?.name?.value ||
+                 parcels.find((p: any) => p.id === selectedEntityId)?.name ||
+                 t('dashboard.detailAnalysis'))
+              : (activeTab === 'calculations' ? t('tabs.calculations') : t('dashboard.detailAnalysis'))}
           </h2>
         </div>
       </div>

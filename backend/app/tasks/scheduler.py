@@ -18,8 +18,9 @@ from app.tasks.processing_tasks import calculate_vegetation_index
 @celery_app.task(name="vegetation.process_subscriptions")
 def process_subscriptions():
     """
-    Check for due subscriptions and schedule downloads/calculations.
-    Run hourly.
+    Check for due subscriptions and schedule downloads/calculations. Run hourly.
+    Backfill + incremental (§12.2): first run uses subscription start_date (full history);
+    subsequent runs use last_run_at so only new scenes are processed.
     """
     db_gen = get_db_session()
     db = next(db_gen)

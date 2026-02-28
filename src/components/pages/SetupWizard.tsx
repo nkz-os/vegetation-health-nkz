@@ -113,7 +113,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
     const isDateRangeTooShort = daysFromStartToToday < 14;
 
     const [selectedIndices, setSelectedIndices] = useState<string[]>(['NDVI', 'EVI']);
-    const [frequency, setFrequency] = useState<'weekly' | 'daily' | 'biweekly'>('weekly');
+    const [frequency, setFrequency] = useState<'weekly' | 'biweekly'>('weekly');
 
     const availableIndices = [
         { id: 'NDVI', name: 'NDVI (Vigor General)', desc: t('calculations.formulaHelp') },
@@ -121,6 +121,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
         { id: 'GNDVI', name: 'GNDVI (Clorofila)', desc: t('calculations.formulaHelp') },
         { id: 'SAVI', name: 'SAVI (Suelo)', desc: t('calculations.formulaHelp') },
         { id: 'NDRE', name: 'NDRE (Borde Rojo)', desc: t('calculations.formulaHelp') },
+        { id: 'CUSTOM', name: 'Fórmula personalizada', desc: t('setup.customIndexHelp') },
     ];
 
     const handleToggleIndex = (id: string) => {
@@ -292,7 +293,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
                                 </div>
                             </div>
 
-                            {/* Frequency: "comprobación" only — no promise of daily data (§12.2) */}
+                            {/* Frequency: comprobación only; no "Diaria" (satellite pass ~5 days, §12.2) */}
                             <div>
                                 <label className="block text-sm font-medium text-slate-700 mb-2">{t('setup.frequencyLabel')}</label>
                                 <p className="text-xs text-slate-500 mb-2">{t('setup.frequencyHelp')}</p>
@@ -307,17 +308,6 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
                                             className="focus:ring-green-500 h-4 w-4 text-green-600 border-gray-300"
                                         />
                                         <span className="ml-2 text-sm text-slate-700">{t('setup.weeklyRecommended')}</span>
-                                    </label>
-                                    <label className="flex items-center">
-                                        <input
-                                            type="radio"
-                                            name="frequency"
-                                            value="daily"
-                                            checked={frequency === 'daily'}
-                                            onChange={() => setFrequency('daily')}
-                                            className="focus:ring-green-500 h-4 w-4 text-green-600 border-gray-300"
-                                        />
-                                        <span className="ml-2 text-sm text-slate-700">{t('setup.dailyCredits')}</span>
                                     </label>
                                     <label className="flex items-center">
                                         <input
@@ -345,7 +335,7 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
                                     <li>• <strong>{t('setup.summaryParcel')}</strong> {displayName}</li>
                                     <li>• <strong>{t('setup.summaryStartDate')}</strong> {startDate}</li>
                                     <li>• <strong>{t('setup.summaryIndices')}</strong> {selectedIndices.join(', ')}</li>
-                                    <li>• <strong>{t('setup.summaryFrequency')}</strong> {frequency === 'weekly' ? t('setup.summaryWeekly') : frequency === 'biweekly' ? t('setup.summaryBiweekly') : t('setup.summaryDaily')}</li>
+                                    <li>• <strong>{t('setup.summaryFrequency')}</strong> {frequency === 'weekly' ? t('setup.summaryWeekly') : t('setup.summaryBiweekly')}</li>
                                 </ul>
                             </div>
 
