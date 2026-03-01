@@ -27,15 +27,12 @@ import {
  */
 export class VegetationApiClient {
   private client: AxiosInstance;
-  private getToken: () => string | undefined;
   private getTenantId: () => string | undefined;
 
   constructor(
-    getToken: () => string | undefined,
     getTenantId: () => string | undefined,
     baseUrl: string = '/api/vegetation'
   ) {
-    this.getToken = getToken;
     this.getTenantId = getTenantId;
 
     this.client = axios.create({
@@ -774,8 +771,6 @@ export class VegetationApiClient {
 import { useMemo } from 'react';
 
 // Auth is handled via httpOnly cookie (withCredentials: true).
-// getToken returns undefined — kept for constructor signature backward compat.
-const getAuthToken = (): string | undefined => undefined;
 
 // Get tenant ID from window.__nekazariAuthContext (set by host).
 const getTenantId = (): string | undefined => {
@@ -800,7 +795,7 @@ export function useVegetationApi(): VegetationApiClient {
     () => {
       const baseUrl = getApiBaseUrl();
       const apiPath = baseUrl ? `${baseUrl}/api/vegetation` : '/api/vegetation';
-      return new VegetationApiClient(getAuthToken, getTenantId, apiPath);
+      return new VegetationApiClient(getTenantId, apiPath);
     },
     []
   );
