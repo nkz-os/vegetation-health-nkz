@@ -40,19 +40,16 @@ export class VegetationApiClient {
 
     this.client = axios.create({
       baseURL: baseUrl,
+      withCredentials: true,
       headers: {
         'Content-Type': 'application/json',
       },
     });
 
-    // Request interceptor for auth
+    // Request interceptor — auth is handled by httpOnly cookie (withCredentials: true).
+    // We only inject X-Tenant-ID for backend routing.
     this.client.interceptors.request.use((config) => {
-      const token = this.getToken();
       const tenantId = this.getTenantId();
-
-      if (token) {
-        config.headers.Authorization = `Bearer ${token}`;
-      }
 
       if (tenantId) {
         config.headers['X-Tenant-ID'] = tenantId;
@@ -309,16 +306,15 @@ export class VegetationApiClient {
    * Download job result in specified format
    */
   async downloadResult(jobId: string, format: 'geotiff' | 'png' | 'csv'): Promise<Blob> {
-    const token = this.getToken();
     const tenantId = this.getTenantId();
 
     const headers: Record<string, string> = {};
-    if (token) headers['Authorization'] = `Bearer ${token}`;
     if (tenantId) headers['X-Tenant-ID'] = tenantId;
 
     const response = await fetch(`/api/vegetation/jobs/${jobId}/download?format=${format}`, {
       method: 'GET',
       headers,
+      credentials: 'include',
     });
 
     if (!response.ok) {
@@ -451,21 +447,13 @@ export class VegetationApiClient {
    */
   async listTenantParcels(): Promise<any[]> {
     try {
-      const token = this.getToken();
-
-      // Minimal headers - match what the host sends
-      const headers: Record<string, string> = {};
-      if (token) {
-        headers['Authorization'] = `Bearer ${token}`;
-      }
-
       // Use absolute URL from env if available
       const baseUrl = this.getBaseApiUrl();
       const url = `${baseUrl}/ngsi-ld/v1/entities?type=AgriParcel`;
 
       const response = await fetch(url, {
         method: 'GET',
-        headers,
+        credentials: 'include',
       });
 
       if (!response.ok) {
@@ -486,16 +474,12 @@ export class VegetationApiClient {
    */
   async getEntity(entityId: string): Promise<any> {
     try {
-      const token = this.getToken();
-      const headers: Record<string, string> = {};
-      if (token) headers['Authorization'] = `Bearer ${token}`;
-
       const baseUrl = this.getBaseApiUrl();
       const url = `${baseUrl}/ngsi-ld/v1/entities/${entityId}`;
 
       const response = await fetch(url, {
         method: 'GET',
-        headers,
+        credentials: 'include',
       });
 
       if (!response.ok) {
@@ -552,16 +536,15 @@ export class VegetationApiClient {
    * Export prescription map as GeoJSON
    */
   async exportPrescriptionGeojson(parcelId: string): Promise<Blob> {
-    const token = this.getToken();
     const tenantId = this.getTenantId();
 
     const headers: Record<string, string> = {};
-    if (token) headers['Authorization'] = `Bearer ${token}`;
     if (tenantId) headers['X-Tenant-ID'] = tenantId;
 
     const response = await fetch(`/api/vegetation/export/${encodeURIComponent(parcelId)}/geojson`, {
       method: 'GET',
       headers,
+      credentials: 'include',
     });
 
     if (!response.ok) {
@@ -575,16 +558,15 @@ export class VegetationApiClient {
    * Export prescription map as Shapefile (zip)
    */
   async exportPrescriptionShapefile(parcelId: string): Promise<Blob> {
-    const token = this.getToken();
     const tenantId = this.getTenantId();
 
     const headers: Record<string, string> = {};
-    if (token) headers['Authorization'] = `Bearer ${token}`;
     if (tenantId) headers['X-Tenant-ID'] = tenantId;
 
     const response = await fetch(`/api/vegetation/export/${encodeURIComponent(parcelId)}/shapefile`, {
       method: 'GET',
       headers,
+      credentials: 'include',
     });
 
     if (!response.ok) {
@@ -598,16 +580,15 @@ export class VegetationApiClient {
    * Export prescription map as CSV
    */
   async exportPrescriptionCsv(parcelId: string): Promise<Blob> {
-    const token = this.getToken();
     const tenantId = this.getTenantId();
 
     const headers: Record<string, string> = {};
-    if (token) headers['Authorization'] = `Bearer ${token}`;
     if (tenantId) headers['X-Tenant-ID'] = tenantId;
 
     const response = await fetch(`/api/vegetation/export/${encodeURIComponent(parcelId)}/csv`, {
       method: 'GET',
       headers,
+      credentials: 'include',
     });
 
     if (!response.ok) {
@@ -792,59 +773,20 @@ export class VegetationApiClient {
 // Hook for using API client
 import { useMemo } from 'react';
 
-// Get auth token like catastro module does - from window.keycloak
-const getAuthToken = (): string | undefined => {
-  if (typeof window === 'undefined') return undefined;
+// Auth is handled via httpOnly cookie (withCredentials: true).
+// getToken returns undefined — kept for constructor signature backward compat.
+const getAuthToken = (): string | undefined => undefined;
 
-  // Try Keycloak instance first (same as working catastro module)
-  const keycloakInstance = (window as any).keycloak;
-  if (keycloakInstance && keycloakInstance.token) {
-    return keycloakInstance.token;
-  }
-
-  // Fallback to __nekazariAuthContext
-  const hostAuth = (window as any).__nekazariAuthContext;
-  if (hostAuth && typeof hostAuth.getToken === 'function') {
-    return hostAuth.getToken();
-  }
-
-  // Last fallback to localStorage
-  const storedToken = localStorage.getItem('auth_token');
-  if (storedToken) return storedToken;
-
-  return undefined;
-};
-
-// Get tenant ID from token (same as working catastro module)
+// Get tenant ID from window.__nekazariAuthContext (set by host).
 const getTenantId = (): string | undefined => {
-  // Try __nekazariAuthContext first
   const hostAuth = (window as any).__nekazariAuthContext;
   if (hostAuth && hostAuth.tenantId) {
     return hostAuth.tenantId;
   }
-
-  // Decode from token
-  const token = getAuthToken();
-  if (!token) return undefined;
-
-  try {
-    const base64Url = token.split('.')[1];
-    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
-    const jsonPayload = decodeURIComponent(
-      window.atob(base64)
-        .split('')
-        .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
-        .join('')
-    );
-    const decoded = JSON.parse(jsonPayload);
-    return decoded['tenant-id'] || decoded.tenant_id || decoded.tenantId || decoded.tenant || undefined;
-  } catch (e) {
-    console.warn('[VegetationApi] Failed to decode token for tenant', e);
-    return undefined;
-  }
+  return undefined;
 };
 
-// Helper to get base API URL (repeated here for closure access if needed, or better expose static)
+// Helper to get base API URL
 const getApiBaseUrl = () => {
   if (typeof window !== 'undefined' && (window as any).__ENV__) {
     const env = (window as any).__ENV__;
@@ -857,8 +799,6 @@ export function useVegetationApi(): VegetationApiClient {
   return useMemo(
     () => {
       const baseUrl = getApiBaseUrl();
-      // If baseUrl is present (e.g. https://nkz.artotxiki.com), append /api/vegetation
-      // otherwise default to relative path /api/vegetation
       const apiPath = baseUrl ? `${baseUrl}/api/vegetation` : '/api/vegetation';
       return new VegetationApiClient(getAuthToken, getTenantId, apiPath);
     },
