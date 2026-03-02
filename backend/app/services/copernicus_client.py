@@ -256,6 +256,13 @@ class CopernicusDataSpaceClient:
         if not download_url:
             raise ValueError(f"No download URL for band {band}")
         
+        # Handle s3:// URLs from STAC (convert to zipper API)
+        if download_url.startswith('s3://eodata/'):
+            # s3://eodata/path/to/file -> https://zipper.dataspace.copernicus.eu/download/path/to/file
+            path = download_url.replace('s3://eodata/', '')
+            download_url = f"https://zipper.dataspace.copernicus.eu/download/{path}"
+            logger.info(f"Converted S3 URL to Zipper URL: {download_url}")
+        
         # Download file
         try:
             headers = {'Authorization': f'Bearer {token}'}
