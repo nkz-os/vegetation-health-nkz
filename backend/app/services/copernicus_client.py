@@ -137,12 +137,14 @@ class CopernicusDataSpaceClient:
         token = self._get_access_token()
         start_date = start_date or date.today() - timedelta(days=30)
         end_date = end_date or date.today()
+        
+        datetime_filter = f"{start_date.isoformat()}T00:00:00Z/{end_date.isoformat()}T23:59:59Z"
 
         if intersects:
             query = {
-                "collections": ["sentinel-s2-l2a-cogs"],
+                "collections": ["sentinel-2-l2a"],
                 "intersects": intersects,
-                "datetime": f"{start_date.isoformat()}/{end_date.isoformat()}",
+                "datetime": datetime_filter,
                 "limit": limit,
                 "query": {
                     "eo:cloud_cover": {"lte": cloud_cover_lte if cloud_cover_lte is not None else 60}
@@ -151,9 +153,9 @@ class CopernicusDataSpaceClient:
         else:
             bbox = bbox or [-180, -90, 180, 90]
             query = {
-                "collections": ["sentinel-s2-l2a-cogs"],
+                "collections": ["sentinel-2-l2a"],
                 "bbox": bbox,
-                "datetime": f"{start_date.isoformat()}/{end_date.isoformat()}",
+                "datetime": datetime_filter,
                 "limit": limit,
                 "query": {
                     "eo:cloud_cover": {"lt": cloud_cover_max if cloud_cover_max is not None else 20.0}
@@ -194,7 +196,7 @@ class CopernicusDataSpaceClient:
     def get_scene_item(self, scene_id: str) -> Dict[str, Any]:
         """Fetch a single STAC item by id (for SCL validation and asset URLs)."""
         token = self._get_access_token()
-        url = f"{self.CATALOG_URL}/collections/sentinel-s2-l2a-cogs/items/{scene_id}"
+        url = f"{self.CATALOG_URL}/collections/sentinel-2-l2a/items/{scene_id}"
         headers = {'Authorization': f'Bearer {token}'}
         response = requests.get(url, headers=headers)
         response.raise_for_status()
