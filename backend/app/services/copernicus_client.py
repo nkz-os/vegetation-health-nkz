@@ -231,10 +231,25 @@ class CopernicusDataSpaceClient:
         token = self._get_access_token()
         scene = self.get_scene_item(scene_id)
         assets = scene.get('assets', {})
-        band_asset = assets.get(band) or assets.get(f"{band}.tif") or (assets.get(f"B{band}") if band.startswith("B") else None)
+        
+        # SOTA band resolution priority: 10m > 20m > 60m
+        resolutions = ["10m", "20m", "60m"]
+        band_asset = None
+        
+        # 1. Try name with resolution (e.g. B02_10m)
+        for res in resolutions:
+            name = f"{band}_{res}"
+            if name in assets:
+                band_asset = assets[name]
+                logger.info(f"Selected band {band} at {res} resolution")
+                break
+        
+        # 2. Try exact name (fallback)
+        if not band_asset:
+            band_asset = assets.get(band) or assets.get(f"{band}.tif") or (assets.get(f"B{band}") if band.startswith("B") else None)
         
         if not band_asset:
-            raise ValueError(f"Band {band} not found in scene {scene_id}")
+            raise ValueError(f"Band {band} not found in scene {scene_id}. Available: {list(assets.keys())}")
         
         # Get download URL
         download_url = band_asset.get('href')
