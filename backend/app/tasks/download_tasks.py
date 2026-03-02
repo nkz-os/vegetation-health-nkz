@@ -30,6 +30,7 @@ def download_sentinel2_scene(self, job_id: str, tenant_id: str, parameters: Dict
         parameters: Job parameters including bounds, date range, etc.
     """
     db = next(get_db_session())
+    job = None
     
     try:
         # Get job
@@ -376,7 +377,6 @@ def download_sentinel2_scene(self, job_id: str, tenant_id: str, parameters: Dict
         if calculate_indices and isinstance(calculate_indices, list):
             try:
                 from app.tasks.processing_tasks import calculate_vegetation_index
-                import uuid
                 
                 # Trigger calculation for each index
                 for index_type in calculate_indices:
