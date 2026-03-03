@@ -1,5 +1,6 @@
 """
 Copernicus Data Space Ecosystem client for downloading Sentinel-2 data.
+SOTA Implementation: Uses STAC for discovery and S3 (boto3) for high-performance downloads.
 """
 
 import logging
@@ -9,6 +10,8 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 import requests
 from requests.auth import HTTPBasicAuth
+import boto3
+from botocore.config import Config
 import json
 
 logger = logging.getLogger(__name__)
@@ -18,10 +21,12 @@ class CopernicusDataSpaceClient:
     """Client for Copernicus Data Space Ecosystem API."""
     
     BASE_URL = "https://dataspace.copernicus.eu"
-    # Identity API for token generation
+    # Identity API for token generation (used for STAC catalog)
     OAUTH_URL = "https://identity.dataspace.copernicus.eu/auth/realms/CDSE/protocol/openid-connect/token"
     # STAC API for scene search
     CATALOG_URL = "https://stac.dataspace.copernicus.eu/v1"
+    # S3 Endpoint for downloads
+    S3_ENDPOINT = "https://eodata.dataspace.copernicus.eu"
     
     def __init__(self, client_id: Optional[str] = None, client_secret: Optional[str] = None):
         """Initialize Copernicus Data Space client."""
@@ -29,7 +34,7 @@ class CopernicusDataSpaceClient:
         self.client_secret = client_secret
         self.access_token: Optional[str] = None
         self.token_expires_at: Optional[datetime] = None
-        self._product_id_cache = {} # Cache for Scene Name -> Product ID
+        self._s3_client = None
         
         if not client_id or not client_secret:
             logger.info("Copernicus client initialized without credentials - will use platform credentials")
@@ -40,9 +45,10 @@ class CopernicusDataSpaceClient:
         self.client_secret = client_secret
         self.access_token = None
         self.token_expires_at = None
+        self._s3_client = None # Reset S3 client to force re-init with new creds
 
     def _get_access_token(self) -> str:
-        """Get OAuth2 access token (with caching)."""
+        """Get OAuth2 access token for STAC catalog (with caching)."""
         if not self.client_id or not self.client_secret:
             raise ValueError("Copernicus credentials not set.")
         
@@ -67,27 +73,23 @@ class CopernicusDataSpaceClient:
             logger.error(f"Failed to obtain access token: {str(e)}")
             raise Exception(f"Authentication failed: {str(e)}")
 
-    def _get_product_id(self, scene_name: str) -> str:
-        """Get Product ID from Scene Name using OData API."""
-        if scene_name in self._product_id_cache:
-            return self._product_id_cache[scene_name]
+    def _get_s3_client(self):
+        """Initialize and return a boto3 S3 client for Copernicus eodata."""
+        if self._s3_client:
+            return self._s3_client
             
-        token = self._get_access_token()
-        safe_name = scene_name if scene_name.endswith('.SAFE') else f"{scene_name}.SAFE"
-        
-        url = f"https://catalogue.dataspace.copernicus.eu/odata/v1/Products?$filter=Name eq '{safe_name}'"
-        headers = {'Authorization': f'Bearer {token}'}
-        
-        response = requests.get(url, headers=headers)
-        response.raise_for_status()
-        data = response.json()
-        
-        if not data.get('value'):
-            raise ValueError(f"Product {safe_name} not found in Copernicus OData catalogue")
+        if not self.client_id or not self.client_secret:
+            raise ValueError("Copernicus credentials not set for S3 access.")
             
-        product_id = data['value'][0]['Id']
-        self._product_id_cache[scene_name] = product_id
-        return product_id
+        self._s3_client = boto3.client(
+            "s3",
+            endpoint_url=self.S3_ENDPOINT,
+            aws_access_key_id=self.client_id,
+            aws_secret_access_key=self.client_secret,
+            region_name="main", # CDSE default region
+            config=Config(s3={"addressing_style": "virtual"})
+        )
+        return self._s3_client
 
     def search_scenes(
         self,
@@ -105,6 +107,7 @@ class CopernicusDataSpaceClient:
         start_date = start_date or date.today() - timedelta(days=30)
         end_date = end_date or date.today()
         
+        # SOTA: Full ISO datetime format required by CDSE STAC
         datetime_filter = f"{start_date.isoformat()}T00:00:00Z/{end_date.isoformat()}T23:59:59Z"
 
         if intersects:
@@ -178,11 +181,11 @@ class CopernicusDataSpaceClient:
         band: str,
         output_path: str
     ) -> str:
-        """Download a specific band from a scene using Zipper OData API."""
-        token = self._get_access_token()
+        """Download a specific band from a scene using S3 interface (eodata bucket)."""
         scene = self.get_scene_item(scene_id)
         assets = scene.get('assets', {})
         
+        # SOTA band resolution priority: 10m > 20m > 60m
         resolutions = ["10m", "20m", "60m"]
         band_asset = None
         for res in resolutions:
@@ -198,39 +201,26 @@ class CopernicusDataSpaceClient:
             raise ValueError(f"Band {band} not found in scene {scene_id}.")
         
         href = band_asset.get('href', '')
-        product_id = self._get_product_id(scene_id)
         
-        if '.SAFE/' in href:
-            safe_path = href.split('.SAFE/')[-1]
-        elif href.startswith('s3://eodata/'):
-            parts = href.replace('s3://eodata/', '').split('/')
-            safe_idx = -1
-            for i, p in enumerate(parts):
-                if p.endswith('.SAFE'):
-                    safe_idx = i
-                    break
-            safe_path = '/'.join(parts[safe_idx+1:]) if safe_idx != -1 else href
-        else:
-            safe_path = href
-            
-        download_url = f"https://zipper.dataspace.copernicus.eu/odata/v1/Products({product_id})/Nodes('{safe_path}')/$value"
+        # Extract the S3 key from the href
+        # Standard CDSE STAC href: s3://eodata/Sentinel-2/MSI/L2A/.../band.jp2
+        # Or relative path: /eodata/Sentinel-2/...
+        s3_key = href.replace('s3://eodata/', '').replace('/eodata/', '')
         
         try:
-            headers = {'Authorization': f'Bearer {token}'}
-            response = requests.get(download_url, headers=headers, stream=True)
-            response.raise_for_status()
+            s3 = self._get_s3_client()
+            logger.info(f"Downloading band {band} via S3 from key: {s3_key}")
             
             Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-            with open(output_path, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    if chunk:
-                        f.write(chunk)
             
-            logger.info(f"Downloaded band {band} from scene {scene_id} to {output_path}")
+            # Download using boto3 from 'eodata' bucket
+            s3.download_file("eodata", s3_key, output_path)
+            
+            logger.info(f"Successfully downloaded {band} to {output_path}")
             return output_path
-        except requests.RequestException as e:
-            logger.error(f"Failed to download band {band}: {str(e)}")
-            raise Exception(f"Download failed: {str(e)}")
+        except Exception as e:
+            logger.error(f"Failed to download band {band} via S3: {str(e)}")
+            raise Exception(f"S3 Download failed: {str(e)}")
 
     def download_scene_bands(self, scene_id: str, bands: List[str], output_dir: str) -> Dict[str, str]:
         """Download multiple bands from a scene."""
