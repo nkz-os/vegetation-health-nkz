@@ -77,17 +77,18 @@ class CopernicusDataSpaceClient:
         """Initialize and return a boto3 S3 client for Copernicus eodata.
 
         S3 credentials are separate from OAuth credentials in CDSE.
-        Priority: AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY env vars > OAuth creds (fallback).
+        Priority: CDSE_S3_ACCESS_KEY/CDSE_S3_SECRET_KEY env vars > OAuth creds (fallback).
+        Uses dedicated env var names to avoid conflict with MinIO's AWS_ACCESS_KEY_ID.
         """
         if self._s3_client:
             return self._s3_client
 
-        s3_access_key = os.getenv('AWS_ACCESS_KEY_ID')
-        s3_secret_key = os.getenv('AWS_SECRET_ACCESS_KEY')
+        s3_access_key = os.getenv('CDSE_S3_ACCESS_KEY')
+        s3_secret_key = os.getenv('CDSE_S3_SECRET_KEY')
 
         if not s3_access_key or not s3_secret_key:
             if not self.client_id or not self.client_secret:
-                raise ValueError("No S3 credentials available. Set AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY env vars.")
+                raise ValueError("No S3 credentials available. Set CDSE_S3_ACCESS_KEY/CDSE_S3_SECRET_KEY env vars.")
             logger.warning("No dedicated S3 credentials found, falling back to OAuth credentials (may fail with 403)")
             s3_access_key = self.client_id
             s3_secret_key = self.client_secret
