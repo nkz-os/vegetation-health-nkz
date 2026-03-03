@@ -87,7 +87,7 @@ class CopernicusDataSpaceClient:
             aws_access_key_id=self.client_id,
             aws_secret_access_key=self.client_secret,
             region_name="main", # CDSE default region
-            config=Config(s3={"addressing_style": "virtual"})
+            config=Config(s3={"addressing_style": "path"})
         )
         return self._s3_client
 
