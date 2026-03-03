@@ -184,7 +184,18 @@ const DashboardContent: React.FC = () => {
                       // NGSI-LD format: properties are {value: ...} or plain values
                       const parcelName = parcel.name?.value || parcel.name || parcel.id;
                       const cropSpecies = parcel.cropSpecies?.value || parcel.category?.value || t('dashboard.unassigned');
-                      const area = parcel.area?.value || parcel.area;
+                      
+                      // Handle area from Core (area_hectares) or NGSI-LD (area)
+                      let areaHa = '-';
+                      const rawAreaHectares = parcel.area_hectares?.value ?? parcel.area_hectares ?? null;
+                      const rawAreaSquareMeters = parcel.area?.value ?? parcel.area ?? null;
+                      
+                      if (rawAreaHectares !== null) {
+                        areaHa = Number(rawAreaHectares).toFixed(2);
+                      } else if (rawAreaSquareMeters !== null) {
+                        areaHa = (Number(rawAreaSquareMeters) / 10000).toFixed(2);
+                      }
+
                       // NDVI health badge: green ≥ 0.6, yellow 0.3-0.6, red < 0.3
                       const latestNdvi = parcel.vegetationIndex?.value ?? parcel.ndvi?.value ?? null;
                       const healthColor = latestNdvi === null ? 'bg-slate-300' :
@@ -212,7 +223,7 @@ const DashboardContent: React.FC = () => {
                             {cropSpecies}
                           </td>
                           <td className="p-4">
-                            {area ? (Number(area) / 10000).toFixed(2) : '-'} ha
+                            {areaHa} ha
                           </td>
                           <td className="p-4 text-right">
                             <button

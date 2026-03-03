@@ -444,12 +444,20 @@ export class VegetationApiClient {
    */
   async listTenantParcels(): Promise<any[]> {
     try {
-      // Use absolute URL from env if available
       const baseUrl = this.getBaseApiUrl();
       const url = `${baseUrl}/ngsi-ld/v1/entities?type=AgriParcel`;
+      
+      const hostAuth = (window as any).__nekazariAuthContext;
+      const token = typeof hostAuth?.getToken === 'function' ? hostAuth.getToken() : hostAuth?.token;
+
+      const headers: Record<string, string> = {
+        'Accept': 'application/json',
+      };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
 
       const response = await fetch(url, {
         method: 'GET',
+        headers,
         credentials: 'include',
       });
 
@@ -473,9 +481,18 @@ export class VegetationApiClient {
     try {
       const baseUrl = this.getBaseApiUrl();
       const url = `${baseUrl}/ngsi-ld/v1/entities/${entityId}`;
+      
+      const hostAuth = (window as any).__nekazariAuthContext;
+      const token = typeof hostAuth?.getToken === 'function' ? hostAuth.getToken() : hostAuth?.token;
+
+      const headers: Record<string, string> = {
+        'Accept': 'application/json',
+      };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
 
       const response = await fetch(url, {
         method: 'GET',
+        headers,
         credentials: 'include',
       });
 
