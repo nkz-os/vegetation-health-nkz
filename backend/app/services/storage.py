@@ -182,21 +182,25 @@ class S3StorageService(StorageService):
             retries={'max_attempts': 3, 'mode': 'standard'}
         )
         
+        resolved_endpoint = endpoint_url or os.getenv('S3_ENDPOINT_URL')
+        resolved_access_key = access_key_id or os.getenv('AWS_ACCESS_KEY_ID')
+        resolved_secret_key = secret_access_key or os.getenv('AWS_SECRET_ACCESS_KEY')
+
         self.client = boto3.client(
             's3',
-            endpoint_url=endpoint_url,
-            aws_access_key_id=access_key_id or os.getenv('AWS_ACCESS_KEY_ID'),
-            aws_secret_access_key=secret_access_key or os.getenv('AWS_SECRET_ACCESS_KEY'),
+            endpoint_url=resolved_endpoint,
+            aws_access_key_id=resolved_access_key,
+            aws_secret_access_key=resolved_secret_key,
             region_name=region,
             use_ssl=use_ssl,
             config=config
         )
-        
+
         self.resource = boto3.resource(
             's3',
-            endpoint_url=endpoint_url,
-            aws_access_key_id=access_key_id or os.getenv('AWS_ACCESS_KEY_ID'),
-            aws_secret_access_key=secret_access_key or os.getenv('AWS_SECRET_ACCESS_KEY'),
+            endpoint_url=resolved_endpoint,
+            aws_access_key_id=resolved_access_key,
+            aws_secret_access_key=resolved_secret_key,
             region_name=region,
             use_ssl=use_ssl,
             config=config
