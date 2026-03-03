@@ -74,19 +74,30 @@ class CopernicusDataSpaceClient:
             raise Exception(f"Authentication failed: {str(e)}")
 
     def _get_s3_client(self):
-        """Initialize and return a boto3 S3 client for Copernicus eodata."""
+        """Initialize and return a boto3 S3 client for Copernicus eodata.
+
+        S3 credentials are separate from OAuth credentials in CDSE.
+        Priority: AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY env vars > OAuth creds (fallback).
+        """
         if self._s3_client:
             return self._s3_client
-            
-        if not self.client_id or not self.client_secret:
-            raise ValueError("Copernicus credentials not set for S3 access.")
-            
+
+        s3_access_key = os.getenv('AWS_ACCESS_KEY_ID')
+        s3_secret_key = os.getenv('AWS_SECRET_ACCESS_KEY')
+
+        if not s3_access_key or not s3_secret_key:
+            if not self.client_id or not self.client_secret:
+                raise ValueError("No S3 credentials available. Set AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY env vars.")
+            logger.warning("No dedicated S3 credentials found, falling back to OAuth credentials (may fail with 403)")
+            s3_access_key = self.client_id
+            s3_secret_key = self.client_secret
+
         self._s3_client = boto3.client(
             "s3",
             endpoint_url=self.S3_ENDPOINT,
-            aws_access_key_id=self.client_id,
-            aws_secret_access_key=self.client_secret,
-            region_name="main", # CDSE default region
+            aws_access_key_id=s3_access_key,
+            aws_secret_access_key=s3_secret_key,
+            region_name="default",
             config=Config(s3={"addressing_style": "path"})
         )
         return self._s3_client
