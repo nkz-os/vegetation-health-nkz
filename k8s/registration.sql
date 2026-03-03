@@ -41,10 +41,10 @@ INSERT INTO marketplace_modules (
     'vegetation-prime',                                                              -- Internal name
     'Vegetation Prime',                                                              -- Display name
     'High-performance vegetation intelligence suite for Sentinel-2 analysis. Provides NDVI, EVI, SAVI, GNDVI, NDRE indices with real-time tile serving and historical time series analysis.',
-    'https://nekazari.artotxiki.com/modules/vegetation-prime/assets/remoteEntry.js', -- Remote entry URL (public, via ingress)
+    '/modules/vegetation-prime/assets/remoteEntry.js',                               -- Remote entry URL (relative to host)
     'vegetation_prime_module',                                                       -- Module Federation scope (must match vite.config.ts)
     './App',                                                                         -- Exposed module path (must match vite.config.ts)
-    '1.30.0',                                                                         -- Version
+    '1.50.0',                                                                         -- Version
     'Nekazari Team',                                                                 -- Author
     'analytics',                                                                     -- Category
     NULL,                                                                            -- Icon URL (optional)
