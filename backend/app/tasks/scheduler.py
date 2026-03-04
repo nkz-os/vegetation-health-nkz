@@ -97,11 +97,20 @@ def check_and_process_entity(self, subscription_id, start_date, end_date):
             sub.status = 'syncing'
             db.commit()
 
-        # Parse geometry: bbox for SCL clip and GeoJSON for STAC intersects (Phase 3 SOTA)
+        # Parse geometry: bbox for SCL clip and GeoJSON for STAC intersects
+        # STAC requires simple Polygon, not MultiPolygon
         try:
             geom_shape = to_shape(sub.geometry)
             bbox = list(geom_shape.bounds)  # [minx, miny, maxx, maxy]
-            intersects_geojson = geom_shape.__geo_interface__  # GeoJSON for strict intersection
+            # STAC API requires Polygon, not MultiPolygon
+            if geom_shape.geom_type == 'MultiPolygon':
+                # Extract the largest polygon from the MultiPolygon
+                largest = max(geom_shape.geoms, key=lambda g: g.area)
+                intersects_geojson = largest.__geo_interface__
+                print(f"Converted MultiPolygon ({len(geom_shape.geoms)} parts) to Polygon for STAC")
+            else:
+                intersects_geojson = geom_shape.__geo_interface__
+            print(f"Search geometry type: {intersects_geojson['type']}, bbox: {bbox}")
         except Exception as e:
             print(f"Error parsing geometry for {subscription_id}: {e}")
             sub.last_error = f"Geometry error: {str(e)}"

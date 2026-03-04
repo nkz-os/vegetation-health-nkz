@@ -444,16 +444,16 @@ export class VegetationApiClient {
    */
   async listTenantParcels(): Promise<any[]> {
     try {
-      const baseUrl = this.getBaseApiUrl();
-      const url = `${baseUrl}/ngsi-ld/v1/entities?type=AgriParcel`;
-      
+      // Use relative URL — same origin as frontend, auth via httpOnly cookie
+      const url = `/ngsi-ld/v1/entities?type=AgriParcel`;
+
       const hostAuth = (window as any).__nekazariAuthContext;
-      const token = typeof hostAuth?.getToken === 'function' ? hostAuth.getToken() : hostAuth?.token;
+      const tenantId = hostAuth?.tenantId;
 
       const headers: Record<string, string> = {
         'Accept': 'application/json',
       };
-      if (token) headers['Authorization'] = `Bearer ${token}`;
+      if (tenantId) headers['X-Tenant-ID'] = tenantId;
 
       const response = await fetch(url, {
         method: 'GET',
@@ -479,16 +479,16 @@ export class VegetationApiClient {
    */
   async getEntity(entityId: string): Promise<any> {
     try {
-      const baseUrl = this.getBaseApiUrl();
-      const url = `${baseUrl}/ngsi-ld/v1/entities/${entityId}`;
-      
+      // Use relative URL — same origin as frontend, auth via httpOnly cookie
+      const url = `/ngsi-ld/v1/entities/${entityId}`;
+
       const hostAuth = (window as any).__nekazariAuthContext;
-      const token = typeof hostAuth?.getToken === 'function' ? hostAuth.getToken() : hostAuth?.token;
+      const tenantId = hostAuth?.tenantId;
 
       const headers: Record<string, string> = {
         'Accept': 'application/json',
       };
-      if (token) headers['Authorization'] = `Bearer ${token}`;
+      if (tenantId) headers['X-Tenant-ID'] = tenantId;
 
       const response = await fetch(url, {
         method: 'GET',
@@ -497,7 +497,6 @@ export class VegetationApiClient {
       });
 
       if (!response.ok) {
-        // Log error body if possible
         try {
           const errText = await response.text();
           console.error(`[VegetationApi] Fetch entity failed ${response.status}:`, errText.substring(0, 200));

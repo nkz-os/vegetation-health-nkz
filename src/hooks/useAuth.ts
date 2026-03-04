@@ -27,19 +27,14 @@ export function useAuth(): AuthContext {
   useEffect(() => {
     const checkAuth = () => {
       const hostAuth = (window as any).__nekazariAuthContext;
-      
+
       if (hostAuth) {
-        const newToken = typeof hostAuth.getToken === 'function' 
-          ? hostAuth.getToken() 
-          : hostAuth.token;
-          
-        if (newToken !== auth.token) {
-           setAuth({
-            isAuthenticated: !!newToken,
-            token: newToken,
-            tenantId: typeof hostAuth.getTenantId === 'function' 
-              ? hostAuth.getTenantId() 
-              : hostAuth.tenantId,
+        const isAuth = !!hostAuth.isAuthenticated;
+
+        if (isAuth !== auth.isAuthenticated) {
+          setAuth({
+            isAuthenticated: isAuth,
+            tenantId: hostAuth.tenantId,
             user: hostAuth.user,
             roles: hostAuth.roles || [],
             login: hostAuth.login,

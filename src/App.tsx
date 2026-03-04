@@ -86,7 +86,7 @@ const DashboardContent: React.FC = () => {
     const fetchParcels = async () => {
       // Wait for host auth context to be available
       const hostAuth = (window as any).__nekazariAuthContext;
-      if (!hostAuth || !hostAuth.getToken?.()) {
+      if (!hostAuth || !hostAuth.isAuthenticated) {
         if (retryCount < maxRetries) {
           retryCount++;
           console.log(`[Vegetation] Waiting for auth context... (${retryCount}/${maxRetries})`);
@@ -184,12 +184,12 @@ const DashboardContent: React.FC = () => {
                       // NGSI-LD format: properties are {value: ...} or plain values
                       const parcelName = parcel.name?.value || parcel.name || parcel.id;
                       const cropSpecies = parcel.cropSpecies?.value || parcel.category?.value || t('dashboard.unassigned');
-                      
+
                       // Handle area from Core (area_hectares) or NGSI-LD (area)
                       let areaHa = '-';
                       const rawAreaHectares = parcel.area_hectares?.value ?? parcel.area_hectares ?? null;
                       const rawAreaSquareMeters = parcel.area?.value ?? parcel.area ?? null;
-                      
+
                       if (rawAreaHectares !== null) {
                         areaHa = Number(rawAreaHectares).toFixed(2);
                       } else if (rawAreaSquareMeters !== null) {
@@ -272,8 +272,8 @@ const DashboardContent: React.FC = () => {
           <h2 className="font-semibold text-slate-800">
             {selectedEntityId
               ? (parcels.find((p: any) => p.id === selectedEntityId)?.name?.value ||
-                 parcels.find((p: any) => p.id === selectedEntityId)?.name ||
-                 t('dashboard.detailAnalysis'))
+                parcels.find((p: any) => p.id === selectedEntityId)?.name ||
+                t('dashboard.detailAnalysis'))
               : (activeTab === 'calculations' ? t('tabs.calculations') : t('dashboard.detailAnalysis'))}
           </h2>
         </div>

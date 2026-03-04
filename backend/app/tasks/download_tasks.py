@@ -99,54 +99,54 @@ def download_sentinel2_scene(self, job_id: str, tenant_id: str, parameters: Dict
                 except Exception as e:
                     logger.warning("SCL band not available for %s: %s; proceeding without micro filter", scene_id, e)
                     scl_path = None
-            if scl_path:
-                # Use exact parcel polygon (bounds GeoJSON), not bbox, so we only count clouds over the client parcel
-                parcel_geojson = parameters.get('bounds') or {
-                    'type': 'Polygon',
-                    'coordinates': [[[bbox[0], bbox[1]], [bbox[2], bbox[1]], [bbox[2], bbox[3]], [bbox[0], bbox[3]], [bbox[0], bbox[1]]]],
-                }
-                local_cloud_pct = compute_local_cloud_pct(scl_path, parcel_geojson)
-                if local_cloud_pct > local_threshold:
-                    logger.info("Scene %s skipped: local_cloud_pct=%.1f > threshold=%.1f", scene_id, local_cloud_pct, local_threshold)
-                    from shapely.geometry import shape as shp
-                    from geoalchemy2.shape import from_shape
-                    geom = shp(best_scene.get('geometry') or {'type': 'Polygon', 'coordinates': [[[bbox[0], bbox[1]], [bbox[2], bbox[1]], [bbox[2], bbox[3]], [bbox[0], bbox[3]], [bbox[0], bbox[1]]]]})
-                    if hasattr(geom, 'geoms') and geom.geoms:
-                        geom = geom.geoms[0]
-                    footprint = from_shape(geom, srid=4326)
-                    acquisition_dt = None
-                    if best_scene.get('datetime'):
-                        try:
-                            iso = best_scene['datetime'].replace('Z', '+00:00')
-                            acquisition_dt = datetime.fromisoformat(iso)
-                            if acquisition_dt.tzinfo is None:
-                                acquisition_dt = acquisition_dt.replace(tzinfo=timezone.utc)
-                        except (ValueError, TypeError):
-                            pass
-                    skipped_scene = VegetationScene(
-                        tenant_id=tenant_id,
-                        scene_id=scene_id,
-                        sensing_date=date.fromisoformat(best_scene['sensing_date']),
-                        acquisition_datetime=acquisition_dt,
-                        footprint=footprint,
-                        cloud_coverage=str(best_scene.get('cloud_cover', '')),
-                        storage_path='',
-                        storage_bucket=None,
-                        bands=None,
-                        is_valid=False,
-                        quality_flags={'skipped_due_to_clouds': True, 'local_cloud_pct': round(local_cloud_pct, 2)},
-                        job_id=job.id,
-                    )
-                    db.add(skipped_scene)
-                    db.commit()
-                    job.mark_completed({
-                        'skipped_due_to_clouds': True,
-                        'local_cloud_pct': round(local_cloud_pct, 2),
-                        'message': f'Scene skipped: local cloud {local_cloud_pct:.1f}% > {local_threshold}%',
-                    })
-                    db.commit()
-                    return
-                self.update_state(state='PROGRESS', meta={'progress': 30, 'message': f'Scene {scene_id} passed SCL'})
+                if scl_path:
+                    # Use exact parcel polygon (bounds GeoJSON), not bbox, so we only count clouds over the client parcel
+                    parcel_geojson = parameters.get('bounds') or {
+                        'type': 'Polygon',
+                        'coordinates': [[[bbox[0], bbox[1]], [bbox[2], bbox[1]], [bbox[2], bbox[3]], [bbox[0], bbox[3]], [bbox[0], bbox[1]]]],
+                    }
+                    local_cloud_pct = compute_local_cloud_pct(scl_path, parcel_geojson)
+                    if local_cloud_pct > local_threshold:
+                        logger.info("Scene %s skipped: local_cloud_pct=%.1f > threshold=%.1f", scene_id, local_cloud_pct, local_threshold)
+                        from shapely.geometry import shape as shp
+                        from geoalchemy2.shape import from_shape
+                        geom = shp(best_scene.get('geometry') or {'type': 'Polygon', 'coordinates': [[[bbox[0], bbox[1]], [bbox[2], bbox[1]], [bbox[2], bbox[3]], [bbox[0], bbox[3]], [bbox[0], bbox[1]]]]})
+                        if hasattr(geom, 'geoms') and geom.geoms:
+                            geom = geom.geoms[0]
+                        footprint = from_shape(geom, srid=4326)
+                        acquisition_dt = None
+                        if best_scene.get('datetime'):
+                            try:
+                                iso = best_scene['datetime'].replace('Z', '+00:00')
+                                acquisition_dt = datetime.fromisoformat(iso)
+                                if acquisition_dt.tzinfo is None:
+                                    acquisition_dt = acquisition_dt.replace(tzinfo=timezone.utc)
+                            except (ValueError, TypeError):
+                                pass
+                        skipped_scene = VegetationScene(
+                            tenant_id=tenant_id,
+                            scene_id=scene_id,
+                            sensing_date=date.fromisoformat(best_scene['sensing_date']),
+                            acquisition_datetime=acquisition_dt,
+                            footprint=footprint,
+                            cloud_coverage=str(best_scene.get('cloud_cover', '')),
+                            storage_path='',
+                            storage_bucket=None,
+                            bands=None,
+                            is_valid=False,
+                            quality_flags={'skipped_due_to_clouds': True, 'local_cloud_pct': round(local_cloud_pct, 2)},
+                            job_id=job.id,
+                        )
+                        db.add(skipped_scene)
+                        db.commit()
+                        job.mark_completed({
+                            'skipped_due_to_clouds': True,
+                            'local_cloud_pct': round(local_cloud_pct, 2),
+                            'message': f'Scene skipped: local cloud {local_cloud_pct:.1f}% > {local_threshold}%',
+                        })
+                        db.commit()
+                        return
+                    self.update_state(state='PROGRESS', meta={'progress': 30, 'message': f'Scene {scene_id} passed SCL'})
         else:
             # Manual flow: search then pick best scene
             start_date = parameters.get('start_date')
@@ -341,12 +341,29 @@ def download_sentinel2_scene(self, job_id: str, tenant_id: str, parameters: Dict
             except (ValueError, TypeError):
                 pass
 
+        # Compute footprint from scene geometry (or fallback to bbox)
+        from shapely.geometry import shape as shp, box as shp_box
+        from geoalchemy2.shape import from_shape
+        scene_geom = best_scene.get('geometry')
+        if scene_geom:
+            try:
+                geom_obj = shp(scene_geom)
+                if hasattr(geom_obj, 'geoms') and geom_obj.geoms:
+                    geom_obj = geom_obj.geoms[0]
+            except Exception:
+                geom_obj = shp_box(bbox[0], bbox[1], bbox[2], bbox[3])
+        else:
+            geom_obj = shp_box(bbox[0], bbox[1], bbox[2], bbox[3])
+        footprint = from_shape(geom_obj, srid=4326)
+        centroid = from_shape(geom_obj.centroid, srid=4326)
+
         scene = VegetationScene(
             tenant_id=tenant_id,
             scene_id=scene_id,
             sensing_date=date.fromisoformat(best_scene['sensing_date']),
             acquisition_datetime=acquisition_dt,
-            footprint=None,  # TODO: Convert geometry to PostGIS
+            footprint=footprint,
+            centroid=centroid,
             cloud_coverage=str(best_scene['cloud_cover']),
             storage_path=f"{config.storage_path}scenes/{scene_id}/",
             storage_bucket=tenant_bucket_name,

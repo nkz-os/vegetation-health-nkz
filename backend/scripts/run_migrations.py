@@ -61,11 +61,65 @@ def get_migration_files(migrations_dir: Path) -> List[Tuple[int, Path]]:
     return sorted(migrations)
 
 
+def ensure_migrations_table(conn) -> None:
+    """Create the schema_migrations tracking table if it doesn't exist.
+    Bootstraps tracking for migrations 1-4 if those tables already exist (legacy).
+    """
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS schema_migrations (
+                migration_num INTEGER PRIMARY KEY,
+                filename TEXT NOT NULL,
+                applied_at TIMESTAMP DEFAULT NOW()
+            );
+        """)
+        conn.commit()
+
+        # Bootstrap: if legacy tables exist but aren't tracked yet, record them
+        legacy_checks = {
+            1: 'vegetation_config',
+            2: 'vegetation_plan_limits',
+            3: 'global_scene_cache',
+            4: 'vegetation_subscriptions',
+        }
+        for mnum, tname in legacy_checks.items():
+            cursor.execute(
+                "SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE migration_num = %s)",
+                (mnum,)
+            )
+            already_tracked = cursor.fetchone()[0]
+            if already_tracked:
+                continue
+            cursor.execute(
+                "SELECT EXISTS (SELECT FROM information_schema.tables "
+                "WHERE table_schema = 'public' AND table_name = %s)",
+                (tname,)
+            )
+            table_exists = cursor.fetchone()[0]
+            if table_exists:
+                cursor.execute(
+                    "INSERT INTO schema_migrations (migration_num, filename) VALUES (%s, %s) ON CONFLICT DO NOTHING",
+                    (mnum, f"{mnum:03d}_legacy_bootstrap")
+                )
+                logger.info(f"Bootstrapped migration {mnum} tracking (table {tname} exists)")
+
+        # Also mark migration 005 as applied since its effect is one-time cleanup
+        # that should NOT re-run on every restart
+        cursor.execute(
+            "INSERT INTO schema_migrations (migration_num, filename) "
+            "VALUES (5, '005_clear_subscriptions.sql') ON CONFLICT DO NOTHING"
+        )
+        conn.commit()
+    except Exception as e:
+        logger.error(f"Error ensuring migrations table: {e}")
+        conn.rollback()
+    finally:
+        cursor.close()
+
+
 def check_migration_applied(conn, migration_num: int) -> bool:
-    """Check if a migration has already been applied.
-    
-    We check by looking for a table that should exist after the migration.
-    This is a simple heuristic - in production, you might want a migrations table.
+    """Check if a migration has already been applied using schema_migrations table.
     
     Args:
         conn: Database connection
@@ -75,53 +129,14 @@ def check_migration_applied(conn, migration_num: int) -> bool:
         True if migration appears to be applied
     """
     cursor = conn.cursor()
-    
     try:
-        if migration_num == 1:
-            # Migration 001 creates vegetation_config table
-            cursor.execute("""
-                SELECT EXISTS (
-                    SELECT FROM information_schema.tables 
-                    WHERE table_schema = 'public' 
-                    AND table_name = 'vegetation_config'
-                );
-            """)
-            return cursor.fetchone()[0]
-        elif migration_num == 2:
-            # Migration 002 creates vegetation_plan_limits table
-            cursor.execute("""
-                SELECT EXISTS (
-                    SELECT FROM information_schema.tables 
-                    WHERE table_schema = 'public' 
-                    AND table_name = 'vegetation_plan_limits'
-                );
-            """)
-            return cursor.fetchone()[0]
-        elif migration_num == 3:
-            # Migration 003 creates global_scene_cache table
-            cursor.execute("""
-                SELECT EXISTS (
-                    SELECT FROM information_schema.tables 
-                    WHERE table_schema = 'public' 
-                    AND table_name = 'global_scene_cache'
-                );
-            """)
-            return cursor.fetchone()[0]
-        elif migration_num == 4:
-            # Migration 004 creates vegetation_subscriptions table
-            cursor.execute("""
-                SELECT EXISTS (
-                    SELECT FROM information_schema.tables 
-                    WHERE table_schema = 'public' 
-                    AND table_name = 'vegetation_subscriptions'
-                );
-            """)
-            return cursor.fetchone()[0]
-        else:
-            # Unknown migration - assume not applied
-            return False
+        cursor.execute(
+            "SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE migration_num = %s)",
+            (migration_num,)
+        )
+        return cursor.fetchone()[0]
     except Exception as e:
-        logger.warning(f"Error checking migration {migration_num}: {str(e)}")
+        logger.warning(f"Error checking migration {migration_num}: {e}")
         return False
     finally:
         cursor.close()
@@ -184,11 +199,12 @@ def release_advisory_lock(conn) -> None:
         cursor.close()
 
 
-def run_migration(conn, migration_file: Path) -> bool:
-    """Execute a single migration file.
+def run_migration(conn, migration_num: int, migration_file: Path) -> bool:
+    """Execute a single migration file and record it in schema_migrations.
     
     Args:
         conn: Database connection
+        migration_num: Migration number
         migration_file: Path to migration SQL file
         
     Returns:
@@ -204,6 +220,12 @@ def run_migration(conn, migration_file: Path) -> bool:
         # Execute migration
         cursor = conn.cursor()
         cursor.execute(migration_sql)
+        
+        # Record migration as applied
+        cursor.execute(
+            "INSERT INTO schema_migrations (migration_num, filename) VALUES (%s, %s) ON CONFLICT DO NOTHING",
+            (migration_num, migration_file.name)
+        )
         conn.commit()
         cursor.close()
         
@@ -276,6 +298,9 @@ def main():
                 logger.info(f"Waiting for migration lock... (retrying in {RETRY_INTERVAL}s)")
                 time.sleep(RETRY_INTERVAL)
         
+        # Ensure tracking table exists and bootstrap legacy migrations
+        ensure_migrations_table(conn)
+        
         # Run migrations
         success_count = 0
         skipped_count = 0
@@ -288,7 +313,7 @@ def main():
                 continue
             
             # Run migration
-            if run_migration(conn, migration_file):
+            if run_migration(conn, migration_num, migration_file):
                 success_count += 1
             else:
                 logger.error(f"Migration {migration_num} failed, stopping")
