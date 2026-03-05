@@ -1672,46 +1672,55 @@ async def trigger_zoning(
 @app.get("/api/vegetation/jobs/zoning/{parcel_id}/geojson")
 async def get_zoning_geojson(parcel_id: str, user: dict = Depends(require_auth)):
     """
-    Get the Management Zones for a parcel as GeoJSON.
+    Get the Management Zones for a parcel as GeoJSON by querying Orion-LD.
     """
-    # In a real scenario, we query Orion-LD for type=AgriManagementZone&q=refParcel=={parcel_id}
-    # For now, we return a mock FeatureCollection if no data, or try to query if client available.
+    from app.services.fiware_integration import FIWAREClient
+    import os
     
-    # Mock Response for Demo/Fallback
+    tenant_id = user.get('tenant_id', 'master')
+    url = os.getenv("FIWARE_CONTEXT_BROKER_URL", "http://orion-ld-service:1026")
+    fiware = FIWAREClient(url, tenant_id=tenant_id)
+    
+    # Query Orion-LD for AgriManagementZone linked to this parcel
+    # In NGSI-LD relations can be queried as refAgriParcel==urn:...
+    entities = fiware.query_entities(
+        entity_type="AgriManagementZone",
+        filters={"refAgriParcel": parcel_id},
+        limit=100
+    )
+    
+    features = []
+    for entity in entities:
+        # Extract properties
+        zone_name = entity.get("zoneName", {}).get("value", "")
+        # Try to parse zone number from name or ID
+        zone_id = 0
+        if "id" in entity:
+            parts = entity["id"].split(":")
+            if parts and parts[-1].startswith("Z"):
+                try:
+                    zone_id = int(parts[-1][1:])
+                except ValueError:
+                    pass
+        
+        # Build feature
+        feature = {
+            "type": "Feature",
+            "properties": {
+                "cluster_id": zone_id,
+                "zone_name": zone_name,
+                # Include standard mock values only if no real data is available,
+                # but real platforms would populate this later
+                "potential_yield": "Unknown",
+                "nitrogen_recommendation": 0
+            },
+            "geometry": entity.get("location", {}).get("value")
+        }
+        features.append(feature)
+        
     return {
         "type": "FeatureCollection",
-        "features": [
-            {
-                "type": "Feature",
-                "properties": {
-                    "cluster_id": 1,
-                    "potential_yield": "High",
-                    "nitrogen_recommendation": 120
-                },
-                "geometry": {
-                    "type": "Polygon",
-                    "coordinates": [
-                        # Generate some simple offset polygon from parcel center or just a box
-                        # This would be real data in production
-                        [[-1.6, 42.8], [-1.59, 42.8], [-1.59, 42.81], [-1.6, 42.81], [-1.6, 42.8]]
-                    ]
-                }
-            },
-            {
-                 "type": "Feature",
-                "properties": {
-                    "cluster_id": 2,
-                    "potential_yield": "Low",
-                     "nitrogen_recommendation": 80
-                },
-                "geometry": {
-                     "type": "Polygon",
-                     "coordinates": [
-                        [[-1.59, 42.8], [-1.58, 42.8], [-1.58, 42.81], [-1.59, 42.81], [-1.59, 42.8]]
-                     ]
-                }
-            }
-        ]
+        "features": features
     }
 
 

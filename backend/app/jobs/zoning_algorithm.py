@@ -12,6 +12,13 @@ from rasterio.features import shapes
 from scipy.cluster.vq import kmeans2, whiten
 from typing import Optional, Dict, Any, List
 
+from sqlalchemy.orm import Session
+from app.database import get_db_session
+from app.models.indices import VegetationIndexCache
+from app.models.config import VegetationConfig
+from app.services.storage import create_storage_service, generate_tenant_bucket_name
+from app.services.fiware_integration import FIWAREClient
+
 from app.services.fiware_integration import FIWAREClient
 
 logger = logging.getLogger(__name__)
@@ -30,6 +37,7 @@ class ZoningAlgorithm:
     def __init__(self, orion_url: Optional[str] = None, tenant_id: str = "master"):
         url = orion_url or os.getenv("FIWARE_CONTEXT_BROKER_URL", "http://orion-ld-service:1026")
         self.fiware = FIWAREClient(url, tenant_id=tenant_id)
+        self.tenant_id = tenant_id
 
     def cluster_raster(self, raster_data: np.ndarray, n_clusters: int=3):
         """
@@ -76,30 +84,68 @@ class ZoningAlgorithm:
     async def generate_zones(self, parcel_id: str, n_zones: int=3):
         """
         Main workflow:
-        1. Fetch latest NDVI Raster URL from Orion/MinIO (Simulated here or fetched via mocked path)
+        1. Fetch latest NDVI Raster URL from Orion/MinIO (now using VegetationIndexCache)
         2. Cluster
         3. Create AgriManagementZone entities
         """
         logger.info(f"Generating {n_zones} management zones for {parcel_id}")
         
-        # Mocking a raster for prototype stability
-        width = 100
-        height = 100
-        mock_ndvi = np.random.uniform(0.1, 0.9, (width, height))
-        mock_transform = rasterio.transform.from_origin(0, 0, 10, 10) # Mock coords
+        db = next(get_db_session())
+        try:
+            # 1. Fetch latest NDVI from cache
+            cache_entry = (
+                db.query(VegetationIndexCache)
+                .filter(
+                    VegetationIndexCache.tenant_id == self.tenant_id,
+                    VegetationIndexCache.entity_id == parcel_id,
+                    VegetationIndexCache.index_type == 'NDVI'
+                )
+                .order_by(VegetationIndexCache.calculated_at.desc())
+                .first()
+            )
+            
+            if not cache_entry or not cache_entry.result_raster_path:
+                logger.warning(f"No NDVI raster found in cache for parcel {parcel_id}. Zones cannot be generated.")
+                return {"status": "error", "message": "No NDVI data available for parcel"}
 
-        # 2. Cluster
-        labels, centroids = self.cluster_raster(mock_ndvi, n_zones)
-        
-        if labels is None:
-            return
+            # Get storage config
+            config = db.query(VegetationConfig).filter(VegetationConfig.tenant_id == self.tenant_id).first()
+            storage_type = config.storage_type if config else 's3'
+            bucket_name = os.getenv("VEGETATION_COG_BUCKET") or generate_tenant_bucket_name(self.tenant_id)
+            storage = create_storage_service(storage_type=storage_type, default_bucket=bucket_name)
 
-        # 3. Vectorize
-        vectors = self.vectorize_zones(labels, mock_transform)
-        
-        if not vectors:
-            logger.warning("No zones generated")
-            return
+            # Download raster locally for processing
+            local_path = f"/tmp/zoning_{parcel_id.replace(':', '_')}.tif"
+            try:
+                storage.download_file(cache_entry.result_raster_path, local_path)
+            except Exception as e:
+                logger.error(f"Failed to download raster: {e}")
+                return {"status": "error", "message": "Failed to retrieve raster data"}
+
+            # Load raster
+            with rasterio.open(local_path) as src:
+                ndvi_data = src.read(1)
+                transform = src.transform
+
+            # 2. Cluster
+            labels, centroids = self.cluster_raster(ndvi_data, n_zones)
+            
+            # Clean up
+            if os.path.exists(local_path):
+                os.remove(local_path)
+
+            if labels is None:
+                logger.warning("Clustering failed or yielded no results")
+                return {"status": "error", "message": "Clustering failed"}
+
+            # 3. Vectorize
+            vectors = self.vectorize_zones(labels, transform)
+            
+            if not vectors:
+                logger.warning("No zones generated")
+                return {"status": "error", "message": "No zones generated after vectorization"}
+        finally:
+            db.close()
 
         # 4. Upload to Orion
         for zone in vectors:
