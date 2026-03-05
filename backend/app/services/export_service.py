@@ -332,55 +332,5 @@ class PrescriptionMapExporter:
         else:
             return f"GEOMETRY({geom_type})"
 
-    def calculate_prescription_zones(
-        self,
-        index_stats: List[Dict[str, Any]],
-        geometry: Dict[str, Any],
-        n_zones: int = 3,
-        rate_formula: str = "linear"
-    ) -> List[Dict[str, Any]]:
-        """Calculate prescription zones from vegetation index statistics.
-
-        This creates management zones based on vegetation vigor for
-        variable rate application (VRA).
-
-        Args:
-            index_stats: List of stats with mean values per area
-            geometry: Parcel geometry
-            n_zones: Number of management zones (2-5)
-            rate_formula: How to calculate rates ('linear', 'inverse')
-
-        Returns:
-            List of GeoJSON features with prescription rates
-        """
-        # This is a simplified version - real implementation would use
-        # k-means clustering on the actual raster data
-
-        # For now, create zones based on NDVI ranges
-        features = []
-        ndvi_ranges = [
-            (0.0, 0.3, 'Low', 140),   # Low NDVI -> High fertilizer
-            (0.3, 0.5, 'Medium', 100),
-            (0.5, 1.0, 'High', 60),   # High NDVI -> Low fertilizer
-        ]
-
-        for i, (min_ndvi, max_ndvi, label, rate) in enumerate(ndvi_ranges):
-            features.append({
-                "type": "Feature",
-                "properties": {
-                    "zone_id": i + 1,
-                    "zone_name": f"Zone {label}",
-                    "ndvi_range": f"{min_ndvi}-{max_ndvi}",
-                    "potential_yield": label,
-                    "application_rate": rate,
-                    "nitrogen_kg_ha": rate,
-                    "recommendation": f"Apply {rate} kg/ha of nitrogen"
-                },
-                "geometry": geometry  # In real impl, this would be clustered polygons
-            })
-
-        return features
-
-
 # Singleton instance
 exporter = PrescriptionMapExporter()
