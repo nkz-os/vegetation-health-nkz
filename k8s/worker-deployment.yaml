@@ -33,7 +33,7 @@ spec:
       containers:
         - name: worker
           image: ghcr.io/k8-benetis/vegetation-health-nkz/vegetation-prime-api:latest
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           command:
             [
               "celery",
