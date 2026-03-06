@@ -21,16 +21,10 @@ const getApiBaseUrl = (): string => {
   return '';
 };
 
-// Debounce: ensure we don't fire many refresh requests when many tiles fail at once
-const REFRESH_DEBOUNCE_MS = 800;
-
 export const VegetationLayer: React.FC<VegetationLayerProps> = ({ viewer }) => {
-  const api = useVegetationApi();
-  const { selectedIndex, selectedDate, selectedSceneId, selectedEntityId } = useVegetationContext();
+  const { selectedIndex, selectedSceneId, selectedEntityId } = useVegetationContext();
   const layerRef = useRef<any>(null);
   const dataSourceRef = useRef<any>(null);
-  const refreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const refreshInFlightRef = useRef(false);
 
   const addRasterLayer = useCallback(
     (viewerRef: any, sceneId: string, indexType: string) => {
@@ -53,13 +47,14 @@ export const VegetationLayer: React.FC<VegetationLayerProps> = ({ viewer }) => {
         }
       };
 
-      const applyNewTemplate = (sceneId: string, indexType: string) => {
+      const applyNewTemplate = (sId: string, iType: string) => {
         if (!viewerRef || viewerRef.isDestroyed()) return;
         removeCurrentRaster();
         
         const apiBaseUrl = getApiBaseUrl();
         // La URL ahora apunta a nuestro propio backend (rio-tiler integrado)
-        const tileUrlTemplate = `${apiBaseUrl}/api/vegetation/tiles/${sceneId}/{z}/{x}/{y}.png`;
+        // Usamos iType si el backend lo requiere, aunque actualmente sId es suficiente
+        const tileUrlTemplate = `${apiBaseUrl}/api/vegetation/tiles/${sId}/{z}/{x}/{y}.png?index=${iType}`;
         
         const provider = new Cesium.UrlTemplateImageryProvider({
           url: tileUrlTemplate,
@@ -67,11 +62,6 @@ export const VegetationLayer: React.FC<VegetationLayerProps> = ({ viewer }) => {
           minimumLevel: 10,
           hasAlphaChannel: true,
           credit: 'Vegetation Prime (Internal Rendering)',
-          // Pass custom headers for auth
-          customTags: {
-             // El SDK ya inyecta el token en las peticiones, pero para imágenes 
-             // necesitamos pasarlo explícitamente si el proxy no lo hace
-          }
         });
         
         currentProvider = provider;
@@ -87,7 +77,7 @@ export const VegetationLayer: React.FC<VegetationLayerProps> = ({ viewer }) => {
 
       return removeCurrentRaster;
     },
-    [api]
+    []
   );
 
   useEffect(() => {
@@ -149,16 +139,13 @@ export const VegetationLayer: React.FC<VegetationLayerProps> = ({ viewer }) => {
     }
 
     return () => {
-      if (refreshTimeoutRef.current) {
-        clearTimeout(refreshTimeoutRef.current);
-        refreshTimeoutRef.current = null;
-      }
       if (viewer && layerRef.current) {
         viewer.imageryLayers.remove(layerRef.current, true);
         layerRef.current = null;
       }
     };
-  }, [viewer, selectedIndex, selectedDate, selectedSceneId, addRasterLayer]);
+  }, [viewer, selectedIndex, selectedSceneId, addRasterLayer]);
+
 
   return null;
 };
