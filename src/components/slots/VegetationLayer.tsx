@@ -6,7 +6,6 @@
 
 import React, { useEffect, useRef, useCallback } from 'react';
 import { useVegetationContext } from '../../services/vegetationContext';
-import { useVegetationApi } from '../../hooks/useVegetationApi';
 
 interface VegetationLayerProps {
   viewer?: any; // Injected by CesiumMap
