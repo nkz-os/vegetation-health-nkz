@@ -26,7 +26,7 @@ const REFRESH_DEBOUNCE_MS = 800;
 
 export const VegetationLayer: React.FC<VegetationLayerProps> = ({ viewer }) => {
   const api = useVegetationApi();
-  const { selectedIndex, selectedDate, selectedSceneId } = useVegetationContext();
+  const { selectedIndex, selectedDate, selectedSceneId, selectedEntityId } = useVegetationContext();
   const layerRef = useRef<any>(null);
   const dataSourceRef = useRef<any>(null);
   const refreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);

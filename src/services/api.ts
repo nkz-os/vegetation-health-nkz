@@ -428,15 +428,7 @@ export class VegetationApiClient {
    * List all AgriParcel entities for the current tenant
    * Uses the main Nekazari API (NGSI-LD broker via gateway)
    */
-  // Helper to get API URL
-  // Helper to get API URL
-  private getBaseApiUrl(): string {
-    if (typeof window !== 'undefined' && (window as any).__ENV__) {
-      return (window as any).__ENV__.API_URL || (window as any).__ENV__.VITE_API_URL || '';
-    }
-    // Fallback for local dev or if env not set
-    return '';
-  }
+
 
   /**
    * List all AgriParcel entities for the current tenant
