@@ -48,7 +48,7 @@ export const VegetationLayer: React.FC<VegetationLayerProps> = ({ viewer }) => {
         if (currentProvider && !currentProvider.isDestroyed()) {
           try {
             currentProvider.destroy();
-          } catch (_) {}
+          } catch (_) { }
           currentProvider = null;
         }
       };
@@ -80,7 +80,7 @@ export const VegetationLayer: React.FC<VegetationLayerProps> = ({ viewer }) => {
               .then((res) => {
                 if (viewerRef && !viewerRef.isDestroyed()) applyNewTemplate(res.tileUrlTemplate);
               })
-              .catch(() => {})
+              .catch(() => { })
               .finally(() => {
                 refreshInFlightRef.current = false;
               });
@@ -117,9 +117,9 @@ export const VegetationLayer: React.FC<VegetationLayerProps> = ({ viewer }) => {
 
     if (!selectedSceneId && !selectedIndex) return;
 
-    if (selectedIndex === 'VRA_ZONES' && selectedSceneId) {
+    if (selectedIndex === 'VRA_ZONES' && selectedEntityId) {
       const apiBaseUrl = getApiBaseUrl();
-      const geoJsonUrl = `${apiBaseUrl}/api/vegetation/jobs/zoning/${selectedSceneId}/geojson`;
+      const geoJsonUrl = `${apiBaseUrl}/api/vegetation/jobs/zoning/${selectedEntityId}/geojson`;
       Cesium.GeoJsonDataSource.load(geoJsonUrl, {
         stroke: Cesium.Color.BLACK,
         fill: Cesium.Color.BLUE.withAlpha(0.5),
