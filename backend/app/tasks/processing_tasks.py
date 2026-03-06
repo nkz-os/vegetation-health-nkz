@@ -310,9 +310,6 @@ def calculate_vegetation_index(
                 logger.warning(f"Scene {scene.id} has no bands, skipping")
                 continue
             
-            # Create processor for this scene
-            processor = VegetationIndexProcessor(band_paths)
-            
             # Determine required bands based on index type
             required_bands = {
                 'NDVI': ['B04', 'B08'],
@@ -321,6 +318,37 @@ def calculate_vegetation_index(
                 'GNDVI': ['B03', 'B08'],
                 'NDRE': ['B8A', 'B08'],
             }.get(index_type, ['B04', 'B08'])
+
+            # SOTA: Ensure bands are available locally before processing.
+            # Download from storage service if not already present.
+            storage = create_storage_service(
+                storage_type=config.storage_type,
+                default_bucket=scene.storage_bucket or generate_tenant_bucket_name(tenant_id)
+            )
+            
+            local_band_dir = Path(f"/tmp/vegetation_processing/{tenant_id}/{scene.id}")
+            local_band_dir.mkdir(parents=True, exist_ok=True)
+            
+            local_band_paths = {}
+            for band in required_bands:
+                remote_path = (scene.bands or {}).get(band)
+                if not remote_path:
+                    logger.error(f"Band {band} not found in metadata for scene {scene.id}")
+                    continue
+                
+                local_path = local_band_dir / f"{band}.tif"
+                if not local_path.exists():
+                    logger.info(f"Downloading band {band} from {scene.storage_bucket} to {local_path}")
+                    storage.download_file(remote_path, str(local_path), scene.storage_bucket)
+                
+                local_band_paths[band] = str(local_path)
+
+            if not local_band_paths:
+                logger.error(f"No bands could be downloaded for scene {scene.id}")
+                continue
+
+            # Create processor for this scene with LOCAL paths
+            processor = VegetationIndexProcessor(local_band_paths)
             
             # Load bands
             processor.load_bands(required_bands)

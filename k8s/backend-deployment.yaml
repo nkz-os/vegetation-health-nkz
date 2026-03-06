@@ -33,73 +33,73 @@ spec:
       containers:
         - name: api
           image: ghcr.io/k8-benetis/vegetation-health-nkz/vegetation-prime-api:latest
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent
           ports:
             - name: http
               containerPort: 8000
           env:
-            # Database Configuration
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
                   name: postgresql-secret
                   key: postgres-url
-            # Platform Database Configuration (for reading external_api_credentials)
-            # Platform Database Name (used to construct connection to platform DB from DATABASE_URL)
-            # The external_api_credentials table is in the 'nekazari' database
             - name: PLATFORM_DATABASE_NAME
               value: "nekazari"
-            # Redis Password (required for authentication)
             - name: REDIS_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: redis-secret
                   key: password
-            # Redis Configuration (Celery + Cache) - with authentication
             - name: CELERY_BROKER_URL
               value: "redis://:$(REDIS_PASSWORD)@redis-service:6379/0"
             - name: CELERY_RESULT_BACKEND
               value: "redis://:$(REDIS_PASSWORD)@redis-service:6379/0"
             - name: REDIS_CACHE_URL
               value: "redis://:$(REDIS_PASSWORD)@redis-service:6379/1"
-            # Authentication (Keycloak)
-            # JWT_ISSUER must match the 'iss' claim in the JWT token from Keycloak
-            # Domain: robotika.cloud (migrated from artotxiki.com 2026-02-14)
             - name: JWT_ISSUER
               value: "https://auth.robotika.cloud/auth/realms/nekazari"
             - name: JWKS_URL
               value: "https://auth.robotika.cloud/auth/realms/nekazari/protocol/openid-connect/certs"
             - name: JWT_ALGORITHM
               value: "RS256"
-            # Service-to-Service Authentication
+            - name: FIWARE_CONTEXT_BROKER_URL
+              value: "http://orion-ld-service:1026"
+            - name: VEGETATION_COG_BUCKET
+              value: "vegetation-prime-global"
+            - name: S3_BUCKET
+              value: "vegetation-prime-global"
+            - name: TITILER_BASE_URL
+              value: "https://nkz.robotika.cloud/titiler"
             - name: MODULE_MANAGEMENT_KEY
               valueFrom:
                 secretKeyRef:
                   name: module-management-secret
                   key: key
-                  optional: true # Optional for now, will be required in production
-            # Storage (S3/MinIO) - Optional
+                  optional: true
             - name: AWS_ACCESS_KEY_ID
               valueFrom:
                 secretKeyRef:
-                  name: vegetation-prime-secrets
-                  key: aws-access-key-id
-                  optional: true
+                  name: minio-secret
+                  key: root-user
             - name: AWS_SECRET_ACCESS_KEY
               valueFrom:
                 secretKeyRef:
-                  name: vegetation-prime-secrets
-                  key: aws-secret-access-key
-                  optional: true
+                  name: minio-secret
+                  key: root-password
             - name: S3_ENDPOINT_URL
+              value: "http://minio-service:9000"
+            - name: CDSE_S3_ACCESS_KEY
               valueFrom:
-                configMapKeyRef:
-                  name: vegetation-prime-config
-                  key: s3-endpoint-url
+                secretKeyRef:
+                  name: vegetation-prime-secrets
+                  key: cdse-s3-access-key
                   optional: true
-            - name: S3_BUCKET
-              value: "vegetation-prime"
-            # Limits Configuration (Defaults)
+            - name: CDSE_S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: vegetation-prime-secrets
+                  key: cdse-s3-secret-key
+                  optional: true
             - name: DEFAULT_MONTHLY_HA_LIMIT
               value: "10.0"
             - name: DEFAULT_DAILY_HA_LIMIT
@@ -112,7 +112,6 @@ spec:
               value: "10"
             - name: DEFAULT_DAILY_CALCULATE_JOBS
               value: "20"
-            # Logging
             - name: LOG_LEVEL
               value: "INFO"
             - name: SQL_ECHO

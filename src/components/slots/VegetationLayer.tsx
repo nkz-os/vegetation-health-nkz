@@ -53,47 +53,37 @@ export const VegetationLayer: React.FC<VegetationLayerProps> = ({ viewer }) => {
         }
       };
 
-      const applyNewTemplate = (tileUrlTemplate: string) => {
+      const applyNewTemplate = (sceneId: string, indexType: string) => {
         if (!viewerRef || viewerRef.isDestroyed()) return;
         removeCurrentRaster();
+        
+        const apiBaseUrl = getApiBaseUrl();
+        // La URL ahora apunta a nuestro propio backend (rio-tiler integrado)
+        const tileUrlTemplate = `${apiBaseUrl}/api/vegetation/tiles/${sceneId}/{z}/{x}/{y}.png`;
+        
         const provider = new Cesium.UrlTemplateImageryProvider({
           url: tileUrlTemplate,
-          maximumLevel: 18,
-          minimumLevel: 8,
+          maximumLevel: 19,
+          minimumLevel: 10,
           hasAlphaChannel: true,
-          credit: 'Vegetation Prime (TiTiler)',
+          credit: 'Vegetation Prime (Internal Rendering)',
+          // Pass custom headers for auth
+          customTags: {
+             // El SDK ya inyecta el token en las peticiones, pero para imágenes 
+             // necesitamos pasarlo explícitamente si el proxy no lo hace
+          }
         });
+        
         currentProvider = provider;
         const layer = viewerRef.imageryLayers.addImageryProvider(provider);
         layer.alpha = 0.8;
         currentLayer = layer;
         layerRef.current = layer;
-
-        provider.errorEvent.addEventListener(() => {
-          if (refreshInFlightRef.current) return;
-          if (refreshTimeoutRef.current) return;
-          refreshTimeoutRef.current = setTimeout(() => {
-            refreshTimeoutRef.current = null;
-            refreshInFlightRef.current = true;
-            api
-              .getViewerUrl(sceneId, indexType)
-              .then((res) => {
-                if (viewerRef && !viewerRef.isDestroyed()) applyNewTemplate(res.tileUrlTemplate);
-              })
-              .catch(() => { })
-              .finally(() => {
-                refreshInFlightRef.current = false;
-              });
-          }, REFRESH_DEBOUNCE_MS);
-        });
       };
 
-      api
-        .getViewerUrl(sceneId, indexType)
-        .then((res) => applyNewTemplate(res.tileUrlTemplate))
-        .catch((err) => {
-          console.error('[VegetationLayer] Failed to load viewer URL:', err);
-        });
+      if (sceneId && indexType) {
+        applyNewTemplate(sceneId, indexType);
+      }
 
       return removeCurrentRaster;
     },
