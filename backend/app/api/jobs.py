@@ -2,6 +2,7 @@
 from fastapi import APIRouter, HTTPException, Depends, status
 from sqlalchemy.orm import Session
 from uuid import UUID
+from typing import List, Optional
 from app.database import get_db_with_tenant
 from app.middleware.auth import require_auth
 from app.models import VegetationJob
