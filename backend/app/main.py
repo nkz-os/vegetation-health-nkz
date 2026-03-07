@@ -21,6 +21,7 @@ from app.api.crops import router as crops_router
 from app.api.subscriptions import router as subscriptions_router
 from app.api.internal import router as internal_router
 from app.api.timeseries_adapter import router as timeseries_adapter_router
+from app.api.scenes import router as scenes_router
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -71,6 +72,7 @@ app.include_router(tiles_router)
 app.include_router(entities_router)
 app.include_router(crops_router, prefix="/api/vegetation", tags=["crops"])
 app.include_router(subscriptions_router, prefix="/api/vegetation", tags=["subscriptions"])
+app.include_router(scenes_router)
 app.include_router(internal_router)
 app.include_router(timeseries_adapter_router)
 
