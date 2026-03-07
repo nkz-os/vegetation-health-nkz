@@ -8,7 +8,7 @@ from app.models import VegetationJob
 from app.tasks import download_sentinel2_scene, calculate_vegetation_index
 from app.services.limits import LimitsValidator
 from app.services.usage_tracker import UsageTracker
-from app.main import JobCreateRequest, JobResponse # Temporalmente desde main hasta que lo movamos
+from app.schemas import JobCreateRequest, JobResponse
 import logging
 
 router = APIRouter(prefix="/api/vegetation/jobs", tags=["jobs"])
