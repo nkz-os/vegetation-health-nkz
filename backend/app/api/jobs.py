@@ -75,6 +75,18 @@ async def create_job(
         logger.error(f"Job creation failed: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.get("", response_model=List[JobResponse])
+async def list_jobs(
+    entity_id: Optional[str] = None,
+    current_user: dict = Depends(require_auth),
+    db: Session = Depends(get_db_with_tenant)
+):
+    """Lista tareas de procesamiento filtradas por entidad."""
+    query = db.query(VegetationJob).filter(VegetationJob.tenant_id == current_user['tenant_id'])
+    if entity_id:
+        query = query.filter(VegetationJob.entity_id == entity_id)
+    return query.order_by(VegetationJob.created_at.desc()).limit(50).all()
+
 @router.get("/{job_id}", response_model=JobResponse)
 async def get_job(job_id: UUID, current_user: dict = Depends(require_auth), db: Session = Depends(get_db_with_tenant)):
     job = db.query(VegetationJob).filter(
