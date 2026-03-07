@@ -15,6 +15,8 @@ class JobResponse(BaseModel):
     id: UUID
     tenant_id: str
     job_type: str
+    entity_id: Optional[str] = None
+    entity_type: Optional[str] = None
     status: str
     parameters: Dict[str, Any]
     result: Optional[Dict[str, Any]] = None

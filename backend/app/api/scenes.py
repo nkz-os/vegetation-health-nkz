@@ -155,3 +155,68 @@ async def get_capabilities(current_user: dict = Depends(require_auth)):
             "send_to_cloud": False,
         },
     }
+
+
+@router.get("/config")
+async def get_config(current_user: dict = Depends(require_auth)):
+    """Return tenant vegetation config (defaults for now)."""
+    import os
+    return {
+        "default_index": "NDVI",
+        "auto_process": False,
+        "cloud_threshold": 30,
+        "copernicus_client_id": os.getenv("COPERNICUS_CLIENT_ID", ""),
+        "copernicus_client_secret_set": bool(os.getenv("COPERNICUS_CLIENT_SECRET")),
+    }
+
+
+@router.post("/config")
+async def update_config(
+    config: dict,
+    current_user: dict = Depends(require_auth),
+):
+    """Update tenant vegetation config (stub — returns input as saved)."""
+    return {"message": "Config saved", "config": config}
+
+
+@router.get("/config/credentials-status")
+async def get_credentials_status(current_user: dict = Depends(require_auth)):
+    """Check if Copernicus credentials are configured."""
+    import os
+    client_id = os.getenv("COPERNICUS_CLIENT_ID", "")
+    has_secret = bool(os.getenv("COPERNICUS_CLIENT_SECRET"))
+    available = bool(client_id and has_secret)
+    return {
+        "available": available,
+        "source": "platform" if available else None,
+        "message": "Credentials configured" if available else "No Copernicus credentials configured",
+        "client_id_preview": client_id[:8] + "..." if client_id else None,
+    }
+
+
+@router.get("/usage/current")
+async def get_current_usage(
+    current_user: dict = Depends(require_auth),
+    db: Session = Depends(get_db_with_tenant),
+):
+    """Return current usage stats for the tenant."""
+    from app.models import VegetationJob
+    from datetime import datetime
+
+    tenant_id = current_user["tenant_id"]
+    today = datetime.utcnow().date()
+
+    jobs_today = (
+        db.query(func.count(VegetationJob.id))
+        .filter(
+            VegetationJob.tenant_id == tenant_id,
+            func.date(VegetationJob.created_at) == today,
+        )
+        .scalar() or 0
+    )
+
+    return {
+        "plan": "free",
+        "volume": {"used_ha": 0, "limit_ha": 1000},
+        "frequency": {"used_jobs_today": jobs_today, "limit_jobs_today": 50},
+    }
