@@ -76,17 +76,24 @@ async def create_job(
         logger.error(f"Job creation failed: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("", response_model=List[JobResponse])
+@router.get("")
 async def list_jobs(
     entity_id: Optional[str] = None,
+    status: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
     current_user: dict = Depends(require_auth),
     db: Session = Depends(get_db_with_tenant)
 ):
-    """Lista tareas de procesamiento filtradas por entidad."""
+    """Lista tareas de procesamiento filtradas por entidad y estado."""
     query = db.query(VegetationJob).filter(VegetationJob.tenant_id == current_user['tenant_id'])
     if entity_id:
         query = query.filter(VegetationJob.entity_id == entity_id)
-    return query.order_by(VegetationJob.created_at.desc()).limit(50).all()
+    if status:
+        query = query.filter(VegetationJob.status == status)
+    total = query.count()
+    jobs = query.order_by(VegetationJob.created_at.desc()).offset(offset).limit(limit).all()
+    return {"jobs": [JobResponse.model_validate(j) for j in jobs], "total": total}
 
 @router.get("/{job_id}", response_model=JobResponse)
 async def get_job(job_id: UUID, current_user: dict = Depends(require_auth), db: Session = Depends(get_db_with_tenant)):
@@ -97,3 +104,36 @@ async def get_job(job_id: UUID, current_user: dict = Depends(require_auth), db: 
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     return job
+
+
+@router.get("/{job_id}/details")
+async def get_job_details(job_id: UUID, current_user: dict = Depends(require_auth), db: Session = Depends(get_db_with_tenant)):
+    """Get job with extended details (index stats, scene info)."""
+    from app.models import VegetationScene, VegetationIndexCache
+
+    job = db.query(VegetationJob).filter(
+        VegetationJob.id == job_id,
+        VegetationJob.tenant_id == current_user['tenant_id']
+    ).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    result = {"job": JobResponse.model_validate(job)}
+
+    # If job has a scene, get index stats
+    scene_id = (job.result or {}).get("scene_id")
+    if scene_id:
+        cache = db.query(VegetationIndexCache).filter(
+            VegetationIndexCache.scene_id == scene_id,
+            VegetationIndexCache.tenant_id == current_user['tenant_id'],
+        ).first()
+        if cache:
+            result["index_stats"] = {
+                "mean": float(cache.mean_value) if cache.mean_value else None,
+                "min": float(cache.min_value) if cache.min_value else None,
+                "max": float(cache.max_value) if cache.max_value else None,
+                "std_dev": float(cache.std_dev) if cache.std_dev else None,
+                "pixel_count": int(cache.pixel_count) if hasattr(cache, 'pixel_count') and cache.pixel_count else None,
+            }
+
+    return result
