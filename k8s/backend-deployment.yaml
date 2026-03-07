@@ -28,6 +28,10 @@ spec:
         component: backend
         module: vegetation-prime
     spec:
+      tolerations:
+        - key: "node.kubernetes.io/disk-pressure"
+          operator: "Exists"
+          effect: "NoSchedule"
       containers:
         - name: api
           image: ghcr.io/k8-benetis/vegetation-health-nkz/vegetation-prime-api:latest
