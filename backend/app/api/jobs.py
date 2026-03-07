@@ -106,6 +106,29 @@ async def get_job(job_id: UUID, current_user: dict = Depends(require_auth), db: 
     return job
 
 
+@router.get("/zoning/{parcel_id}/geojson")
+async def get_zoning_geojson(
+    parcel_id: str,
+    current_user: dict = Depends(require_auth),
+    db: Session = Depends(get_db_with_tenant),
+):
+    """Get latest zoning result as GeoJSON for a parcel."""
+    job = (
+        db.query(VegetationJob)
+        .filter(
+            VegetationJob.tenant_id == current_user["tenant_id"],
+            VegetationJob.entity_id == parcel_id,
+            VegetationJob.job_type == "calculate_index",
+            VegetationJob.status == "completed",
+        )
+        .order_by(VegetationJob.created_at.desc())
+        .first()
+    )
+    if not job or not job.result or "geojson" not in job.result:
+        raise HTTPException(status_code=404, detail="No zoning data available")
+    return job.result["geojson"]
+
+
 @router.get("/{job_id}/details")
 async def get_job_details(job_id: UUID, current_user: dict = Depends(require_auth), db: Session = Depends(get_db_with_tenant)):
     """Get job with extended details (index stats, scene info)."""
