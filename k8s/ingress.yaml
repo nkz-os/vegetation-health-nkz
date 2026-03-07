@@ -10,7 +10,7 @@ metadata:
 spec:
   ingressClassName: traefik
   rules:
-  - host: {{NEKAZARI_HOST}}
+  - host: nekazari.robotika.cloud
     http:
       paths:
       - path: /modules/vegetation-prime
@@ -29,5 +29,5 @@ spec:
               number: 8000
   tls:
   - hosts:
-    - {{NEKAZARI_HOST}}
+    - nekazari.robotika.cloud
     secretName: nekazari-tls
