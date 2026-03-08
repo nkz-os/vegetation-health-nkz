@@ -2,21 +2,132 @@
 """
 Scene query endpoints matching frontend API client expectations.
 Routes: /api/vegetation/scenes, /api/vegetation/scenes/{entity_id}/stats,
-        /api/vegetation/capabilities
+        /api/vegetation/capabilities, /api/vegetation/calculate
 """
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Optional, Dict, Any
+from pydantic import BaseModel, Field
 import logging
+import uuid as uuid_mod
 
 from app.database import get_db_with_tenant
 from app.middleware.auth import require_auth
-from app.models import VegetationScene, VegetationIndexCache
+from app.models import VegetationScene, VegetationIndexCache, VegetationJob
+from app.tasks import calculate_vegetation_index, download_sentinel2_scene
 
 router = APIRouter(prefix="/api/vegetation", tags=["scenes"])
 logger = logging.getLogger(__name__)
+
+
+class CalculateRequest(BaseModel):
+    scene_id: Optional[str] = None
+    index_type: str = "NDVI"
+    entity_id: Optional[str] = None
+    formula: Optional[str] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+
+
+class ZoningRequest(BaseModel):
+    n_zones: int = 3
+    delegate_to_intelligence: bool = False
+    n8n_callback_url: Optional[str] = None
+
+
+@router.post("/calculate")
+async def calculate_index_endpoint(
+    request: CalculateRequest,
+    current_user: dict = Depends(require_auth),
+    db: Session = Depends(get_db_with_tenant),
+):
+    """Launch a vegetation index calculation job.
+
+    This is the main endpoint called by the frontend to trigger index computation.
+    Creates a VegetationJob and dispatches a Celery task.
+    """
+    tenant_id = current_user["tenant_id"]
+
+    if not request.scene_id and not (request.start_date and request.end_date):
+        raise HTTPException(
+            status_code=422,
+            detail="Either scene_id or both start_date and end_date are required",
+        )
+
+    job = VegetationJob(
+        tenant_id=tenant_id,
+        job_type="calculate_index",
+        entity_id=request.entity_id,
+        entity_type="AgriParcel",
+        parameters={
+            "scene_id": request.scene_id,
+            "index_type": request.index_type,
+            "entity_id": request.entity_id,
+            "formula": request.formula,
+            "start_date": request.start_date,
+            "end_date": request.end_date,
+        },
+        created_by=current_user.get("user_id"),
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+
+    calculate_vegetation_index.delay(
+        job_id=str(job.id),
+        tenant_id=tenant_id,
+        scene_id=request.scene_id,
+        index_type=request.index_type,
+        formula=request.formula,
+        start_date=request.start_date,
+        end_date=request.end_date,
+    )
+
+    logger.info("Calculate job %s dispatched for tenant %s", job.id, tenant_id)
+    return {"job_id": str(job.id), "message": "Calculation started"}
+
+
+@router.post("/jobs/zoning/{parcel_id}")
+async def trigger_zoning(
+    parcel_id: str,
+    request: ZoningRequest = ZoningRequest(),
+    current_user: dict = Depends(require_auth),
+    db: Session = Depends(get_db_with_tenant),
+):
+    """Trigger a VRA zoning job for a parcel."""
+    tenant_id = current_user["tenant_id"]
+
+    job = VegetationJob(
+        tenant_id=tenant_id,
+        job_type="calculate_index",
+        entity_id=parcel_id,
+        entity_type="AgriParcel",
+        parameters={
+            "index_type": "VRA_ZONES",
+            "entity_id": parcel_id,
+            "n_zones": request.n_zones,
+        },
+        created_by=current_user.get("user_id"),
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+
+    # For now, zoning is a calculate_index job with VRA_ZONES type
+    calculate_vegetation_index.delay(
+        job_id=str(job.id),
+        tenant_id=tenant_id,
+        index_type="VRA_ZONES",
+    )
+
+    return {
+        "message": "Zoning job started",
+        "task_id": str(job.id),
+        "parcel_id": parcel_id,
+        "webhook_metadata": {},
+    }
 
 
 @router.get("/scenes")
