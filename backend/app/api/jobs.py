@@ -168,24 +168,13 @@ async def delete_job(
     current_user: dict = Depends(require_auth),
     db: Session = Depends(get_db_with_tenant),
 ):
-    """Delete a job (only if completed, failed, or cancelled)."""
+    """Delete any job regardless of status."""
     job = db.query(VegetationJob).filter(
         VegetationJob.id == job_id,
         VegetationJob.tenant_id == current_user['tenant_id']
     ).first()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
-    if job.status in ('pending', 'running'):
-        # Allow force-delete of stuck running jobs older than 1 hour
-        from datetime import datetime, timedelta
-        if job.status == 'running' and job.started_at and \
-           (datetime.utcnow() - job.started_at.replace(tzinfo=None)) > timedelta(hours=1):
-            pass  # Allow deletion of stuck jobs
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Cannot delete a job that is pending or running"
-            )
     db.delete(job)
     db.commit()
 

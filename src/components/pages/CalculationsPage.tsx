@@ -1,277 +1,221 @@
 /**
- * CalculationsPage - Flat table of historical calculations (§12.4)
- * Columns: Scene date, Index, Status (Success/Clouds/Failed)
+ * CalculationsPage - Job management panel with list, status, and delete.
+ * Shows ALL jobs (pending, running, completed, failed) with bulk cleanup.
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useVegetationApi } from '../../services/api';
-import { useVegetationContext } from '../../services/vegetationContext';
 import { VegetationJob } from '../../types';
-import { Loader2, Search, Filter, RefreshCw, MapPin, Download, Trash2 } from 'lucide-react';
+import { Loader2, RefreshCw, Trash2, AlertCircle, CheckCircle, Clock, Play, XCircle } from 'lucide-react';
 
-interface CalculationsPageProps {
-    onViewInMap?: (job: VegetationJob) => void;
-}
-
-export const CalculationsPage: React.FC<CalculationsPageProps> = ({
-    onViewInMap,
-}) => {
+export const CalculationsPage: React.FC = () => {
     const api = useVegetationApi();
-    const { setSelectedEntityId, setSelectedSceneId } = useVegetationContext();
-
     const [jobs, setJobs] = useState<VegetationJob[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
-    const [filterIndex, setFilterIndex] = useState<string>('all');
-    const [searchQuery, setSearchQuery] = useState('');
+    const [deleting, setDeleting] = useState<string | null>(null);
+    const [bulkDeleting, setBulkDeleting] = useState(false);
 
-    // Fetch jobs
-    const fetchJobs = async () => {
+    const fetchJobs = useCallback(async () => {
         setLoading(true);
         setError(null);
         try {
-            const response = await api.listJobs(undefined, 50, 0);
+            const response = await api.listJobs(undefined, 100, 0);
             if (response && response.jobs) {
                 setJobs(response.jobs);
             }
         } catch (err) {
             console.error('Error fetching jobs:', err);
-            setError('Error al cargar los cálculos');
+            setError('Error al cargar los jobs');
         } finally {
             setLoading(false);
         }
-    };
+    }, [api]);
 
     useEffect(() => {
         fetchJobs();
     }, []);
 
-    // Handle view in map: set context and navigate so host shows map with entity/scene
-    const handleViewInMap = (job: VegetationJob) => {
-        if (job.entity_id) setSelectedEntityId(job.entity_id);
-        if (job.scene_id) setSelectedSceneId(String(job.scene_id));
-        onViewInMap?.(job);
-        const nav = (window as any).__nekazariNavigate;
-        if (typeof nav === 'function') {
-            nav(`/vegetation?entityId=${encodeURIComponent(job.entity_id || '')}&tab=analytics`);
-        }
-    };
+    // Auto-refresh every 10s if there are running/pending jobs
+    useEffect(() => {
+        const hasActive = jobs.some(j => j.status === 'running' || j.status === 'pending');
+        if (!hasActive) return;
+        const interval = setInterval(fetchJobs, 10000);
+        return () => clearInterval(interval);
+    }, [jobs, fetchJobs]);
 
-    // Handle download
-    const handleDownload = async (job: VegetationJob, format: 'geotiff' | 'png' | 'csv') => {
-        try {
-            // For now, construct the download URL based on the job result
-            // In production, this would call an API endpoint
-            if (job.result_url) {
-                const downloadUrl = format === 'geotiff'
-                    ? job.result_url
-                    : `${job.result_url.replace('.tif', `.${format}`)}`;
-
-                window.open(downloadUrl, '_blank');
-            } else {
-                // Call API to generate download
-                const blob = await api.downloadResult(job.id, format);
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `${job.index_type}_${job.entity_id || 'area'}_${job.created_at?.split('T')[0]}.${format}`;
-                a.click();
-                URL.revokeObjectURL(url);
-            }
-        } catch (err) {
-            console.error('Download error:', err);
-            alert('Error al descargar el archivo');
-        }
-    };
-
-    // Filter jobs
-    const filteredJobs = jobs.filter(job => {
-        const matchesIndex = filterIndex === 'all' || job.index_type === filterIndex;
-        const matchesSearch = !searchQuery ||
-            (job.entity_name?.toLowerCase().includes(searchQuery.toLowerCase())) ||
-            (job.entity_id?.toLowerCase().includes(searchQuery.toLowerCase()));
-        return matchesIndex && matchesSearch;
-    });
-
-    // Get unique index types for filter
-    const indexTypes = ['all', ...new Set(jobs.map(j => j.index_type).filter(Boolean))];
-
-    const sceneDate = (job: VegetationJob) =>
-        (job.result as any)?.sensing_date || job.completed_at || job.created_at || '—';
-
-    // Domain status: derive from explicit backend flags instead of error message text (§12.4 review)
-    const statusLabel = (job: VegetationJob): 'Éxito' | 'Nubes' | 'Fallo' => {
-        const result = (job.result as any) || {};
-        if (result.skipped_due_to_clouds === true) {
-            return 'Nubes';
-        }
-        if (job.status === 'completed') {
-            return 'Éxito';
-        }
-        if (job.status === 'failed') {
-            return 'Fallo';
-        }
-        return 'Fallo';
-    };
-
-    // Handle delete
     const handleDelete = async (job: VegetationJob) => {
-        if (!confirm('¿Eliminar este cálculo del historial?')) return;
+        if (!confirm('Eliminar este job?')) return;
+        setDeleting(job.id);
         try {
             await api.deleteJob(job.id);
             setJobs(prev => prev.filter(j => j.id !== job.id));
-        } catch (err) {
-            console.error('Delete error:', err);
-            alert('Error al eliminar el cálculo');
+        } catch (err: any) {
+            const msg = err?.response?.data?.detail || 'Error al eliminar';
+            alert(msg);
+        } finally {
+            setDeleting(null);
         }
     };
 
-    if (loading) {
-        return (
-            <div className="flex items-center justify-center h-64">
-                <div className="text-center">
-                    <Loader2 className="w-8 h-8 animate-spin text-green-600 mx-auto mb-2" />
-                    <p className="text-slate-500">Cargando cálculos...</p>
-                </div>
-            </div>
+    const handleBulkDelete = async () => {
+        const stuckOrFailed = jobs.filter(j =>
+            j.status === 'failed' || j.status === 'cancelled' ||
+            (j.status === 'running' || j.status === 'pending')
         );
-    }
+        if (stuckOrFailed.length === 0) return;
+        if (!confirm(`Eliminar ${stuckOrFailed.length} jobs (fallidos + stuck)?`)) return;
 
-    if (error) {
+        setBulkDeleting(true);
+        try {
+            // Delete one by one (backend DELETE /jobs deletes failed+stuck)
+            for (const job of stuckOrFailed) {
+                try {
+                    await api.deleteJob(job.id);
+                } catch {
+                    // Some may fail (running < 1h), ignore
+                }
+            }
+            await fetchJobs();
+        } finally {
+            setBulkDeleting(false);
+        }
+    };
+
+    const statusIcon = (status: string) => {
+        switch (status) {
+            case 'completed': return <CheckCircle className="w-4 h-4 text-emerald-500" />;
+            case 'failed': return <XCircle className="w-4 h-4 text-red-500" />;
+            case 'running': return <Play className="w-4 h-4 text-blue-500 animate-pulse" />;
+            case 'pending': return <Clock className="w-4 h-4 text-amber-500" />;
+            case 'cancelled': return <XCircle className="w-4 h-4 text-slate-400" />;
+            default: return <AlertCircle className="w-4 h-4 text-slate-400" />;
+        }
+    };
+
+    const statusLabel = (status: string) => {
+        switch (status) {
+            case 'completed': return 'Completado';
+            case 'failed': return 'Fallido';
+            case 'running': return 'Ejecutando';
+            case 'pending': return 'Pendiente';
+            case 'cancelled': return 'Cancelado';
+            default: return status;
+        }
+    };
+
+    const formatDate = (dateStr: string | null | undefined) => {
+        if (!dateStr) return '-';
+        try {
+            return new Date(dateStr).toLocaleString('es-ES', {
+                day: '2-digit', month: 'short', year: 'numeric',
+                hour: '2-digit', minute: '2-digit'
+            });
+        } catch { return dateStr; }
+    };
+
+    const stuckCount = jobs.filter(j => j.status === 'running' || j.status === 'pending' || j.status === 'failed').length;
+
+    if (loading && jobs.length === 0) {
         return (
             <div className="flex items-center justify-center h-64">
-                <div className="text-center">
-                    <p className="text-red-500 mb-4">{error}</p>
-                    <button
-                        onClick={fetchJobs}
-                        className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
-                    >
-                        Reintentar
-                    </button>
-                </div>
+                <Loader2 className="w-8 h-8 animate-spin text-green-600" />
             </div>
         );
     }
 
     return (
-        <div className="p-6 max-w-7xl mx-auto">
+        <div className="p-6 max-w-5xl mx-auto">
             {/* Header */}
-            <div className="mb-6">
-                <h1 className="text-2xl font-bold text-slate-900 mb-2">Historial de Cálculos</h1>
-                <p className="text-slate-600">
-                    Visualiza y descarga los análisis de vegetación realizados anteriormente.
-                </p>
-            </div>
-
-            {/* Toolbar */}
-            <div className="bg-white rounded-xl border border-slate-200 p-4 mb-6 flex flex-wrap items-center gap-4">
-                {/* Search */}
-                <div className="flex-1 min-w-[200px] relative">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                    <input
-                        type="text"
-                        placeholder="Buscar por parcela..."
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        className="w-full pl-9 pr-4 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                    />
+            <div className="flex items-center justify-between mb-6">
+                <div>
+                    <h1 className="text-xl font-bold text-slate-900">Jobs</h1>
+                    <p className="text-sm text-slate-500">{jobs.length} jobs total</p>
                 </div>
-
-                {/* Index filter */}
                 <div className="flex items-center gap-2">
-                    <Filter className="w-4 h-4 text-slate-400" />
-                    <select
-                        value={filterIndex}
-                        onChange={(e) => setFilterIndex(e.target.value)}
-                        className="text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-green-500"
+                    {stuckCount > 0 && (
+                        <button
+                            onClick={handleBulkDelete}
+                            disabled={bulkDeleting}
+                            className="inline-flex items-center gap-2 px-3 py-2 bg-red-50 text-red-700 hover:bg-red-100 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
+                        >
+                            {bulkDeleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                            Limpiar {stuckCount} stuck/fallidos
+                        </button>
+                    )}
+                    <button
+                        onClick={fetchJobs}
+                        disabled={loading}
+                        className="p-2 text-slate-500 hover:text-green-600 hover:bg-slate-100 rounded-lg transition-colors"
+                        title="Actualizar"
                     >
-                        <option value="all">Todos los índices</option>
-                        {indexTypes.filter(t => t !== 'all').map(type => (
-                            <option key={type} value={type}>{type}</option>
-                        ))}
-                    </select>
+                        <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+                    </button>
                 </div>
-
-                {/* Refresh */}
-                <button
-                    onClick={fetchJobs}
-                    className="p-2 text-slate-500 hover:text-green-600 hover:bg-slate-100 rounded-lg transition-colors"
-                    title="Actualizar"
-                >
-                    <RefreshCw className="w-4 h-4" />
-                </button>
             </div>
 
-            {/* Results count */}
-            <div className="mb-4 text-sm text-slate-500">
-                {filteredJobs.length} {filteredJobs.length === 1 ? 'resultado' : 'resultados'}
-                {filterIndex !== 'all' && ` para ${filterIndex}`}
-            </div>
+            {error && (
+                <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+                    {error}
+                </div>
+            )}
 
-            {/* Flat table: Scene date, Index, Status (§12.4) */}
-            {filteredJobs.length === 0 ? (
+            {/* Jobs Table */}
+            {jobs.length === 0 ? (
                 <div className="bg-white rounded-xl border border-slate-200 p-12 text-center">
-                    <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                        <Search className="w-8 h-8 text-slate-400" />
-                    </div>
-                    <h3 className="text-lg font-medium text-slate-800 mb-2">No hay cálculos</h3>
-                    <p className="text-slate-500">
-                        {searchQuery || filterIndex !== 'all'
-                            ? 'No se encontraron cálculos con los filtros aplicados.'
-                            : 'Aún no has realizado ningún análisis de vegetación.'}
-                    </p>
+                    <CheckCircle className="w-12 h-12 text-slate-300 mx-auto mb-3" />
+                    <h3 className="text-lg font-medium text-slate-700 mb-1">Sin jobs</h3>
+                    <p className="text-slate-500 text-sm">No hay jobs pendientes ni anteriores.</p>
                 </div>
             ) : (
                 <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
                     <table className="w-full text-sm">
                         <thead className="bg-slate-50 border-b border-slate-200">
                             <tr>
-                                <th className="text-left py-3 px-4 font-medium text-slate-700">Fecha escena</th>
-                                <th className="text-left py-3 px-4 font-medium text-slate-700">Índice</th>
                                 <th className="text-left py-3 px-4 font-medium text-slate-700">Estado</th>
-                                <th className="text-right py-3 px-4 font-medium text-slate-700">Acciones</th>
+                                <th className="text-left py-3 px-4 font-medium text-slate-700">Tipo</th>
+                                <th className="text-left py-3 px-4 font-medium text-slate-700">Entidad</th>
+                                <th className="text-left py-3 px-4 font-medium text-slate-700">Creado</th>
+                                <th className="text-left py-3 px-4 font-medium text-slate-700">Error</th>
+                                <th className="text-right py-3 px-4 font-medium text-slate-700">Accion</th>
                             </tr>
                         </thead>
                         <tbody>
-                            {filteredJobs.map(job => (
+                            {jobs.map(job => (
                                 <tr key={job.id} className="border-b border-slate-100 hover:bg-slate-50/50">
-                                    <td className="py-2.5 px-4 text-slate-700">
-                                        {sceneDate(job) !== '—'
-                                            ? new Date(sceneDate(job)).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' })
-                                            : '—'}
-                                    </td>
-                                    <td className="py-2.5 px-4 font-medium text-slate-800">{job.index_type || '—'}</td>
                                     <td className="py-2.5 px-4">
-                                        <span className={
-                                            statusLabel(job) === 'Éxito' ? 'text-emerald-600 font-medium' :
-                                                statusLabel(job) === 'Nubes' ? 'text-amber-600' : 'text-red-600'
-                                        }>
-                                            {statusLabel(job)}
-                                        </span>
+                                        <div className="flex items-center gap-2">
+                                            {statusIcon(job.status)}
+                                            <span className="text-slate-700">{statusLabel(job.status)}</span>
+                                        </div>
+                                    </td>
+                                    <td className="py-2.5 px-4 text-slate-600">
+                                        {job.job_type === 'download' ? 'Descarga' :
+                                         job.job_type === 'calculate_index' ? 'Calculo' :
+                                         job.job_type}
+                                    </td>
+                                    <td className="py-2.5 px-4 text-slate-600 max-w-[200px] truncate" title={job.entity_id || ''}>
+                                        {job.entity_id
+                                            ? job.entity_id.split(':').pop() || job.entity_id
+                                            : '-'}
+                                    </td>
+                                    <td className="py-2.5 px-4 text-slate-500 text-xs">
+                                        {formatDate(job.created_at)}
+                                    </td>
+                                    <td className="py-2.5 px-4 text-red-600 text-xs max-w-[200px] truncate" title={job.error_message || ''}>
+                                        {job.error_message || '-'}
                                     </td>
                                     <td className="py-2.5 px-4 text-right">
                                         <button
-                                            onClick={() => handleViewInMap(job)}
-                                            className="p-1.5 text-slate-500 hover:text-green-600 rounded"
-                                            title="Ver en mapa"
-                                        >
-                                            <MapPin className="w-4 h-4 inline" />
-                                        </button>
-                                        {(job.status === 'completed' && !(job.result as any)?.skipped_due_to_clouds) && (
-                                        <button
-                                            onClick={() => handleDownload(job, 'geotiff')}
-                                            className="p-1.5 text-slate-500 hover:text-green-600 rounded"
-                                            title="Descargar"
-                                        >
-                                            <Download className="w-4 h-4 inline" />
-                                        </button>
-                                        )}
-                                        <button
                                             onClick={() => handleDelete(job)}
-                                            className="p-1.5 text-slate-500 hover:text-red-600 rounded"
+                                            disabled={deleting === job.id}
+                                            className="p-1.5 text-slate-400 hover:text-red-600 rounded transition-colors disabled:opacity-50"
                                             title="Eliminar"
                                         >
-                                            <Trash2 className="w-4 h-4 inline" />
+                                            {deleting === job.id
+                                                ? <Loader2 className="w-4 h-4 animate-spin" />
+                                                : <Trash2 className="w-4 h-4" />
+                                            }
                                         </button>
                                     </td>
                                 </tr>

@@ -20,6 +20,7 @@ class JobResponse(BaseModel):
     status: str
     parameters: Dict[str, Any]
     result: Optional[Dict[str, Any]] = None
+    error_message: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
