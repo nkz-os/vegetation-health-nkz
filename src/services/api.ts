@@ -789,22 +789,13 @@ const getTenantId = (): string | undefined => {
   return undefined;
 };
 
-// Helper to get base API URL
-const getApiBaseUrl = () => {
-  if (typeof window !== 'undefined' && (window as any).__ENV__) {
-    const env = (window as any).__ENV__;
-    return env.API_URL || env.VITE_API_URL || '';
-  }
-  return '';
-};
-
+// IMPORTANT: Always use relative path. The frontend domain (nekazari.robotika.cloud)
+// has /api/vegetation routed to vegetation-prime-api via ingress.
+// Using the host's VITE_API_URL (nkz.robotika.cloud) would be cross-origin
+// and the httpOnly cookie won't be sent → 401 on every request.
 export function useVegetationApi(): VegetationApiClient {
   return useMemo(
-    () => {
-      const baseUrl = getApiBaseUrl();
-      const apiPath = baseUrl ? `${baseUrl}/api/vegetation` : '/api/vegetation';
-      return new VegetationApiClient(getTenantId, apiPath);
-    },
+    () => new VegetationApiClient(getTenantId, '/api/vegetation'),
     []
   );
 }
