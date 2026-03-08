@@ -153,12 +153,24 @@ def get_copernicus_credentials_with_fallback(
     Returns:
         Dictionary with credentials or None if neither source available
     """
-    # Try platform credentials first
+    # Try env vars first (simplest and most reliable)
+    env_client_id = os.getenv('COPERNICUS_CLIENT_ID', '')
+    env_client_secret = os.getenv('COPERNICUS_CLIENT_SECRET', '')
+    if env_client_id and env_client_secret:
+        logger.info("Using Copernicus credentials from environment variables")
+        return {
+            'client_id': env_client_id,
+            'client_secret': env_client_secret,
+            'service_url': 'https://dataspace.copernicus.eu',
+            'auth_type': 'basic_auth',
+        }
+
+    # Try platform credentials from DB
     platform_creds = get_copernicus_credentials()
-    
+
     if platform_creds:
         return platform_creds
-    
+
     # Fallback to module-specific config
     if fallback_client_id and fallback_client_secret:
         logger.info("Using module-specific Copernicus credentials (fallback)")

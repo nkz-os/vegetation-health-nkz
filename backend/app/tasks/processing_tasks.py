@@ -144,7 +144,7 @@ def calculate_vegetation_index(
         config = db.query(VegetationConfig).filter(
             VegetationConfig.tenant_id == tenant_id
         ).first()
-        storage_type = config.storage_type if config else 's3'
+        storage_type = config.storage_type if config else os.getenv('STORAGE_TYPE', 's3')
         storage = create_storage_service(
             storage_type=storage_type,
             default_bucket=bucket_name
@@ -322,7 +322,7 @@ def calculate_vegetation_index(
             # SOTA: Ensure bands are available locally before processing.
             # Download from storage service if not already present.
             storage = create_storage_service(
-                storage_type=config.storage_type,
+                storage_type=storage_type,
                 default_bucket=scene.storage_bucket or generate_tenant_bucket_name(tenant_id)
             )
             

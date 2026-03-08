@@ -80,6 +80,18 @@ spec:
                   key: root-password
             - name: S3_ENDPOINT_URL
               value: "http://minio-service:9000"
+            - name: COPERNICUS_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: vegetation-prime-secrets
+                  key: copernicus-client-id
+                  optional: true
+            - name: COPERNICUS_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: vegetation-prime-secrets
+                  key: copernicus-client-secret
+                  optional: true
             - name: CDSE_S3_ACCESS_KEY
               valueFrom:
                 secretKeyRef:
@@ -92,6 +104,8 @@ spec:
                   name: vegetation-prime-secrets
                   key: cdse-s3-secret-key
                   optional: true
+            - name: PLATFORM_DATABASE_NAME
+              value: "nekazari"
             - name: LOG_LEVEL
               value: "INFO"
             - name: SQL_ECHO

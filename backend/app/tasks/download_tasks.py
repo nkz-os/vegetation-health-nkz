@@ -44,21 +44,37 @@ def download_sentinel2_scene(self, job_id: str, tenant_id: str, parameters: Dict
         job.celery_task_id = self.request.id
         db.commit()
         
-        # Get tenant configuration
+        # Get tenant configuration (may not exist — use defaults)
         config = db.query(VegetationConfig).filter(
             VegetationConfig.tenant_id == tenant_id
         ).first()
-        
-        # Get Copernicus credentials from platform (preferred) or module config (fallback)
+
+        # Default config values when no VegetationConfig row exists
+        storage_type = config.storage_type if config else (os.getenv('STORAGE_TYPE', 's3'))
+        storage_path = config.storage_path if config else 'vegetation-prime/'
+        cloud_coverage_threshold = float(config.cloud_coverage_threshold) if config else 20.0
+
+        # Get Copernicus credentials: env vars > platform DB > module config
         creds = get_copernicus_credentials_with_fallback(
             fallback_client_id=config.copernicus_client_id if config else None,
             fallback_client_secret=config.copernicus_client_secret_encrypted if config else None
         )
-        
+
+        # Final fallback: check env vars directly
+        if not creds:
+            env_client_id = os.getenv('COPERNICUS_CLIENT_ID', '')
+            env_client_secret = os.getenv('COPERNICUS_CLIENT_SECRET', '')
+            if env_client_id and env_client_secret:
+                creds = {
+                    'client_id': env_client_id,
+                    'client_secret': env_client_secret,
+                }
+
         if not creds:
             raise ValueError(
                 "Copernicus credentials not available. "
-                "Please configure credentials in the platform admin panel or in module settings."
+                "Please configure COPERNICUS_CLIENT_ID and COPERNICUS_CLIENT_SECRET environment variables, "
+                "or set credentials in the platform admin panel or module settings."
             )
         
         # Initialize Copernicus client with credentials from platform or module config
@@ -151,7 +167,7 @@ def download_sentinel2_scene(self, job_id: str, tenant_id: str, parameters: Dict
             # Manual flow: search then pick best scene
             start_date = parameters.get('start_date')
             end_date = parameters.get('end_date')
-            cloud_threshold = parameters.get('cloud_coverage_threshold', config.cloud_coverage_threshold)
+            cloud_threshold = parameters.get('cloud_coverage_threshold', cloud_coverage_threshold)
             if isinstance(start_date, str):
                 start_date = date.fromisoformat(start_date)
             elif start_date is None:
@@ -185,11 +201,11 @@ def download_sentinel2_scene(self, job_id: str, tenant_id: str, parameters: Dict
         
         # Get storage services (global and tenant)
         global_storage = create_storage_service(
-            storage_type=config.storage_type,
+            storage_type=storage_type,
             default_bucket=global_bucket_name
         )
         tenant_storage = create_storage_service(
-            storage_type=config.storage_type,
+            storage_type=storage_type,
             default_bucket=tenant_bucket_name
         )
         
@@ -222,7 +238,7 @@ def download_sentinel2_scene(self, job_id: str, tenant_id: str, parameters: Dict
                 storage_band_paths = {}
                 for band in required_bands:
                     global_band_path = global_cache_entry.get_band_path(band)
-                    tenant_band_path = f"{config.storage_path}scenes/{scene_id}/{band}.tif"
+                    tenant_band_path = f"{storage_path}scenes/{scene_id}/{band}.tif"
                     
                     # Copy file from global to tenant bucket
                     tenant_storage.copy_file(
@@ -312,7 +328,7 @@ def download_sentinel2_scene(self, job_id: str, tenant_id: str, parameters: Dict
             storage_band_paths = {}
             for band in required_bands:
                 global_band_path = global_band_paths[band]
-                tenant_band_path = f"{config.storage_path}scenes/{scene_id}/{band}.tif"
+                tenant_band_path = f"{storage_path}scenes/{scene_id}/{band}.tif"
                 
                 # Copy file from global to tenant bucket
                 tenant_storage.copy_file(
@@ -365,7 +381,7 @@ def download_sentinel2_scene(self, job_id: str, tenant_id: str, parameters: Dict
             footprint=footprint,
             centroid=centroid,
             cloud_coverage=str(best_scene['cloud_cover']),
-            storage_path=f"{config.storage_path}scenes/{scene_id}/",
+            storage_path=f"{storage_path}scenes/{scene_id}/",
             storage_bucket=tenant_bucket_name,
             bands=storage_band_paths,
             job_id=job.id
@@ -410,7 +426,7 @@ def download_sentinel2_scene(self, job_id: str, tenant_id: str, parameters: Dict
                         id=uuid.UUID(calc_job_id),
                         tenant_id=tenant_id,
                         entity_id=parameters.get('entity_id'),
-                        job_type='calculation',
+                        job_type='calculate_index',
                         status='pending',
                         parameters=calc_params
                     )
