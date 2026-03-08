@@ -54,35 +54,26 @@ def download_sentinel2_scene(self, job_id: str, tenant_id: str, parameters: Dict
         storage_path = config.storage_path if config else 'vegetation-prime/'
         cloud_coverage_threshold = float(config.cloud_coverage_threshold) if config else 20.0
 
-        # Get Copernicus credentials: env vars > platform DB > module config
+        # Get Copernicus OAuth credentials (optional — STAC API is public)
         creds = get_copernicus_credentials_with_fallback(
             fallback_client_id=config.copernicus_client_id if config else None,
             fallback_client_secret=config.copernicus_client_secret_encrypted if config else None
         )
 
-        # Final fallback: check env vars directly
-        if not creds:
-            env_client_id = os.getenv('COPERNICUS_CLIENT_ID', '')
-            env_client_secret = os.getenv('COPERNICUS_CLIENT_SECRET', '')
-            if env_client_id and env_client_secret:
-                creds = {
-                    'client_id': env_client_id,
-                    'client_secret': env_client_secret,
-                }
-
-        if not creds:
+        # S3 credentials are required for band downloads (CDSE_S3_ACCESS_KEY/SECRET_KEY)
+        if not os.getenv('CDSE_S3_ACCESS_KEY') or not os.getenv('CDSE_S3_SECRET_KEY'):
             raise ValueError(
-                "Copernicus credentials not available. "
-                "Please configure COPERNICUS_CLIENT_ID and COPERNICUS_CLIENT_SECRET environment variables, "
-                "or set credentials in the platform admin panel or module settings."
+                "Copernicus S3 credentials not available. "
+                "Please configure CDSE_S3_ACCESS_KEY and CDSE_S3_SECRET_KEY environment variables."
             )
-        
-        # Initialize Copernicus client with credentials from platform or module config
+
+        # Initialize Copernicus client (OAuth is optional for STAC search)
         copernicus_client = CopernicusDataSpaceClient()
-        copernicus_client.set_credentials(
-            client_id=creds['client_id'],
-            client_secret=creds['client_secret']
-        )
+        if creds:
+            copernicus_client.set_credentials(
+                client_id=creds['client_id'],
+                client_secret=creds['client_secret']
+            )
         
         # Extract parameters (bounds/bbox for SCL clip and scene selection)
         bounds = parameters.get('bounds')

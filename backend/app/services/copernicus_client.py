@@ -103,6 +103,21 @@ class CopernicusDataSpaceClient:
         )
         return self._s3_client
 
+    def _get_optional_auth_headers(self) -> Dict[str, str]:
+        """Get auth headers if credentials are available, otherwise empty dict.
+
+        The CDSE STAC API is public and does not require authentication for
+        search/item queries. Auth is only needed for some advanced features.
+        """
+        headers: Dict[str, str] = {'Content-Type': 'application/json'}
+        if self.client_id and self.client_secret:
+            try:
+                token = self._get_access_token()
+                headers['Authorization'] = f'Bearer {token}'
+            except Exception as e:
+                logger.warning("OAuth token failed, proceeding without auth: %s", e)
+        return headers
+
     def search_scenes(
         self,
         bbox: Optional[List[float]] = None,
@@ -114,8 +129,7 @@ class CopernicusDataSpaceClient:
         product_type: str = "S2MSI2A",
         limit: int = 100
     ) -> List[Dict[str, Any]]:
-        """Search for Sentinel-2 scenes using STAC API."""
-        token = self._get_access_token()
+        """Search for Sentinel-2 scenes using STAC API (public, no auth required)."""
         start_date = start_date or date.today() - timedelta(days=30)
         end_date = end_date or date.today()
         
@@ -145,7 +159,7 @@ class CopernicusDataSpaceClient:
             }
 
         try:
-            headers = {'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}
+            headers = self._get_optional_auth_headers()
             response = requests.post(f"{self.CATALOG_URL}/search", json=query, headers=headers)
             response.raise_for_status()
             results = response.json()
@@ -169,10 +183,9 @@ class CopernicusDataSpaceClient:
             raise Exception(f"Scene search failed: {str(e)}")
 
     def get_scene_item(self, scene_id: str) -> Dict[str, Any]:
-        """Fetch a single STAC item by id."""
-        token = self._get_access_token()
+        """Fetch a single STAC item by id (public, no auth required)."""
         url = f"{self.CATALOG_URL}/collections/sentinel-2-l2a/items/{scene_id}"
-        headers = {'Authorization': f'Bearer {token}'}
+        headers = self._get_optional_auth_headers()
         response = requests.get(url, headers=headers)
         response.raise_for_status()
         feature = response.json()
