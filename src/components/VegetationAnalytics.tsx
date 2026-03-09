@@ -56,12 +56,21 @@ export const VegetationAnalytics: React.FC = () => {
     if (!selectedEntityId || !isAuthenticated) return;
     setLoadingStats(true);
     api.getSceneStats(selectedEntityId, effectiveIndex, 12)
-      .then((data) => {
+      .then((data: any) => {
         if (data?.summary) {
           setStats(data.summary);
         } else if (data?.data_points?.length > 0) {
-          // Compute from data_points
           const means = data.data_points.filter((d: any) => d.mean !== null).map((d: any) => d.mean);
+          if (means.length > 0) {
+            setStats({
+              avg: means.reduce((a: number, b: number) => a + b, 0) / means.length,
+              min: Math.min(...means),
+              max: Math.max(...means),
+              count: means.length,
+            });
+          }
+        } else if (data?.stats?.length > 0) {
+          const means = data.stats.filter((d: any) => d.mean_value !== null).map((d: any) => d.mean_value);
           if (means.length > 0) {
             setStats({
               avg: means.reduce((a: number, b: number) => a + b, 0) / means.length,
