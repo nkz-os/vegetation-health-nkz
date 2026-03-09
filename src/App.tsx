@@ -336,7 +336,7 @@ const DashboardContent: React.FC = () => {
       <div className="flex-1 overflow-auto bg-slate-50">
         <Suspense fallback={<TabLoadingFallback />}>
           {activeTab === 'analytics' && <VegetationAnalytics />}
-          {activeTab === 'config' && <VegetationConfig mode="page" />}
+          {activeTab === 'config' && <VegetationConfig />}
           {activeTab === 'calculations' && <CalculationsPage />}
           {activeTab === 'prescription' && <PrescriptionTab />}
           {activeTab === 'alerts' && <AlertsTab />}
