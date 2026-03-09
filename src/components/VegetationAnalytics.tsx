@@ -1,666 +1,365 @@
-import React, { useState, useEffect } from 'react';
+/**
+ * VegetationAnalytics - Main analysis view for a selected parcel.
+ * Shows available scenes, lets user calculate indices, and displays stats.
+ * NO subscription gating — works immediately.
+ */
+
+import React, { useState, useEffect, useCallback } from 'react';
 import { Card } from '@nekazari/ui-kit';
 import { useVegetationContext } from '../services/vegetationContext';
 import { useVegetationApi } from '../services/api';
 import { useVegetationScenes } from '../hooks/useVegetationScenes';
+import { useIndexCalculation } from '../hooks/useIndexCalculation';
 import TimeseriesChart from './widgets/TimeseriesChart';
-import { DateSelector } from '../components/widgets/DateSelector';
+import { DateSelector } from './widgets/DateSelector';
+import { IndexPillSelector } from './widgets/IndexPillSelector';
 import { useAuth } from '../hooks/useAuth';
 import { useTranslation } from 'react-i18next';
-import type { VegetationJob, AnomalyCheckResponse, PredictionResponse, ModuleCapabilities, VegetationIndexType } from '../types';
-
-import { SetupWizard } from './pages/SetupWizard';
-import { Button } from '@nekazari/ui-kit';
-import { AlertTriangle, TrendingUp, Search, Calendar, Loader2 } from 'lucide-react';
+import type { VegetationJob } from '../types';
+import {
+  Calendar, Loader2, Calculator, AlertCircle, CheckCircle,
+  RefreshCw, BarChart3, Clock, Play, XCircle, Trash2,
+} from 'lucide-react';
 
 export const VegetationAnalytics: React.FC = () => {
-    const { t } = useTranslation();
-    const { selectedIndex, selectedEntityId, setSelectedEntityId, selectedGeometry, setSelectedSceneId } = useVegetationContext();
-    const { isAuthenticated } = useAuth();
-    const api = useVegetationApi();
-    const [recentJobs, setRecentJobs] = useState<VegetationJob[]>([]);
-    const [loadingJobs, setLoadingJobs] = useState(false);
+  const { t } = useTranslation();
+  const {
+    selectedIndex, setSelectedIndex,
+    selectedEntityId, setSelectedEntityId,
+    selectedSceneId, setSelectedSceneId,
+  } = useVegetationContext();
+  const { isAuthenticated } = useAuth();
+  const api = useVegetationApi();
 
-    // Load available Sentinel-2 scenes for selected entity
-    const { scenes, loading: loadingScenes, error: scenesError, refresh: refreshScenes } = useVegetationScenes({
-        entityId: selectedEntityId || undefined,
-        limit: 100,
-        autoRefresh: false,
-    });
+  // Scenes
+  const { scenes, loading: loadingScenes, error: scenesError, refresh: refreshScenes } = useVegetationScenes({
+    entityId: selectedEntityId || undefined,
+    limit: 100,
+    autoRefresh: false,
+  });
 
-    // Subscription state
-    const [subscription, setSubscription] = useState<any>(null);
-    const [checkingSub, setCheckingSub] = useState(false);
-    const [showWizard, setShowWizard] = useState(false);
+  // Stats
+  const [stats, setStats] = useState<any>(null);
+  const [loadingStats, setLoadingStats] = useState(false);
 
-    // Real statistics from API
-    const [yearComparison, setYearComparison] = useState<any[]>([]);
-    const [stats, setStats] = useState<{ mean: number; min: number; max: number; std_dev: number } | null>(null);
-    const [loadingStats, setLoadingStats] = useState(false);
+  // Jobs
+  const [jobs, setJobs] = useState<VegetationJob[]>([]);
+  const [loadingJobs, setLoadingJobs] = useState(false);
 
-    // Ferrari Frontend: Anomaly Check state
-    const [anomalyResult, setAnomalyResult] = useState<AnomalyCheckResponse | null>(null);
-    const [loadingAnomalies, setLoadingAnomalies] = useState(false);
-    const [anomalyDateRange, setAnomalyDateRange] = useState<{ start: string; end: string }>({
-        start: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().split('T')[0], // 90 days ago
-        end: new Date().toISOString().split('T')[0]
-    });
+  // Calculation
+  const { calculateIndex, isCalculating, error: calcError, success: calcSuccess, resetState } = useIndexCalculation();
 
-    // Ferrari Frontend: Predictions state
-    const [predictions, setPredictions] = useState<PredictionResponse | null>(null);
-    const [loadingPredictions, setLoadingPredictions] = useState(false);
-    const [capabilities, setCapabilities] = useState<ModuleCapabilities | null>(null);
+  const effectiveIndex = selectedIndex || 'NDVI';
 
-    // Load capabilities for graceful degradation
-    useEffect(() => {
-        api.getCapabilities().then(setCapabilities).catch(console.error);
-    }, [api]);
-
-    // Check subscription when entity changes
-    useEffect(() => {
-        if (selectedEntityId && isAuthenticated) {
-            setCheckingSub(true);
-            api.getSubscriptionForEntity(selectedEntityId)
-                .then(setSubscription)
-                .catch(() => setSubscription(null))
-                .finally(() => setCheckingSub(false));
-
-            // Also load jobs
-            setLoadingJobs(true);
-            api.listJobs('completed', 20, 0)
-                .then(response => {
-                    setRecentJobs(response.jobs.filter(j => j.entity_id === selectedEntityId));
-                })
-                .catch(console.error)
-                .finally(() => setLoadingJobs(false));
-        } else {
-            setSubscription(null);
-            // Load global recent jobs if no entity selected
-            if (!selectedEntityId && isAuthenticated) {
-                setLoadingJobs(true);
-                api.listJobs('completed', 20, 0)
-                    .then(response => setRecentJobs(response.jobs))
-                    .catch(console.error)
-                    .finally(() => setLoadingJobs(false));
-            }
-        }
-    }, [selectedEntityId, isAuthenticated]);
-
-    // Load real statistics when entity is selected and subscribed
-    useEffect(() => {
-        if (selectedEntityId && subscription && subscription.status === 'active') {
-            setLoadingStats(true);
-
-            // Load year comparison data
-            api.compareYears(selectedEntityId, selectedIndex || 'NDVI')
-                .then((data) => {
-                    // Handle both possible response structures
-                    if (data && (data as any).years) {
-                        setYearComparison((data as any).years);
-                    } else if (data && data.current_year && data.previous_year) {
-                        // Convert structured response to array format
-                        setYearComparison([
-                            { year: data.current_year.year, stats: data.current_year.stats },
-                            { year: data.previous_year.year, stats: data.previous_year.stats }
-                        ]);
-                    }
-                })
-                .catch((err) => {
-                    console.warn('[Analytics] Year comparison not available:', err);
-                    setYearComparison([]);
-                });
-
-            // Load current stats from scene stats
-            api.getSceneStats(selectedEntityId, selectedIndex || 'NDVI', 3)
-                .then((data) => {
-                    // Handle both possible response structures
-                    if (data && (data as any).statistics) {
-                        setStats((data as any).statistics);
-                    } else if (data && data.stats && data.stats.length > 0) {
-                        // Calculate aggregate stats from scene stats
-                        const latestStat = data.stats[0];
-                        if (latestStat.mean_value !== null) {
-                            setStats({
-                                mean: latestStat.mean_value,
-                                min: latestStat.min_value ?? 0,
-                                max: latestStat.max_value ?? 1,
-                                std_dev: latestStat.std_dev ?? 0
-                            });
-                        }
-                    }
-                })
-                .catch((err) => {
-                    console.warn('[Analytics] Stats not available:', err);
-                    setStats(null);
-                })
-                .finally(() => setLoadingStats(false));
-
-            // Ferrari: Load predictions if Intelligence module is available
-            if (capabilities?.intelligence_available) {
-                setLoadingPredictions(true);
-                api.getPrediction(selectedEntityId, selectedIndex || 'NDVI', 7)
-                    .then(setPredictions)
-                    .catch(() => setPredictions(null))
-                    .finally(() => setLoadingPredictions(false));
-            }
-        }
-    }, [selectedEntityId, subscription, selectedIndex, capabilities]);
-
-    // Ferrari: Anomaly check handler
-    const handleAnomalyCheck = async () => {
-        if (!selectedEntityId) return;
-
-        setLoadingAnomalies(true);
-        setAnomalyResult(null);
-
-        try {
-            const result = await api.checkAnomalies({
-                entity_id: selectedEntityId,
-                index_type: (selectedIndex || 'NDVI') as VegetationIndexType,
-                start_date: anomalyDateRange.start,
-                end_date: anomalyDateRange.end
+  // Load stats when entity changes
+  useEffect(() => {
+    if (!selectedEntityId || !isAuthenticated) return;
+    setLoadingStats(true);
+    api.getSceneStats(selectedEntityId, effectiveIndex, 12)
+      .then((data) => {
+        if (data?.summary) {
+          setStats(data.summary);
+        } else if (data?.data_points?.length > 0) {
+          // Compute from data_points
+          const means = data.data_points.filter((d: any) => d.mean !== null).map((d: any) => d.mean);
+          if (means.length > 0) {
+            setStats({
+              avg: means.reduce((a: number, b: number) => a + b, 0) / means.length,
+              min: Math.min(...means),
+              max: Math.max(...means),
+              count: means.length,
             });
-            setAnomalyResult(result);
-        } catch (error) {
-            console.error('Anomaly check failed:', error);
-        } finally {
-            setLoadingAnomalies(false);
+          }
         }
-    };
+      })
+      .catch(() => setStats(null))
+      .finally(() => setLoadingStats(false));
+  }, [selectedEntityId, effectiveIndex, isAuthenticated]);
 
-    // Group jobs by entity logic (keep existing)
-    const uniqueEntities = React.useMemo(() => {
-        if (selectedEntityId) return []; // Don't need this if entity selected
-        const map = new Map<string, VegetationJob>();
-        if (recentJobs && Array.isArray(recentJobs)) {
-            recentJobs.forEach(job => {
-                if (job.entity_id && !map.has(job.entity_id)) {
-                    map.set(job.entity_id, job);
-                }
-            });
-        }
-        return Array.from(map.values());
-    }, [recentJobs, selectedEntityId]);
-
-    if (!isAuthenticated) {
-        // ... keep existing
-        return (
-            <div className="flex items-center justify-center h-64">
-                <p className="text-gray-500">{t('analyticsPage.loginRequired')}</p>
-            </div>
-        );
+  // Load jobs for this entity
+  const loadJobs = useCallback(async () => {
+    if (!isAuthenticated) return;
+    setLoadingJobs(true);
+    try {
+      const response = await api.listJobs(undefined, 50, 0);
+      const entityJobs = selectedEntityId
+        ? response.jobs.filter(j => j.entity_id === selectedEntityId)
+        : response.jobs;
+      setJobs(entityJobs);
+    } catch {
+      setJobs([]);
+    } finally {
+      setLoadingJobs(false);
     }
+  }, [api, selectedEntityId, isAuthenticated]);
 
-    if (!selectedEntityId) {
-        // ... keep existing dashboard
-        return (
-            <div className="space-y-6 max-w-4xl mx-auto py-8">
-                {/* ... existing content for no selection ... */}
-                <div className="flex items-center justify-center h-32 bg-slate-50 rounded-xl border border-dashed border-slate-300">
-                    <div className="text-center">
-                        <p className="text-slate-500 font-medium">{t('analyticsPage.noParcelSelected')}</p>
-                        <p className="text-xs text-slate-400">{t('analyticsPage.noParcelHint')}</p>
-                    </div>
-                </div>
+  useEffect(() => { loadJobs(); }, [loadJobs]);
 
-                <div>
-                    <h3 className="text-lg font-semibold text-slate-800 mb-4">{t('analyticsPage.recentParcels')}</h3>
-                    {loadingJobs ? (
-                        <div className="text-center py-4 text-slate-500">{t('analyticsPage.loadingHistory')}</div>
-                    ) : uniqueEntities.length > 0 ? (
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            {uniqueEntities.map(job => (
-                                <div
-                                    key={job.entity_id}
-                                    className="cursor-pointer hover:opacity-80 transition-opacity"
-                                    onClick={() => setSelectedEntityId(job.entity_id || null)}
-                                >
-                                    <Card padding="md">
-                                        <div className="flex justify-between items-start">
-                                            <div>
-                                                <p className="font-medium text-slate-900">
-                                                    {job.entity_type} {job.entity_id?.substring(0, 8)}...
-                                                </p>
-                                                <p className="text-xs text-slate-500">
-                                                    Last Analysis: {new Date(job.created_at).toLocaleDateString()}
-                                                </p>
-                                            </div>
-                                            <div className="bg-green-100 text-green-800 text-xs px-2 py-1 rounded-full">
-                                                {job.job_type}
-                                            </div>
-                                        </div>
-                                    </Card>
-                                </div>
-                            ))}
-                        </div>
-                    ) : (
-                        <p className="text-slate-500 text-sm">{t('analyticsPage.noHistory')}</p>
-                    )}
-                </div>
-            </div>
-        );
+  // Auto-refresh if active jobs
+  useEffect(() => {
+    const hasActive = jobs.some(j => j.status === 'running' || j.status === 'pending');
+    if (!hasActive) return;
+    const interval = setInterval(loadJobs, 8000);
+    return () => clearInterval(interval);
+  }, [jobs, loadJobs]);
+
+  const handleDeleteJob = async (jobId: string) => {
+    try {
+      await api.deleteJob(jobId);
+      setJobs(prev => prev.filter(j => j.id !== jobId));
+    } catch { /* ignore */ }
+  };
+
+  const handleCalculate = async () => {
+    resetState();
+    const jobId = await calculateIndex({
+      sceneId: selectedSceneId || undefined,
+      entityId: selectedEntityId || undefined,
+      indexType: effectiveIndex as any,
+    });
+    if (jobId) {
+      loadJobs();
+      refreshScenes();
     }
+  };
 
-    // IF ENTITY SELECTED BUT NOT SUBSCRIBED
-    if (!checkingSub && !subscription && selectedEntityId) {
-        return (
-            <div className="space-y-6 max-w-4xl mx-auto py-8">
-                <div className="flex justify-between items-center">
-                    <h2 className="text-2xl font-bold text-slate-800">{t('analyticsPage.parcelAnalysis')}</h2>
-                    <button
-                        onClick={() => setSelectedEntityId(null)}
-                        className="text-sm text-slate-500 hover:text-slate-700 underline"
-                    >
-                        {t('analyticsPage.changeParcel')}
-                    </button>
-                </div>
-
-                <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-8 text-center space-y-4">
-                    <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto text-slate-400 mb-4">
-                        <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-                        </svg>
-                    </div>
-                    <h3 className="text-xl font-semibold text-slate-900">{t('analyticsPage.inactiveMonitoring')}</h3>
-                    <p className="text-slate-500 max-w-md mx-auto">
-                        {t('analyticsPage.inactiveMonitoringDesc')}
-                    </p>
-                    <div className="pt-4">
-                        <Button variant="primary" onClick={() => setShowWizard(true)}>
-                            {t('analyticsPage.configureMonitoring')}
-                        </Button>
-                    </div>
-                </div>
-
-                {/* Legacy/Manual Jobs if any */}
-                {recentJobs.length > 0 && (
-                    <div className="opacity-70">
-                        <h4 className="text-md font-semibold text-slate-700 mb-2">{t('analyticsPage.manualHistory')}</h4>
-                        {/* Simple list of manual jobs */}
-                        <div className="space-y-2">
-                            {recentJobs.map(job => (
-                                <div key={job.id} className="bg-slate-50 p-3 rounded flex justify-between text-sm">
-                                    <span>{new Date(job.created_at).toLocaleDateString()}</span>
-                                    <span className="capitalize">{job.status}</span>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                )}
-
-                <SetupWizard
-                    open={showWizard}
-                    onClose={() => setShowWizard(false)}
-                    entityId={selectedEntityId}
-                    geometry={selectedGeometry} // Can be null if not from map
-                    onComplete={() => {
-                        // Refresh subscription status
-                        setCheckingSub(true);
-                        api.getSubscriptionForEntity(selectedEntityId)
-                            .then(setSubscription)
-                            .finally(() => setCheckingSub(false));
-                    }}
-                />
-            </div>
-        );
-    }
-
-    // IF AGREEMENT IS SYNCING (NEW UX)
-    if (subscription && (subscription.status === 'syncing' || subscription.status === 'created')) {
-        return (
-            <div className="space-y-6 max-w-4xl mx-auto py-8">
-                <div className="flex justify-between items-center">
-                    <h2 className="text-2xl font-bold text-slate-800">{t('analyticsPage.analyticsDashboard')}</h2>
-                    <button
-                        onClick={() => setSelectedEntityId(null)}
-                        className="text-sm text-slate-500 hover:text-slate-700 underline"
-                    >
-                        {t('analyticsPage.changeParcel')}
-                    </button>
-                </div>
-
-                <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-12 text-center space-y-4">
-                    <div className="w-16 h-16 bg-blue-50 rounded-full flex items-center justify-center mx-auto text-blue-500 mb-4">
-                        <svg className="w-8 h-8 animate-spin" fill="none" viewBox="0 0 24 24">
-                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                        </svg>
-                    </div>
-                    <h3 className="text-xl font-semibold text-slate-900">{t('analyticsPage.processingHistoric')}</h3>
-                    <p className="text-slate-500 max-w-md mx-auto">
-                        {t('analyticsPage.processingHistoricDesc')}
-                    </p>
-                    <div className="pt-4 flex justify-center gap-2">
-                        <span className="text-sm text-blue-600 font-medium bg-blue-50 px-3 py-1 rounded-full border border-blue-100">
-                            {t('analyticsPage.syncing')}
-                        </span>
-                    </div>
-                    {/* Optionally show recent jobs progress here if available */}
-                </div>
-            </div>
-        );
-    }
-
-    // MONITORED DASHBOARD (Existing view wrapped)
+  // --- Auth guard ---
+  if (!isAuthenticated) {
     return (
-        <div className="space-y-6 max-w-4xl mx-auto py-8">
-            <div className="flex justify-between items-center">
-                <div className="flex items-center gap-3">
-                    <h2 className="text-2xl font-bold text-slate-800">{t('analyticsPage.analyticsDashboard')}</h2>
-                    <span className="bg-green-100 text-green-800 text-xs px-2 py-1 rounded-full border border-green-200 flex items-center">
-                        <span className="w-2 h-2 bg-green-500 rounded-full mr-1 animate-pulse"></span>
-                        {t('analyticsPage.activeMonitoring')}
-                    </span>
-                </div>
-                <button
-                    onClick={() => setSelectedEntityId(null)}
-                    className="text-sm text-slate-500 hover:text-slate-700 underline"
-                >
-                    {t('analyticsPage.changeParcel')}
-                </button>
-            </div>
-
-            {/* ... rest of dashboard ... */}
-            {/* Resolution Warning ... */}
-            {(selectedIndex && ['NDVI', 'EVI'].includes(selectedIndex)) && (
-                <div className="bg-amber-50 border-l-4 border-amber-400 p-4 rounded-md mb-6">
-                    {/* ... warning content ... */}
-                    <div className="flex">
-                        <div className="flex-shrink-0">
-                            {/* Warning Icon */}
-                            <svg className="h-5 w-5 text-amber-400" viewBox="0 0 20 20" fill="currentColor">
-                                <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
-                            </svg>
-                        </div>
-                        <div className="ml-3">
-                            <p className="text-sm text-amber-700">
-                                <span className="font-bold">{t('analyticsPage.resolutionNote')}</span> {t('analyticsPage.resolutionNoteDesc')}
-                            </p>
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {/* Sentinel-2 Scene Selector */}
-            <Card padding="lg" className="bg-white/90 backdrop-blur-md border border-slate-200/50 rounded-xl shadow-sm">
-                <div className="mb-4">
-                    <div className="flex items-center gap-2 mb-2">
-                        <Calendar className="w-5 h-5 text-slate-600" />
-                        <h3 className="text-lg font-semibold text-slate-800">Imágenes Sentinel-2 Disponibles</h3>
-                    </div>
-                    <p className="text-sm text-slate-500">Selecciona una fecha para visualizar el índice de vegetación</p>
-                </div>
-                
-                {loadingScenes ? (
-                    <div className="h-24 flex items-center justify-center">
-                        <Loader2 className="w-6 h-6 animate-spin text-slate-400" />
-                        <span className="ml-2 text-sm text-slate-500">Cargando escenas...</span>
-                    </div>
-                ) : scenesError ? (
-                    <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-                        <p className="text-sm text-red-700">Error al cargar escenas: {scenesError}</p>
-                        <button 
-                            onClick={refreshScenes}
-                            className="mt-2 text-xs text-red-800 underline hover:text-red-900"
-                        >
-                            Reintentar
-                        </button>
-                    </div>
-                ) : scenes.length === 0 ? (
-                    <div className="bg-slate-50 rounded-lg p-6 text-center">
-                        <p className="text-sm text-slate-600">
-                            No hay imágenes Sentinel-2 procesadas para esta parcela aún.
-                        </p>
-                        <p className="text-xs text-slate-500 mt-1">
-                            Las nuevas imágenes se procesan automáticamente cada 3-5 días (dependiendo de la cobertura de nubes).
-                        </p>
-                    </div>
-                ) : (
-                    <DateSelector
-                        scenes={scenes}
-                        selectedSceneId={undefined}
-                        onSelect={(sceneId) => {
-                            setSelectedSceneId?.(sceneId);
-                        }}
-                    />
-                )}
-            </Card>
-
-            {/* Main Timeseries */}
-            <Card padding="lg" className="bg-white/90 backdrop-blur-md border border-slate-200/50 rounded-xl shadow-sm">
-                <div className="mb-4 flex justify-between items-center">
-                    <div>
-                        <h3 className="text-lg font-semibold text-slate-800">{t('analyticsPage.vegetationTrends', { index: selectedIndex || 'NDVI' })}</h3>
-                        <p className="text-sm text-slate-500">{t('analyticsPage.historicEvolution')}</p>
-                    </div>
-                    <div className="text-xs text-slate-400">
-                        {t('analyticsPage.lastUpdate')} {subscription?.last_run_at ? new Date(subscription.last_run_at).toLocaleDateString() : t('analyticsPage.pending')}
-                    </div>
-                </div>
-                <div className="h-64 bg-slate-50 rounded-lg flex items-center justify-center">
-                    {/* Using the real Recharts-based TimeseriesChart that fetches its own data */}
-                    <TimeseriesChart entityId={selectedEntityId} indexType={selectedIndex || 'NDVI'} />
-                </div>
-            </Card>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {/* Year-over-Year Comparison */}
-                <Card padding="lg" className="bg-white/90 backdrop-blur-md border border-slate-200/50 rounded-xl shadow-sm">
-                    {/* ... existing table ... */}
-                    <div className="mb-4">
-                        <h3 className="text-md font-semibold text-slate-800">{t('analyticsPage.yearComparison')}</h3>
-                        <p className="text-xs text-slate-500">{t('analyticsPage.yearComparisonDesc')}</p>
-                    </div>
-                    <div className="overflow-x-auto">
-                        <table className="min-w-full divide-y divide-gray-200">
-                            <thead>
-                                <tr>
-                                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{t('analyticsPage.year')}</th>
-                                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{t('analyticsPage.mean')}</th>
-                                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{t('analyticsPage.diff')}</th>
-                                </tr>
-                            </thead>
-                            <tbody className="bg-white divide-y divide-gray-200">
-                                {loadingStats ? (
-                                    <tr>
-                                        <td colSpan={3} className="px-3 py-4 text-center text-sm text-gray-500">
-                                            {t('analyticsPage.loadingData')}
-                                        </td>
-                                    </tr>
-                                ) : yearComparison.length > 0 ? (
-                                    yearComparison.map((yearData: any) => (
-                                        <tr key={yearData.year}>
-                                            <td className="px-3 py-2 whitespace-nowrap text-sm font-medium text-gray-900">{yearData.year}</td>
-                                            <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-500">{yearData.mean?.toFixed(2) || '-'}</td>
-                                            <td className={`px-3 py-2 whitespace-nowrap text-sm font-bold ${yearData.change_percent > 0 ? 'text-green-600' : yearData.change_percent < 0 ? 'text-red-600' : 'text-gray-500'}`}>
-                                                {yearData.change_percent !== undefined ? `${yearData.change_percent > 0 ? '+' : ''}${yearData.change_percent.toFixed(1)}%` : '-'}
-                                            </td>
-                                        </tr>
-                                    ))
-                                ) : (
-                                    <tr>
-                                        <td colSpan={3} className="px-3 py-4 text-center text-sm text-gray-500">
-                                            {t('analyticsPage.noHistoricData')}
-                                        </td>
-                                    </tr>
-                                )}
-                            </tbody>
-                        </table>
-                    </div>
-                </Card>
-
-                {/* Stats Summary */}
-                <Card padding="lg" className="bg-white/90 backdrop-blur-md border border-slate-200/50 rounded-xl shadow-sm">
-                    {/* ... existing stats ... */}
-                    <div className="mb-4">
-                        <h3 className="text-md font-semibold text-slate-800">{t('analyticsPage.quickStats')}</h3>
-                    </div>
-                    {loadingStats ? (
-                        <div className="flex items-center justify-center h-32 text-gray-500">
-                            {t('analyticsPage.loadingStats')}
-                        </div>
-                    ) : stats ? (
-                        <div className="grid grid-cols-2 gap-4">
-                            <div className="p-3 bg-green-50 rounded-lg border border-green-100">
-                                <span className="block text-xs text-green-600 uppercase font-bold">Max {selectedIndex}</span>
-                                <span className="text-2xl font-bold text-green-700">{stats.max.toFixed(2)}</span>
-                            </div>
-                            <div className="p-3 bg-blue-50 rounded-lg border border-blue-100">
-                                <span className="block text-xs text-blue-600 uppercase font-bold">{t('analyticsPage.mean')}</span>
-                                <span className="text-2xl font-bold text-blue-700">{stats.mean.toFixed(2)}</span>
-                            </div>
-                            <div className="p-3 bg-amber-50 rounded-lg border border-amber-100">
-                                <span className="block text-xs text-amber-600 uppercase font-bold">Min</span>
-                                <span className="text-2xl font-bold text-amber-700">{stats.min.toFixed(2)}</span>
-                            </div>
-                            <div className="p-3 bg-purple-50 rounded-lg border border-purple-100">
-                                <span className="block text-xs text-purple-600 uppercase font-bold">Std Dev</span>
-                                <span className="text-2xl font-bold text-purple-700">{stats.std_dev.toFixed(2)}</span>
-                            </div>
-                        </div>
-                    ) : (
-                        <div className="flex items-center justify-center h-32 text-gray-500">
-                            {t('analyticsPage.selectParcelForStats')}
-                        </div>
-                    )}
-                </Card>
-            </div>
-
-            {/* Ferrari Frontend: Anomaly Check Section */}
-            <Card padding="lg" className="bg-white/90 backdrop-blur-md border border-slate-200/50 rounded-xl shadow-sm">
-                <div className="mb-4 flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                        <AlertTriangle className="w-5 h-5 text-amber-500" />
-                        <h3 className="text-md font-semibold text-slate-800">{t('analyticsPage.anomalyDetection')}</h3>
-                    </div>
-                </div>
-
-                <div className="space-y-4">
-                    {/* Date Range for Anomaly Check */}
-                    <div className="flex flex-wrap gap-4 items-end">
-                        <div>
-                            <label className="block text-xs font-medium text-slate-600 mb-1">{t('analyticsPage.from')}</label>
-                            <input
-                                type="date"
-                                value={anomalyDateRange.start}
-                                onChange={(e) => setAnomalyDateRange(prev => ({ ...prev, start: e.target.value }))}
-                                className="px-3 py-1.5 border border-slate-200 rounded-lg text-sm"
-                            />
-                        </div>
-                        <div>
-                            <label className="block text-xs font-medium text-slate-600 mb-1">{t('analyticsPage.to')}</label>
-                            <input
-                                type="date"
-                                value={anomalyDateRange.end}
-                                onChange={(e) => setAnomalyDateRange(prev => ({ ...prev, end: e.target.value }))}
-                                className="px-3 py-1.5 border border-slate-200 rounded-lg text-sm"
-                            />
-                        </div>
-                        <button
-                            onClick={handleAnomalyCheck}
-                            disabled={loadingAnomalies}
-                            className="flex items-center gap-2 px-4 py-1.5 bg-amber-500 text-white rounded-lg text-sm font-medium hover:bg-amber-600 disabled:bg-slate-300 disabled:cursor-wait transition-colors"
-                        >
-                            <Search className="w-4 h-4" />
-                            {loadingAnomalies ? t('analyticsPage.analyzing') : t('analyticsPage.searchAnomalies')}
-                        </button>
-                    </div>
-
-                    {/* Anomaly Results */}
-                    {anomalyResult && (
-                        <div className="mt-4">
-                            {anomalyResult.anomalies.length > 0 ? (
-                                <div className="space-y-2">
-                                    <div className="text-sm text-amber-700 font-medium">
-                                        {t('analyticsPage.anomaliesFound', { count: anomalyResult.anomalies.length })}
-                                    </div>
-                                    <div className="max-h-48 overflow-y-auto space-y-2">
-                                        {anomalyResult.anomalies.map((anomaly, idx) => (
-                                            <div
-                                                key={idx}
-                                                className={`p-3 rounded-lg border ${anomaly.severity === 'critical'
-                                                    ? 'bg-red-50 border-red-200'
-                                                    : 'bg-amber-50 border-amber-200'
-                                                    }`}
-                                            >
-                                                <div className="flex justify-between items-start">
-                                                    <div>
-                                                        <div className="font-medium text-sm text-slate-800">
-                                                            {new Date(anomaly.date).toLocaleDateString()}
-                                                        </div>
-                                                        <div className="text-xs text-slate-600">{anomaly.message}</div>
-                                                    </div>
-                                                    <div className="text-right">
-                                                        <div className="text-sm font-bold text-slate-800">{anomaly.value.toFixed(3)}</div>
-                                                        <div className={`text-xs ${anomaly.severity === 'critical' ? 'text-red-600' : 'text-amber-600'
-                                                            }`}>
-                                                            {anomaly.anomaly_type === 'low' ? t('analyticsPage.anomalyLow') :
-                                                                anomaly.anomaly_type === 'high' ? t('analyticsPage.anomalyHigh') : t('analyticsPage.anomalySudden')}
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-                            ) : (
-                                <div className="p-4 bg-green-50 border border-green-200 rounded-lg text-center">
-                                    <span className="text-green-700 font-medium">
-                                        {t('analyticsPage.noAnomalies')}
-                                    </span>
-                                </div>
-                            )}
-                        </div>
-                    )}
-                </div>
-            </Card>
-
-            {/* Ferrari Frontend: Predictions Section (Optional - Intelligence Module) */}
-            {capabilities?.intelligence_available ? (
-                <Card padding="lg" className="bg-white/90 backdrop-blur-md border border-slate-200/50 rounded-xl shadow-sm">
-                    <div className="mb-4 flex items-center gap-2">
-                        <TrendingUp className="w-5 h-5 text-emerald-500" />
-                        <h3 className="text-md font-semibold text-slate-800">{t('analyticsPage.indexPrediction')}</h3>
-                    </div>
-
-                    {loadingPredictions ? (
-                        <div className="flex items-center justify-center py-8">
-                            <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-emerald-600"></div>
-                            <span className="ml-2 text-slate-500">{t('analyticsPage.loadingPredictions')}</span>
-                        </div>
-                    ) : predictions && predictions.predictions.length > 0 ? (
-                        <div className="space-y-4">
-                            <div className="text-xs text-slate-500">
-                                {t('analyticsPage.predictionModel', { model: predictions.model_type })}
-                            </div>
-                            <div className="grid grid-cols-7 gap-2">
-                                {predictions.predictions.map((pred, idx) => (
-                                    <div key={idx} className="text-center p-2 bg-slate-50 rounded-lg">
-                                        <div className="text-[10px] text-slate-500">
-                                            {new Date(pred.date).toLocaleDateString('es', { weekday: 'short' })}
-                                        </div>
-                                        <div className="text-lg font-bold text-emerald-700">
-                                            {pred.predicted_value.toFixed(2)}
-                                        </div>
-                                        <div className="text-[9px] text-slate-400">
-                                            ±{((pred.confidence_upper - pred.confidence_lower) / 2).toFixed(2)}
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    ) : (
-                        <div className="text-center py-4 text-slate-500 text-sm">
-                            {t('analyticsPage.noPredictions')}
-                        </div>
-                    )}
-                </Card>
-            ) : (
-                <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 text-center text-slate-500 text-sm">
-                    <TrendingUp className="w-6 h-6 mx-auto mb-2 opacity-50" />
-                    {t('analyticsPage.predictionsUnavailable')}
-                </div>
-            )}
-        </div>
+      <div className="flex items-center justify-center h-64">
+        <p className="text-gray-500">{t('analyticsPage.loginRequired')}</p>
+      </div>
     );
+  }
+
+  // --- No parcel selected ---
+  if (!selectedEntityId) {
+    return (
+      <div className="p-8 max-w-3xl mx-auto">
+        <div className="flex items-center justify-center h-32 bg-slate-50 rounded-xl border border-dashed border-slate-300">
+          <div className="text-center">
+            <p className="text-slate-500 font-medium">{t('analyticsPage.noParcelSelected')}</p>
+            <p className="text-xs text-slate-400 mt-1">{t('analyticsPage.noParcelHint')}</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // --- Main analytics view ---
+  const parcelShortName = selectedEntityId.split(':').pop() || selectedEntityId;
+
+  const statusIcon = (status: string) => {
+    switch (status) {
+      case 'completed': return <CheckCircle className="w-3.5 h-3.5 text-emerald-500" />;
+      case 'failed': return <XCircle className="w-3.5 h-3.5 text-red-500" />;
+      case 'running': return <Play className="w-3.5 h-3.5 text-blue-500 animate-pulse" />;
+      case 'pending': return <Clock className="w-3.5 h-3.5 text-amber-500" />;
+      default: return <AlertCircle className="w-3.5 h-3.5 text-slate-400" />;
+    }
+  };
+
+  return (
+    <div className="space-y-6 max-w-4xl mx-auto py-6 px-4">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-xl font-bold text-slate-800">{parcelShortName}</h2>
+          <p className="text-sm text-slate-500">{t('analyticsPage.analyticsDashboard')}</p>
+        </div>
+        <button
+          onClick={() => setSelectedEntityId(null)}
+          className="text-sm text-slate-500 hover:text-slate-700 underline"
+        >
+          {t('analyticsPage.changeParcel')}
+        </button>
+      </div>
+
+      {/* Index Selector + Calculate */}
+      <Card padding="md">
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <label className="text-sm font-semibold text-slate-700">
+              {t('analytics.indexSelector')}
+            </label>
+            <span className="text-xs text-slate-400 bg-slate-100 px-2 py-0.5 rounded">
+              {effectiveIndex}
+            </span>
+          </div>
+          <IndexPillSelector
+            selectedIndex={effectiveIndex}
+            onIndexChange={(idx) => setSelectedIndex(idx as any)}
+            showCustom={false}
+            className="grid grid-cols-3 sm:grid-cols-5 gap-2"
+          />
+        </div>
+      </Card>
+
+      {/* Sentinel-2 Scenes */}
+      <Card padding="md">
+        <div className="mb-3">
+          <div className="flex items-center gap-2 mb-1">
+            <Calendar className="w-4 h-4 text-slate-600" />
+            <h3 className="text-sm font-semibold text-slate-800">
+              {t('analytics.noScenes', 'Imágenes Sentinel-2')}
+            </h3>
+            <button onClick={refreshScenes} className="ml-auto p-1 text-slate-400 hover:text-slate-600">
+              <RefreshCw className={`w-3.5 h-3.5 ${loadingScenes ? 'animate-spin' : ''}`} />
+            </button>
+          </div>
+          <p className="text-xs text-slate-500">
+            {t('configPanel.timelineFilterLabel', 'Selecciona una fecha para calcular el índice')}
+          </p>
+        </div>
+
+        {loadingScenes ? (
+          <div className="h-20 flex items-center justify-center gap-2 text-slate-400">
+            <Loader2 className="w-5 h-5 animate-spin" />
+            <span className="text-sm">{t('common.loading')}</span>
+          </div>
+        ) : scenesError ? (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">
+            {t('errors.loadFailed')}: {scenesError}
+            <button onClick={refreshScenes} className="ml-2 underline text-xs">{t('common.retry')}</button>
+          </div>
+        ) : scenes.length === 0 ? (
+          <div className="bg-slate-50 rounded-lg p-4 text-center text-sm text-slate-500">
+            {t('analytics.noScenes')}
+          </div>
+        ) : (
+          <DateSelector
+            scenes={scenes}
+            selectedSceneId={selectedSceneId}
+            onSelect={(sceneId) => setSelectedSceneId(sceneId)}
+          />
+        )}
+
+        {/* Calculate button */}
+        <div className="mt-4 flex items-center gap-3">
+          <button
+            onClick={handleCalculate}
+            disabled={isCalculating || !selectedSceneId}
+            className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {isCalculating ? (
+              <><Loader2 className="w-4 h-4 animate-spin" />{t('common.loading')}</>
+            ) : (
+              <><Calculator className="w-4 h-4" />{t('calculations.calculateIndex')}</>
+            )}
+          </button>
+          {!selectedSceneId && scenes.length > 0 && (
+            <span className="text-xs text-slate-400">{t('calculations.selectScene')}</span>
+          )}
+        </div>
+
+        {calcError && (
+          <div className="mt-2 flex items-center gap-2 text-xs text-red-600 bg-red-50 p-2 rounded">
+            <AlertCircle className="w-4 h-4" />
+            <span>{calcError}</span>
+          </div>
+        )}
+        {calcSuccess && (
+          <div className="mt-2 flex items-center gap-2 text-xs text-emerald-600 bg-emerald-50 p-2 rounded">
+            <CheckCircle className="w-4 h-4" />
+            <span>{t('calculations.status.completed')}</span>
+          </div>
+        )}
+      </Card>
+
+      {/* Quick Stats */}
+      {(stats || loadingStats) && (
+        <Card padding="md">
+          <h3 className="text-sm font-semibold text-slate-800 mb-3">
+            {t('analyticsPage.quickStats')} — {effectiveIndex}
+          </h3>
+          {loadingStats ? (
+            <div className="flex items-center justify-center h-20 text-slate-400">
+              <Loader2 className="w-5 h-5 animate-spin" />
+            </div>
+          ) : stats ? (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div className="p-3 bg-green-50 rounded-lg border border-green-100">
+                <span className="block text-[10px] text-green-600 uppercase font-bold">{t('analytics.max')}</span>
+                <span className="text-xl font-bold text-green-700">{(stats.max ?? stats.avg ?? 0).toFixed(2)}</span>
+              </div>
+              <div className="p-3 bg-blue-50 rounded-lg border border-blue-100">
+                <span className="block text-[10px] text-blue-600 uppercase font-bold">{t('analytics.mean')}</span>
+                <span className="text-xl font-bold text-blue-700">{(stats.avg ?? stats.mean ?? 0).toFixed(2)}</span>
+              </div>
+              <div className="p-3 bg-amber-50 rounded-lg border border-amber-100">
+                <span className="block text-[10px] text-amber-600 uppercase font-bold">{t('analytics.min')}</span>
+                <span className="text-xl font-bold text-amber-700">{(stats.min ?? 0).toFixed(2)}</span>
+              </div>
+              <div className="p-3 bg-purple-50 rounded-lg border border-purple-100">
+                <span className="block text-[10px] text-purple-600 uppercase font-bold">{t('analytics.pixelCount', 'Escenas')}</span>
+                <span className="text-xl font-bold text-purple-700">{stats.count ?? 0}</span>
+              </div>
+            </div>
+          ) : null}
+        </Card>
+      )}
+
+      {/* Timeseries Chart */}
+      <Card padding="md">
+        <h3 className="text-sm font-semibold text-slate-800 mb-2">
+          {t('analyticsPage.vegetationTrends', { index: effectiveIndex })}
+        </h3>
+        <p className="text-xs text-slate-500 mb-3">{t('analyticsPage.historicEvolution')}</p>
+        <div className="h-56 bg-slate-50 rounded-lg">
+          <TimeseriesChart entityId={selectedEntityId} indexType={effectiveIndex} />
+        </div>
+      </Card>
+
+      {/* Jobs for this parcel */}
+      <Card padding="md">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <BarChart3 className="w-4 h-4 text-slate-600" />
+            <h3 className="text-sm font-semibold text-slate-800">{t('calculations.jobHistory')}</h3>
+          </div>
+          <button onClick={loadJobs} disabled={loadingJobs} className="p-1 text-slate-400 hover:text-slate-600">
+            <RefreshCw className={`w-3.5 h-3.5 ${loadingJobs ? 'animate-spin' : ''}`} />
+          </button>
+        </div>
+
+        {loadingJobs && jobs.length === 0 ? (
+          <div className="h-16 flex items-center justify-center text-slate-400 text-sm">
+            <Loader2 className="w-4 h-4 animate-spin mr-2" />{t('common.loading')}
+          </div>
+        ) : jobs.length === 0 ? (
+          <div className="text-center py-4 text-slate-400 text-sm">
+            {t('analyticsPage.noHistory')}
+          </div>
+        ) : (
+          <div className="space-y-1.5 max-h-64 overflow-y-auto">
+            {jobs.map(job => (
+              <div key={job.id} className="flex items-center justify-between py-2 px-3 bg-slate-50 rounded-lg text-sm hover:bg-slate-100">
+                <div className="flex items-center gap-2">
+                  {statusIcon(job.status)}
+                  <span className="text-slate-700 capitalize">{job.job_type === 'calculate_index' ? effectiveIndex : job.job_type}</span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="text-xs text-slate-400">
+                    {new Date(job.created_at).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                  </span>
+                  {job.error_message && (
+                    <span className="text-xs text-red-500 max-w-[150px] truncate" title={job.error_message}>
+                      {job.error_message}
+                    </span>
+                  )}
+                  <button
+                    onClick={() => handleDeleteJob(job.id)}
+                    className="p-1 text-slate-300 hover:text-red-500 transition-colors"
+                    title={t('common.delete')}
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+    </div>
+  );
 };
