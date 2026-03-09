@@ -37,49 +37,41 @@ export const VegetationProvider: React.FC<{ children: ReactNode }> = ({ children
 
   const [selectedGeometry, setSelectedGeometry] = useState<any | null>(null);
 
-  // --- CRITICAL FIX: Listen for Host Selection Events ---
+  // --- CRITICAL FIX: Listen for Host Events (Selection & Time) ---
   useEffect(() => {
-    // Handler for entity selection event dispatched by Host App (CesiumMap)
+    // 1. Entity Selection
     const handleEntitySelected = (event: CustomEvent<{ entityId: string | null, type?: string, geometry?: any }>) => {
-      console.log('[VegetationContext] Received entity selection:', event.detail);
-      if (event.detail && event.detail.entityId) {
+      if (event.detail?.entityId) {
         setSelectedEntityId(event.detail.entityId);
-        // Reset scene specific state when entity changes
         setSelectedSceneId(null);
-        // Store geometry if provided (crucial for "Save as Management Zone")
-        if (event.detail.geometry) {
-          setSelectedGeometry(event.detail.geometry);
-        } else {
-          setSelectedGeometry(null);
-        }
-
-        // Keep index? Maybe default to NDVI?
+        setSelectedGeometry(event.detail.geometry || null);
         if (!selectedIndex) setSelectedIndex('NDVI');
-      } else {
-        // Deselection?
-        // setSelectedEntityId(null); // Optional: clear selection if host clears it
-        setSelectedGeometry(null);
       }
     };
 
-    // Attach listener
-    window.addEventListener('nekazari:entity-selected', handleEntitySelected as EventListener);
-
-    // Initial check: if loaded after selection, check global context
-    const globalContext = (window as any).__nekazariContext;
-    if (globalContext && globalContext.selectedEntityId) {
-      console.log('[VegetationContext] Initializing from global context:', globalContext.selectedEntityId);
-      setSelectedEntityId(globalContext.selectedEntityId);
-      if (globalContext.selectedGeometry) {
-        setSelectedGeometry(globalContext.selectedGeometry);
+    // 2. Global Time Synchronization
+    const handleTimeChanged = (event: CustomEvent<{ date: string | Date }>) => {
+      const newDate = event.detail?.date ? new Date(event.detail.date) : null;
+      if (newDate) {
+        setSelectedDate(newDate);
       }
+    };
+
+    window.addEventListener('nekazari:entity-selected', handleEntitySelected as EventListener);
+    window.addEventListener('nekazari:time-changed', handleTimeChanged as EventListener);
+
+    // Initial sync from global host context
+    const globalContext = (window as any).__nekazariContext;
+    if (globalContext) {
+      if (globalContext.selectedEntityId) setSelectedEntityId(globalContext.selectedEntityId);
+      if (globalContext.currentDate) setSelectedDate(new Date(globalContext.currentDate));
     }
 
-    // Cleanup
     return () => {
       window.removeEventListener('nekazari:entity-selected', handleEntitySelected as EventListener);
+      window.removeEventListener('nekazari:time-changed', handleTimeChanged as EventListener);
     };
-  }, []); // Run once on mount
+  }, []);
 
   const resetContext = useCallback(() => {
     setSelectedEntityId(null);
