@@ -89,6 +89,185 @@ async def calculate_index_endpoint(
     return {"job_id": str(job.id), "message": "Calculation started"}
 
 
+class AnalyzeRequest(BaseModel):
+    entity_id: str
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    indices: Optional[list] = None  # defaults to all main indices
+
+
+@router.post("/analyze")
+async def analyze_parcel(
+    request: AnalyzeRequest,
+    current_user: dict = Depends(require_auth),
+    db: Session = Depends(get_db_with_tenant),
+):
+    """One-click parcel analysis: download best scene + calculate all indices.
+
+    This is the main entry point for the simplified frontend flow.
+    Creates a download job that chains into index calculations for all
+    requested indices (default: NDVI, EVI, SAVI, GNDVI, NDRE).
+    """
+    import os
+    from datetime import date as date_type, timedelta
+
+    tenant_id = current_user["tenant_id"]
+    entity_id = request.entity_id
+
+    # Default date range: last 30 days
+    end_date = request.end_date or date_type.today().isoformat()
+    start_date = request.start_date or (
+        date_type.today() - timedelta(days=30)
+    ).isoformat()
+
+    # Default indices
+    indices = request.indices or ["NDVI", "EVI", "SAVI", "GNDVI", "NDRE"]
+
+    # Get parcel geometry from Orion-LD
+    geometry = None
+    bbox = None
+    try:
+        import httpx
+
+        orion_url = os.getenv(
+            "FIWARE_CONTEXT_BROKER_URL", "http://orion-ld-service:1026"
+        )
+        headers = {
+            "Accept": "application/json",
+            "NGSILD-Tenant": tenant_id,
+        }
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(
+                f"{orion_url}/ngsi-ld/v1/entities/{entity_id}",
+                headers=headers,
+            )
+            if resp.status_code == 200:
+                entity = resp.json()
+                loc = entity.get("location", {})
+                geom = loc.get("value") or loc
+                if geom and "coordinates" in geom:
+                    geometry = geom
+                    from shapely.geometry import shape as shp
+
+                    geom_obj = shp(geom)
+                    bbox = list(geom_obj.bounds)
+    except Exception as exc:
+        logger.warning("Could not fetch entity geometry from Orion-LD: %s", exc)
+
+    if not bbox:
+        raise HTTPException(
+            status_code=422,
+            detail="Could not determine parcel geometry. Ensure the parcel has a location in the context broker.",
+        )
+
+    # Create the download job with chained calculations
+    job = VegetationJob(
+        tenant_id=tenant_id,
+        job_type="download",
+        entity_id=entity_id,
+        entity_type="AgriParcel",
+        parameters={
+            "bbox": bbox,
+            "bounds": geometry,
+            "start_date": start_date,
+            "end_date": end_date,
+            "entity_id": entity_id,
+            "cloud_coverage_threshold": 30,
+            "calculate_indices": indices,
+        },
+        created_by=current_user.get("user_id"),
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+
+    # Dispatch Celery task
+    download_sentinel2_scene.delay(str(job.id), tenant_id, job.parameters)
+
+    logger.info(
+        "Analyze job %s dispatched for entity %s (indices: %s)",
+        job.id,
+        entity_id,
+        indices,
+    )
+    return {
+        "job_id": str(job.id),
+        "message": "Analysis started",
+        "indices": indices,
+        "date_range": {"start": start_date, "end": end_date},
+    }
+
+
+@router.get("/results/{entity_id}")
+async def get_entity_results(
+    entity_id: str,
+    current_user: dict = Depends(require_auth),
+    db: Session = Depends(get_db_with_tenant),
+):
+    """Get latest completed calculation results per index type for an entity.
+
+    Returns a map of index_type -> { job_id, statistics, raster_path, date }.
+    Frontend uses this to populate stats and enable map layer switching.
+    """
+    tenant_id = current_user["tenant_id"]
+
+    # Get ALL completed calculation jobs for this entity, newest first
+    jobs = (
+        db.query(VegetationJob)
+        .filter(
+            VegetationJob.tenant_id == tenant_id,
+            VegetationJob.entity_id == entity_id,
+            VegetationJob.job_type == "calculate_index",
+            VegetationJob.status == "completed",
+        )
+        .order_by(desc(VegetationJob.created_at))
+        .limit(50)
+        .all()
+    )
+
+    # Build a map: only keep the latest job per index type
+    results = {}
+    for job in jobs:
+        if not job.result:
+            continue
+        index_type = job.result.get("index_type")
+        if not index_type or index_type in results:
+            continue  # already have a newer one
+        stats = job.result.get("statistics", {})
+        results[index_type] = {
+            "job_id": str(job.id),
+            "index_type": index_type,
+            "statistics": {
+                "mean": stats.get("mean"),
+                "min": stats.get("min"),
+                "max": stats.get("max"),
+                "std_dev": stats.get("std"),
+                "pixel_count": stats.get("pixel_count"),
+            },
+            "raster_path": job.result.get("raster_path"),
+            "is_composite": job.result.get("is_composite", False),
+            "created_at": job.created_at.isoformat() if job.created_at else None,
+        }
+
+    # Also check for pending/running jobs
+    active_jobs = (
+        db.query(VegetationJob)
+        .filter(
+            VegetationJob.tenant_id == tenant_id,
+            VegetationJob.entity_id == entity_id,
+            VegetationJob.status.in_(["pending", "running"]),
+        )
+        .count()
+    )
+
+    return {
+        "entity_id": entity_id,
+        "indices": results,
+        "active_jobs": active_jobs,
+        "has_results": len(results) > 0,
+    }
+
+
 @router.post("/jobs/zoning/{parcel_id}")
 async def trigger_zoning(
     parcel_id: str,

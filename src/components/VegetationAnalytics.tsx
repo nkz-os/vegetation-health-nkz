@@ -1,89 +1,98 @@
 /**
  * VegetationAnalytics - Main analysis view for a selected parcel.
- * Shows available scenes, lets user calculate indices, and displays stats.
- * NO subscription gating — works immediately.
+ *
+ * Simplified flow:
+ *  1. User selects parcel (from dashboard)
+ *  2. Clicks "Analyze" → backend downloads best scene + calculates ALL indices
+ *  3. After completion, user switches between indices to see stats + map layer
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Card } from '@nekazari/ui-kit';
 import { useVegetationContext } from '../services/vegetationContext';
 import { useVegetationApi } from '../services/api';
-import { useVegetationScenes } from '../hooks/useVegetationScenes';
-import { useIndexCalculation } from '../hooks/useIndexCalculation';
 import TimeseriesChart from './widgets/TimeseriesChart';
-import { DateSelector } from './widgets/DateSelector';
-import { IndexPillSelector } from './widgets/IndexPillSelector';
 import { useAuth } from '../hooks/useAuth';
 import { useTranslation } from 'react-i18next';
 import type { VegetationJob } from '../types';
 import {
-  Calendar, Loader2, Calculator, AlertCircle, CheckCircle,
-  RefreshCw, BarChart3, Clock, Play, XCircle, Trash2,
+  Loader2, Calculator, AlertCircle, CheckCircle,
+  RefreshCw, BarChart3, Satellite, Leaf,
+  Trash2, Clock, Play, XCircle,
 } from 'lucide-react';
+
+// Main indices the user can browse after analysis
+const MAIN_INDICES = ['NDVI', 'EVI', 'SAVI', 'GNDVI', 'NDRE'] as const;
+
+const INDEX_LABELS: Record<string, { name: string; description: string; color: string }> = {
+  NDVI: { name: 'NDVI', description: 'Salud general', color: 'emerald' },
+  EVI: { name: 'EVI', description: 'Vegetación densa', color: 'green' },
+  SAVI: { name: 'SAVI', description: 'Suelo expuesto', color: 'lime' },
+  GNDVI: { name: 'GNDVI', description: 'Clorofila', color: 'teal' },
+  NDRE: { name: 'NDRE', description: 'Estrés temprano', color: 'cyan' },
+};
 
 export const VegetationAnalytics: React.FC = () => {
   const { t } = useTranslation();
   const {
     selectedIndex, setSelectedIndex,
     selectedEntityId, setSelectedEntityId,
-    selectedSceneId, setSelectedSceneId,
+    setActiveJobId, indexResults, setIndexResults,
   } = useVegetationContext();
   const { isAuthenticated } = useAuth();
   const api = useVegetationApi();
 
-  // Scenes
-  const { scenes, loading: loadingScenes, error: scenesError, refresh: refreshScenes } = useVegetationScenes({
-    entityId: selectedEntityId || undefined,
-    limit: 100,
-    autoRefresh: false,
-  });
-
-  // Stats
-  const [stats, setStats] = useState<any>(null);
-  const [loadingStats, setLoadingStats] = useState(false);
-
-  // Jobs
+  // Local state
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [analyzeError, setAnalyzeError] = useState<string | null>(null);
+  const [downloadJobId, setDownloadJobId] = useState<string | null>(null);
+  const [analyzeProgress, setAnalyzeProgress] = useState<string>('');
   const [jobs, setJobs] = useState<VegetationJob[]>([]);
   const [loadingJobs, setLoadingJobs] = useState(false);
+  const [loadingResults, setLoadingResults] = useState(false);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Calculation
-  const { calculateIndex, isCalculating, error: calcError, success: calcSuccess, resetState } = useIndexCalculation();
+  // Date range for analysis
+  const [startDate, setStartDate] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 30);
+    return d.toISOString().split('T')[0];
+  });
+  const [endDate, setEndDate] = useState(() => new Date().toISOString().split('T')[0]);
 
   const effectiveIndex = selectedIndex || 'NDVI';
 
-  // Load stats when entity changes
-  useEffect(() => {
+  // Load existing results when entity changes
+  const loadResults = useCallback(async () => {
     if (!selectedEntityId || !isAuthenticated) return;
-    setLoadingStats(true);
-    api.getSceneStats(selectedEntityId, effectiveIndex, 12)
-      .then((data: any) => {
-        if (data?.summary) {
-          setStats(data.summary);
-        } else if (data?.data_points?.length > 0) {
-          const means = data.data_points.filter((d: any) => d.mean !== null).map((d: any) => d.mean);
-          if (means.length > 0) {
-            setStats({
-              avg: means.reduce((a: number, b: number) => a + b, 0) / means.length,
-              min: Math.min(...means),
-              max: Math.max(...means),
-              count: means.length,
-            });
-          }
-        } else if (data?.stats?.length > 0) {
-          const means = data.stats.filter((d: any) => d.mean_value !== null).map((d: any) => d.mean_value);
-          if (means.length > 0) {
-            setStats({
-              avg: means.reduce((a: number, b: number) => a + b, 0) / means.length,
-              min: Math.min(...means),
-              max: Math.max(...means),
-              count: means.length,
-            });
+    setLoadingResults(true);
+    try {
+      const data = await api.getEntityResults(selectedEntityId);
+      if (data.indices) {
+        setIndexResults(data.indices);
+        // Auto-select first available index
+        const availableIndices = Object.keys(data.indices);
+        if (availableIndices.length > 0) {
+          const idx = availableIndices.includes(effectiveIndex)
+            ? effectiveIndex
+            : availableIndices[0];
+          setSelectedIndex(idx as any);
+          const result = data.indices[idx];
+          if (result) {
+            setActiveJobId(result.job_id);
           }
         }
-      })
-      .catch(() => setStats(null))
-      .finally(() => setLoadingStats(false));
-  }, [selectedEntityId, effectiveIndex, isAuthenticated]);
+      }
+    } catch {
+      // No results yet — that's fine
+    } finally {
+      setLoadingResults(false);
+    }
+  }, [selectedEntityId, isAuthenticated]);
+
+  useEffect(() => {
+    loadResults();
+  }, [loadResults]);
 
   // Load jobs for this entity
   const loadJobs = useCallback(async () => {
@@ -104,13 +113,103 @@ export const VegetationAnalytics: React.FC = () => {
 
   useEffect(() => { loadJobs(); }, [loadJobs]);
 
-  // Auto-refresh if active jobs
+  // Poll for job completion during analysis
   useEffect(() => {
-    const hasActive = jobs.some(j => j.status === 'running' || j.status === 'pending');
-    if (!hasActive) return;
-    const interval = setInterval(loadJobs, 8000);
-    return () => clearInterval(interval);
-  }, [jobs, loadJobs]);
+    if (!downloadJobId) return;
+
+    const poll = async () => {
+      try {
+        const details = await api.getJobDetails(downloadJobId);
+        const status = details?.job?.status;
+
+        if (status === 'completed') {
+          setAnalyzeProgress(t('calculations.status.completed'));
+          // Download done — now wait for calculation jobs to finish
+          // Poll for results
+          if (selectedEntityId) {
+            const data = await api.getEntityResults(selectedEntityId);
+            const activeCount = data.active_jobs || 0;
+
+            if (activeCount === 0 && data.has_results) {
+              // All done!
+              setIndexResults(data.indices);
+              setIsAnalyzing(false);
+              setDownloadJobId(null);
+              setAnalyzeProgress('');
+              // Select NDVI by default
+              if (data.indices['NDVI']) {
+                setSelectedIndex('NDVI');
+                setActiveJobId(data.indices['NDVI'].job_id);
+              } else {
+                const first = Object.keys(data.indices)[0];
+                if (first) {
+                  setSelectedIndex(first as any);
+                  setActiveJobId(data.indices[first].job_id);
+                }
+              }
+              loadJobs();
+              return;
+            }
+
+            if (data.has_results) {
+              // Some results available, show partial
+              setIndexResults(data.indices);
+              setAnalyzeProgress(`${Object.keys(data.indices).length}/${MAIN_INDICES.length} ${t('analytics.indexSelector').toLowerCase()}...`);
+            } else {
+              setAnalyzeProgress(t('analyticsPage.processingHistoric'));
+            }
+          }
+        } else if (status === 'failed') {
+          setAnalyzeError(details?.job?.error_message || t('errors.calculationFailed'));
+          setIsAnalyzing(false);
+          setDownloadJobId(null);
+          loadJobs();
+          return;
+        } else {
+          setAnalyzeProgress(details?.job?.progress_message || t('common.loading'));
+        }
+      } catch {
+        // Transient error, keep polling
+      }
+    };
+
+    pollRef.current = setInterval(poll, 3000);
+    poll(); // First poll immediately
+
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, [downloadJobId, selectedEntityId]);
+
+  // Handle "Analyze" button click
+  const handleAnalyze = async () => {
+    if (!selectedEntityId) return;
+    setIsAnalyzing(true);
+    setAnalyzeError(null);
+    setAnalyzeProgress(t('analyticsPage.processingHistoricDesc'));
+
+    try {
+      const result = await api.analyzeParcel({
+        entity_id: selectedEntityId,
+        start_date: startDate,
+        end_date: endDate,
+      });
+      setDownloadJobId(result.job_id);
+    } catch (err: any) {
+      const msg = err?.response?.data?.detail || err?.message || t('errors.serverError');
+      setAnalyzeError(typeof msg === 'string' ? msg : JSON.stringify(msg));
+      setIsAnalyzing(false);
+    }
+  };
+
+  // When user switches index, update active job
+  const handleIndexSwitch = (idx: string) => {
+    setSelectedIndex(idx as any);
+    const result = indexResults[idx];
+    if (result) {
+      setActiveJobId(result.job_id);
+    }
+  };
 
   const handleDeleteJob = async (jobId: string) => {
     try {
@@ -119,20 +218,7 @@ export const VegetationAnalytics: React.FC = () => {
     } catch { /* ignore */ }
   };
 
-  const handleCalculate = async () => {
-    resetState();
-    const jobId = await calculateIndex({
-      sceneId: selectedSceneId || undefined,
-      entityId: selectedEntityId || undefined,
-      indexType: effectiveIndex as any,
-    });
-    if (jobId) {
-      loadJobs();
-      refreshScenes();
-    }
-  };
-
-  // --- Auth guard ---
+  // Auth guard
   if (!isAuthenticated) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -141,7 +227,7 @@ export const VegetationAnalytics: React.FC = () => {
     );
   }
 
-  // --- No parcel selected ---
+  // No parcel selected
   if (!selectedEntityId) {
     return (
       <div className="p-8 max-w-3xl mx-auto">
@@ -155,8 +241,9 @@ export const VegetationAnalytics: React.FC = () => {
     );
   }
 
-  // --- Main analytics view ---
   const parcelShortName = selectedEntityId.split(':').pop() || selectedEntityId;
+  const hasResults = Object.keys(indexResults).length > 0;
+  const currentResult = indexResults[effectiveIndex];
 
   const statusIcon = (status: string) => {
     switch (status) {
@@ -184,140 +271,188 @@ export const VegetationAnalytics: React.FC = () => {
         </button>
       </div>
 
-      {/* Index Selector + Calculate */}
+      {/* Analyze Section */}
       <Card padding="md">
         <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <label className="text-sm font-semibold text-slate-700">
-              {t('analytics.indexSelector')}
-            </label>
-            <span className="text-xs text-slate-400 bg-slate-100 px-2 py-0.5 rounded">
-              {effectiveIndex}
-            </span>
-          </div>
-          <IndexPillSelector
-            selectedIndex={effectiveIndex}
-            onIndexChange={(idx) => setSelectedIndex(idx as any)}
-            showCustom={false}
-            className="grid grid-cols-3 sm:grid-cols-5 gap-2"
-          />
-        </div>
-      </Card>
-
-      {/* Sentinel-2 Scenes */}
-      <Card padding="md">
-        <div className="mb-3">
-          <div className="flex items-center gap-2 mb-1">
-            <Calendar className="w-4 h-4 text-slate-600" />
+          <div className="flex items-center gap-2">
+            <Satellite className="w-5 h-5 text-emerald-600" />
             <h3 className="text-sm font-semibold text-slate-800">
-              {t('analytics.noScenes', 'Imágenes Sentinel-2')}
+              {t('configPanel.vegetationAnalysis')}
             </h3>
-            <button onClick={refreshScenes} className="ml-auto p-1 text-slate-400 hover:text-slate-600">
-              <RefreshCw className={`w-3.5 h-3.5 ${loadingScenes ? 'animate-spin' : ''}`} />
+          </div>
+
+          {/* Date range */}
+          <div className="flex items-center gap-3 flex-wrap">
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-slate-500">{t('analyticsPage.from')}</label>
+              <input
+                type="date"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+                className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 focus:ring-emerald-500 focus:border-emerald-500"
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-slate-500">{t('analyticsPage.to')}</label>
+              <input
+                type="date"
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
+                className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 focus:ring-emerald-500 focus:border-emerald-500"
+              />
+            </div>
+          </div>
+
+          {/* Analyze button */}
+          <div className="flex items-center gap-3">
+            <button
+              onClick={handleAnalyze}
+              disabled={isAnalyzing}
+              className="flex items-center gap-2 px-5 py-2.5 bg-emerald-600 text-white rounded-lg text-sm font-semibold hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm"
+            >
+              {isAnalyzing ? (
+                <><Loader2 className="w-4 h-4 animate-spin" />{t('analyticsPage.analyzing')}</>
+              ) : (
+                <><Calculator className="w-4 h-4" />{t('dashboard.analyze')}</>
+              )}
             </button>
-          </div>
-          <p className="text-xs text-slate-500">
-            {t('configPanel.timelineFilterLabel', 'Selecciona una fecha para calcular el índice')}
-          </p>
-        </div>
-
-        {loadingScenes ? (
-          <div className="h-20 flex items-center justify-center gap-2 text-slate-400">
-            <Loader2 className="w-5 h-5 animate-spin" />
-            <span className="text-sm">{t('common.loading')}</span>
-          </div>
-        ) : scenesError ? (
-          <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">
-            {t('errors.loadFailed')}: {scenesError}
-            <button onClick={refreshScenes} className="ml-2 underline text-xs">{t('common.retry')}</button>
-          </div>
-        ) : scenes.length === 0 ? (
-          <div className="bg-slate-50 rounded-lg p-4 text-center text-sm text-slate-500">
-            {t('analytics.noScenes')}
-          </div>
-        ) : (
-          <DateSelector
-            scenes={scenes}
-            selectedSceneId={selectedSceneId}
-            onSelect={(sceneId) => setSelectedSceneId(sceneId)}
-          />
-        )}
-
-        {/* Calculate button */}
-        <div className="mt-4 flex items-center gap-3">
-          <button
-            onClick={handleCalculate}
-            disabled={isCalculating || !selectedSceneId}
-            className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-          >
-            {isCalculating ? (
-              <><Loader2 className="w-4 h-4 animate-spin" />{t('common.loading')}</>
-            ) : (
-              <><Calculator className="w-4 h-4" />{t('calculations.calculateIndex')}</>
+            {isAnalyzing && analyzeProgress && (
+              <span className="text-xs text-slate-500 animate-pulse">{analyzeProgress}</span>
             )}
-          </button>
-          {!selectedSceneId && scenes.length > 0 && (
-            <span className="text-xs text-slate-400">{t('calculations.selectScene')}</span>
+          </div>
+
+          {/* Error */}
+          {analyzeError && (
+            <div className="flex items-center gap-2 text-xs text-red-600 bg-red-50 p-3 rounded-lg">
+              <AlertCircle className="w-4 h-4 flex-shrink-0" />
+              <span>{analyzeError}</span>
+            </div>
+          )}
+
+          {/* Partial results during analysis */}
+          {isAnalyzing && hasResults && (
+            <div className="flex items-center gap-2 text-xs text-emerald-600 bg-emerald-50 p-2 rounded-lg">
+              <CheckCircle className="w-4 h-4" />
+              <span>{Object.keys(indexResults).length} {t('analytics.indexSelector').toLowerCase()} {t('calculations.status.completed').toLowerCase()}</span>
+            </div>
           )}
         </div>
-
-        {calcError && (
-          <div className="mt-2 flex items-center gap-2 text-xs text-red-600 bg-red-50 p-2 rounded">
-            <AlertCircle className="w-4 h-4" />
-            <span>{calcError}</span>
-          </div>
-        )}
-        {calcSuccess && (
-          <div className="mt-2 flex items-center gap-2 text-xs text-emerald-600 bg-emerald-50 p-2 rounded">
-            <CheckCircle className="w-4 h-4" />
-            <span>{t('calculations.status.completed')}</span>
-          </div>
-        )}
       </Card>
 
-      {/* Quick Stats */}
-      {(stats || loadingStats) && (
-        <Card padding="md">
-          <h3 className="text-sm font-semibold text-slate-800 mb-3">
-            {t('analyticsPage.quickStats')} — {effectiveIndex}
-          </h3>
-          {loadingStats ? (
-            <div className="flex items-center justify-center h-20 text-slate-400">
-              <Loader2 className="w-5 h-5 animate-spin" />
+      {/* Index Results Browser (shown when results available) */}
+      {hasResults && (
+        <>
+          {/* Index pills */}
+          <Card padding="md">
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-slate-800">{t('analytics.indexSelector')}</h3>
+                <button
+                  onClick={loadResults}
+                  disabled={loadingResults}
+                  className="p-1 text-slate-400 hover:text-emerald-600"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${loadingResults ? 'animate-spin' : ''}`} />
+                </button>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {MAIN_INDICES.map((idx) => {
+                  const result = indexResults[idx];
+                  const isAvailable = !!result;
+                  const isActive = effectiveIndex === idx;
+                  const info = INDEX_LABELS[idx];
+
+                  return (
+                    <button
+                      key={idx}
+                      onClick={() => isAvailable && handleIndexSwitch(idx)}
+                      disabled={!isAvailable}
+                      className={`
+                        px-3 py-2 rounded-lg text-sm font-medium transition-all border
+                        ${isActive
+                          ? 'bg-emerald-600 text-white border-emerald-600 shadow-md'
+                          : isAvailable
+                            ? 'bg-white text-slate-700 border-slate-200 hover:border-emerald-300 hover:bg-emerald-50'
+                            : 'bg-slate-50 text-slate-300 border-slate-100 cursor-not-allowed'
+                        }
+                      `}
+                    >
+                      <span className="block font-bold">{info.name}</span>
+                      <span className={`block text-[10px] ${isActive ? 'text-emerald-100' : 'text-slate-400'}`}>
+                        {info.description}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
-          ) : stats ? (
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <div className="p-3 bg-green-50 rounded-lg border border-green-100">
-                <span className="block text-[10px] text-green-600 uppercase font-bold">{t('analytics.max')}</span>
-                <span className="text-xl font-bold text-green-700">{(stats.max ?? stats.avg ?? 0).toFixed(2)}</span>
+          </Card>
+
+          {/* Stats for selected index */}
+          {currentResult && currentResult.statistics && (
+            <Card padding="md">
+              <h3 className="text-sm font-semibold text-slate-800 mb-3">
+                {t('analyticsPage.quickStats')} — {effectiveIndex}
+              </h3>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div className="p-3 bg-green-50 rounded-lg border border-green-100">
+                  <span className="block text-[10px] text-green-600 uppercase font-bold">{t('analytics.max')}</span>
+                  <span className="text-xl font-bold text-green-700">
+                    {currentResult.statistics.max != null ? currentResult.statistics.max.toFixed(3) : '-'}
+                  </span>
+                </div>
+                <div className="p-3 bg-blue-50 rounded-lg border border-blue-100">
+                  <span className="block text-[10px] text-blue-600 uppercase font-bold">{t('analytics.mean')}</span>
+                  <span className="text-xl font-bold text-blue-700">
+                    {currentResult.statistics.mean != null ? currentResult.statistics.mean.toFixed(3) : '-'}
+                  </span>
+                </div>
+                <div className="p-3 bg-amber-50 rounded-lg border border-amber-100">
+                  <span className="block text-[10px] text-amber-600 uppercase font-bold">{t('analytics.min')}</span>
+                  <span className="text-xl font-bold text-amber-700">
+                    {currentResult.statistics.min != null ? currentResult.statistics.min.toFixed(3) : '-'}
+                  </span>
+                </div>
+                <div className="p-3 bg-purple-50 rounded-lg border border-purple-100">
+                  <span className="block text-[10px] text-purple-600 uppercase font-bold">{t('analytics.stdDev')}</span>
+                  <span className="text-xl font-bold text-purple-700">
+                    {currentResult.statistics.std_dev != null ? currentResult.statistics.std_dev.toFixed(3) : '-'}
+                  </span>
+                </div>
               </div>
-              <div className="p-3 bg-blue-50 rounded-lg border border-blue-100">
-                <span className="block text-[10px] text-blue-600 uppercase font-bold">{t('analytics.mean')}</span>
-                <span className="text-xl font-bold text-blue-700">{(stats.avg ?? stats.mean ?? 0).toFixed(2)}</span>
-              </div>
-              <div className="p-3 bg-amber-50 rounded-lg border border-amber-100">
-                <span className="block text-[10px] text-amber-600 uppercase font-bold">{t('analytics.min')}</span>
-                <span className="text-xl font-bold text-amber-700">{(stats.min ?? 0).toFixed(2)}</span>
-              </div>
-              <div className="p-3 bg-purple-50 rounded-lg border border-purple-100">
-                <span className="block text-[10px] text-purple-600 uppercase font-bold">{t('analytics.pixelCount', 'Escenas')}</span>
-                <span className="text-xl font-bold text-purple-700">{stats.count ?? 0}</span>
-              </div>
+              {currentResult.created_at && (
+                <p className="text-[10px] text-slate-400 mt-2">
+                  {t('analyticsPage.lastUpdate')} {new Date(currentResult.created_at).toLocaleString('es-ES')}
+                </p>
+              )}
+            </Card>
+          )}
+
+          {/* Timeseries Chart */}
+          <Card padding="md">
+            <h3 className="text-sm font-semibold text-slate-800 mb-2">
+              {t('analyticsPage.vegetationTrends', { index: effectiveIndex })}
+            </h3>
+            <p className="text-xs text-slate-500 mb-3">{t('analyticsPage.historicEvolution')}</p>
+            <div className="h-56 bg-slate-50 rounded-lg">
+              <TimeseriesChart entityId={selectedEntityId} indexType={effectiveIndex} />
             </div>
-          ) : null}
-        </Card>
+          </Card>
+        </>
       )}
 
-      {/* Timeseries Chart */}
-      <Card padding="md">
-        <h3 className="text-sm font-semibold text-slate-800 mb-2">
-          {t('analyticsPage.vegetationTrends', { index: effectiveIndex })}
-        </h3>
-        <p className="text-xs text-slate-500 mb-3">{t('analyticsPage.historicEvolution')}</p>
-        <div className="h-56 bg-slate-50 rounded-lg">
-          <TimeseriesChart entityId={selectedEntityId} indexType={effectiveIndex} />
-        </div>
-      </Card>
+      {/* Empty state — no results and not analyzing */}
+      {!hasResults && !isAnalyzing && !loadingResults && (
+        <Card padding="md">
+          <div className="text-center py-8">
+            <Leaf className="w-12 h-12 text-slate-200 mx-auto mb-3" />
+            <h3 className="text-lg font-medium text-slate-600 mb-1">{t('analytics.noScenes')}</h3>
+            <p className="text-sm text-slate-400 max-w-md mx-auto">
+              {t('analyticsPage.inactiveMonitoringDesc')}
+            </p>
+          </div>
+        </Card>
+      )}
 
       {/* Jobs for this parcel */}
       <Card padding="md">
@@ -345,7 +480,9 @@ export const VegetationAnalytics: React.FC = () => {
               <div key={job.id} className="flex items-center justify-between py-2 px-3 bg-slate-50 rounded-lg text-sm hover:bg-slate-100">
                 <div className="flex items-center gap-2">
                   {statusIcon(job.status)}
-                  <span className="text-slate-700 capitalize">{job.job_type === 'calculate_index' ? effectiveIndex : job.job_type}</span>
+                  <span className="text-slate-700 capitalize">
+                    {job.job_type === 'download' ? 'Download' : job.job_type === 'calculate_index' ? (job.result?.index_type || effectiveIndex) : job.job_type}
+                  </span>
                 </div>
                 <div className="flex items-center gap-3">
                   <span className="text-xs text-slate-400">

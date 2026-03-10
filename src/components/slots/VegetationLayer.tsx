@@ -1,83 +1,21 @@
 /**
- * Vegetation Layer - Cesium + TiTiler (Phase 4)
- * Raster: GET viewer-url → presigned TiTiler template → UrlTemplateImageryProvider.
- * Vector: VRA zones via GeoJsonDataSource. No Deck.gl in this slot.
+ * Vegetation Layer - Cesium raster overlay from job results.
+ *
+ * Uses activeJobId from context to render tiles via the backend tile endpoint.
+ * The tile endpoint looks up the job's COG path in the database.
  */
 
-import React, { useEffect, useRef, useCallback } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { useVegetationContext } from '../../services/vegetationContext';
 
 interface VegetationLayerProps {
   viewer?: any; // Injected by CesiumMap
 }
 
-// Get base API URL from window.__ENV__ (injected by nginx at runtime)
-const getApiBaseUrl = (): string => {
-  if (typeof window !== 'undefined' && (window as any).__ENV__) {
-    const env = (window as any).__ENV__;
-    return env.API_URL || env.VITE_API_URL || '';
-  }
-  return '';
-};
-
 export const VegetationLayer: React.FC<VegetationLayerProps> = ({ viewer }) => {
-  const { selectedIndex, selectedSceneId, selectedEntityId } = useVegetationContext();
+  const { selectedIndex, activeJobId, selectedEntityId } = useVegetationContext();
   const layerRef = useRef<any>(null);
   const dataSourceRef = useRef<any>(null);
-
-  const addRasterLayer = useCallback(
-    (viewerRef: any, sceneId: string, indexType: string) => {
-      const Cesium = (window as any).Cesium;
-      if (!Cesium || !viewerRef || viewerRef.isDestroyed()) return null;
-
-      let currentLayer: any = null;
-      let currentProvider: any = null;
-
-      const removeCurrentRaster = () => {
-        if (viewerRef && !viewerRef.isDestroyed() && currentLayer) {
-          viewerRef.imageryLayers.remove(currentLayer, true);
-          currentLayer = null;
-        }
-        if (currentProvider && !currentProvider.isDestroyed()) {
-          try {
-            currentProvider.destroy();
-          } catch (_) { }
-          currentProvider = null;
-        }
-      };
-
-      const applyNewTemplate = (sId: string, iType: string) => {
-        if (!viewerRef || viewerRef.isDestroyed()) return;
-        removeCurrentRaster();
-        
-        const apiBaseUrl = getApiBaseUrl();
-        // La URL ahora apunta a nuestro propio backend (rio-tiler integrado)
-        // Usamos iType si el backend lo requiere, aunque actualmente sId es suficiente
-        const tileUrlTemplate = `${apiBaseUrl}/api/vegetation/tiles/${sId}/{z}/{x}/{y}.png?index=${iType}`;
-        
-        const provider = new Cesium.UrlTemplateImageryProvider({
-          url: tileUrlTemplate,
-          maximumLevel: 19,
-          minimumLevel: 10,
-          hasAlphaChannel: true,
-          credit: 'Vegetation Prime (Internal Rendering)',
-        });
-        
-        currentProvider = provider;
-        const layer = viewerRef.imageryLayers.addImageryProvider(provider);
-        layer.alpha = 0.8;
-        currentLayer = layer;
-        layerRef.current = layer;
-      };
-
-      if (sceneId && indexType) {
-        applyNewTemplate(sceneId, indexType);
-      }
-
-      return removeCurrentRaster;
-    },
-    []
-  );
 
   useEffect(() => {
     if (!viewer) return;
@@ -85,20 +23,23 @@ export const VegetationLayer: React.FC<VegetationLayerProps> = ({ viewer }) => {
     const Cesium = (window as any).Cesium;
     if (!Cesium) return;
 
+    // Clean up previous layers
     if (layerRef.current) {
-      viewer.imageryLayers.remove(layerRef.current, true);
+      try {
+        viewer.imageryLayers.remove(layerRef.current, true);
+      } catch (_) { /* viewer may be destroyed */ }
       layerRef.current = null;
     }
     if (dataSourceRef.current) {
-      viewer.dataSources.remove(dataSourceRef.current);
+      try {
+        viewer.dataSources.remove(dataSourceRef.current);
+      } catch (_) { /* viewer may be destroyed */ }
       dataSourceRef.current = null;
     }
 
-    if (!selectedSceneId && !selectedIndex) return;
-
+    // VRA Zones mode (GeoJSON overlay)
     if (selectedIndex === 'VRA_ZONES' && selectedEntityId) {
-      const apiBaseUrl = getApiBaseUrl();
-      const geoJsonUrl = `${apiBaseUrl}/api/vegetation/jobs/zoning/${selectedEntityId}/geojson`;
+      const geoJsonUrl = `/api/vegetation/jobs/zoning/${encodeURIComponent(selectedEntityId)}/geojson`;
       Cesium.GeoJsonDataSource.load(geoJsonUrl, {
         stroke: Cesium.Color.BLACK,
         fill: Cesium.Color.BLUE.withAlpha(0.5),
@@ -107,21 +48,19 @@ export const VegetationLayer: React.FC<VegetationLayerProps> = ({ viewer }) => {
         .then((dataSource: any) => {
           if (viewer.isDestroyed()) return;
           const entities = dataSource.entities.values;
+          const colors = [
+            Cesium.Color.RED.withAlpha(0.6),
+            Cesium.Color.ORANGE.withAlpha(0.6),
+            Cesium.Color.YELLOW.withAlpha(0.6),
+            Cesium.Color.GREEN.withAlpha(0.6),
+            Cesium.Color.BLUE.withAlpha(0.6),
+          ];
           for (let i = 0; i < entities.length; i++) {
             const entity = entities[i];
-            const clusterId = entity.properties.cluster_id?.getValue();
-            const colors = [
-              Cesium.Color.RED.withAlpha(0.6),
-              Cesium.Color.ORANGE.withAlpha(0.6),
-              Cesium.Color.YELLOW.withAlpha(0.6),
-              Cesium.Color.GREEN.withAlpha(0.6),
-              Cesium.Color.BLUE.withAlpha(0.6),
-            ];
-            const color = colors[clusterId % colors.length] || Cesium.Color.GRAY.withAlpha(0.6);
-            entity.polygon.material = color;
+            const clusterId = entity.properties?.cluster_id?.getValue() || 0;
+            entity.polygon.material = colors[clusterId % colors.length] || Cesium.Color.GRAY.withAlpha(0.6);
             entity.polygon.outline = true;
             entity.polygon.outlineColor = Cesium.Color.BLACK;
-            entity.polygon.extrudedHeight = 10;
           }
           viewer.dataSources.add(dataSource);
           dataSourceRef.current = dataSource;
@@ -133,18 +72,37 @@ export const VegetationLayer: React.FC<VegetationLayerProps> = ({ viewer }) => {
       return;
     }
 
-    if (selectedIndex && selectedSceneId) {
-      addRasterLayer(viewer, selectedSceneId, selectedIndex);
+    // Raster tile mode — requires activeJobId
+    if (!activeJobId || !selectedIndex) return;
+
+    // Build tile URL using the job ID — backend resolves the COG path
+    const tileUrlTemplate = `/api/vegetation/tiles/${activeJobId}/{z}/{x}/{y}.png?index=${selectedIndex}`;
+
+    try {
+      const provider = new Cesium.UrlTemplateImageryProvider({
+        url: tileUrlTemplate,
+        maximumLevel: 19,
+        minimumLevel: 10,
+        hasAlphaChannel: true,
+        credit: 'Vegetation Prime',
+      });
+
+      const layer = viewer.imageryLayers.addImageryProvider(provider);
+      layer.alpha = 0.8;
+      layerRef.current = layer;
+    } catch (err) {
+      console.error('[VegetationLayer] Error adding imagery layer:', err);
     }
 
     return () => {
-      if (viewer && layerRef.current) {
-        viewer.imageryLayers.remove(layerRef.current, true);
+      if (viewer && !viewer.isDestroyed() && layerRef.current) {
+        try {
+          viewer.imageryLayers.remove(layerRef.current, true);
+        } catch (_) { /* ok */ }
         layerRef.current = null;
       }
     };
-  }, [viewer, selectedIndex, selectedSceneId, addRasterLayer]);
-
+  }, [viewer, selectedIndex, activeJobId, selectedEntityId]);
 
   return null;
 };
