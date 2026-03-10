@@ -330,6 +330,56 @@ export class VegetationApiClient {
   }
 
   // ==========================================================================
+  // One-Click Analysis (new simplified flow)
+  // ==========================================================================
+
+  /**
+   * Analyze a parcel: downloads best Sentinel-2 scene + calculates all indices.
+   * This is the primary entry point for the simplified UI.
+   */
+  async analyzeParcel(params: {
+    entity_id: string;
+    start_date?: string;
+    end_date?: string;
+    indices?: string[];
+  }): Promise<{
+    job_id: string;
+    message: string;
+    indices: string[];
+    date_range: { start: string; end: string };
+  }> {
+    const response = await this.client.post('/analyze', params);
+    return response as any;
+  }
+
+  /**
+   * Get latest completed results per index type for an entity.
+   * Returns a map of index_type -> { job_id, statistics, raster_path }.
+   */
+  async getEntityResults(entityId: string): Promise<{
+    entity_id: string;
+    indices: Record<string, {
+      job_id: string;
+      index_type: string;
+      statistics: {
+        mean: number | null;
+        min: number | null;
+        max: number | null;
+        std_dev: number | null;
+        pixel_count: number | null;
+      };
+      raster_path: string | null;
+      is_composite: boolean;
+      created_at: string | null;
+    }>;
+    active_jobs: number;
+    has_results: boolean;
+  }> {
+    const response = await this.client.get(`/results/${encodeURIComponent(entityId)}`);
+    return response as any;
+  }
+
+  // ==========================================================================
   // Integration Endpoints (N8N, Intelligence Module, Platform)
   // ==========================================================================
 

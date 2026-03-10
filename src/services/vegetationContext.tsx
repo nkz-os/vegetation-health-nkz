@@ -6,6 +6,21 @@ interface DateRange {
   endDate: Date | null;
 }
 
+interface IndexResult {
+  job_id: string;
+  index_type: string;
+  statistics: {
+    mean: number | null;
+    min: number | null;
+    max: number | null;
+    std_dev: number | null;
+    pixel_count: number | null;
+  };
+  raster_path: string | null;
+  is_composite: boolean;
+  created_at: string | null;
+}
+
 interface VegetationContextType {
   selectedEntityId: string | null;
   selectedSceneId: string | null;
@@ -13,11 +28,15 @@ interface VegetationContextType {
   selectedDate: Date | null;
   dateRange: DateRange;
   selectedGeometry?: any | null;
+  activeJobId: string | null;
+  indexResults: Record<string, IndexResult>;
   setSelectedEntityId: (id: string | null) => void;
   setSelectedSceneId: (id: string | null) => void;
   setSelectedIndex: (index: VegetationIndexType | null) => void;
   setSelectedDate: (date: Date | null) => void;
   setDateRange: (range: DateRange) => void;
+  setActiveJobId: (id: string | null) => void;
+  setIndexResults: (results: Record<string, IndexResult>) => void;
   resetContext: () => void;
 }
 
@@ -36,6 +55,8 @@ export const VegetationProvider: React.FC<{ children: ReactNode }> = ({ children
   });
 
   const [selectedGeometry, setSelectedGeometry] = useState<any | null>(null);
+  const [activeJobId, setActiveJobId] = useState<string | null>(null);
+  const [indexResults, setIndexResults] = useState<Record<string, IndexResult>>({});
 
   // --- CRITICAL FIX: Listen for Host Events (Selection & Time) ---
   useEffect(() => {
@@ -79,6 +100,8 @@ export const VegetationProvider: React.FC<{ children: ReactNode }> = ({ children
     setSelectedIndex(null);
     setSelectedDate(null);
     setSelectedGeometry(null);
+    setActiveJobId(null);
+    setIndexResults({});
     setDateRange({
       startDate: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000),
       endDate: new Date(),
@@ -94,11 +117,15 @@ export const VegetationProvider: React.FC<{ children: ReactNode }> = ({ children
         selectedDate,
         dateRange,
         selectedGeometry,
+        activeJobId,
+        indexResults,
         setSelectedEntityId,
         setSelectedSceneId,
         setSelectedIndex,
         setSelectedDate,
         setDateRange,
+        setActiveJobId,
+        setIndexResults,
         resetContext,
       }}
     >
