@@ -43,7 +43,7 @@ spec:
               "app.celery_app",
               "worker",
               "--loglevel=info",
-              "--concurrency=2",
+              "--concurrency=1",
             ]
           env:
             - name: DATABASE_URL
@@ -115,5 +115,5 @@ spec:
               memory: "1Gi"
               cpu: "200m"
             limits:
-              memory: "2Gi"
+              memory: "3Gi"
               cpu: "1000m"

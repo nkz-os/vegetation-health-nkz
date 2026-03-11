@@ -347,8 +347,9 @@ def calculate_vegetation_index(
                 logger.error(f"No bands could be downloaded for scene {scene.id}")
                 continue
 
-            # Create processor for this scene with LOCAL paths
-            processor = VegetationIndexProcessor(local_band_paths)
+            # Create processor for this scene with LOCAL paths + bbox for cropping
+            crop_bbox = job.parameters.get('bbox') if job.parameters else None
+            processor = VegetationIndexProcessor(local_band_paths, bbox=crop_bbox)
             
             # Load bands
             processor.load_bands(required_bands)

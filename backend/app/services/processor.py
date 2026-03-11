@@ -54,39 +54,71 @@ class VegetationIndexProcessor:
     VALID_SCL_CLASSES = {4, 5, 6, 7}  # Vegetation, Bare soils, Water, Unclassified
     EXCLUDE_SCL_CLASSES = {0, 1, 3, 8, 9, 10, 11}  # No data, Saturated, Cloud shadows, Clouds, Cirrus, Snow
     
-    def __init__(self, band_paths: Dict[str, str]):
+    def __init__(self, band_paths: Dict[str, str], bbox: Optional[list] = None):
         """Initialize processor with band file paths.
-        
+
         Args:
             band_paths: Dictionary mapping band names to file paths
                        e.g., {'B04': '/path/to/B04.tif', 'B08': '/path/to/B08.tif'}
+            bbox: Optional [minx, miny, maxx, maxy] in EPSG:4326 to crop bands
         """
         self.band_paths = band_paths
         self.band_data: Dict[str, np.ndarray] = {}
         self.band_meta: Optional[Dict] = None
-    
+        self.bbox = bbox
+
     def load_bands(self, bands: list[str]) -> None:
-        """Load specified bands into memory.
-        
+        """Load specified bands into memory, cropping to bbox if provided.
+
         Args:
             bands: List of band names to load (e.g., ['B04', 'B08'])
         """
+        from rasterio.windows import from_bounds
+        from rasterio.transform import from_bounds as transform_from_bounds
+
         for band in bands:
             if band not in self.band_paths:
                 raise ValueError(f"Band {band} not found in band_paths")
-            
+
             band_path = self.band_paths[band]
             if not Path(band_path).exists():
                 raise FileNotFoundError(f"Band file not found: {band_path}")
-            
+
             with rasterio.open(band_path) as src:
-                data = src.read(1).astype(np.float32)
-                # Store metadata from first band
-                if self.band_meta is None:
-                    self.band_meta = src.meta.copy()
-                
+                if self.bbox:
+                    # Crop to bbox with a small buffer (500m ~ 0.005 degrees)
+                    buf = 0.005
+                    minx, miny, maxx, maxy = self.bbox
+                    try:
+                        window = from_bounds(
+                            minx - buf, miny - buf, maxx + buf, maxy + buf,
+                            src.transform
+                        )
+                        # Clamp window to raster bounds
+                        window = window.intersection(
+                            rasterio.windows.Window(0, 0, src.width, src.height)
+                        )
+                        data = src.read(1, window=window).astype(np.float32)
+                        if self.band_meta is None:
+                            self.band_meta = src.meta.copy()
+                            self.band_meta.update({
+                                'width': data.shape[1],
+                                'height': data.shape[0],
+                                'transform': src.window_transform(window),
+                            })
+                        logger.info(f"Band {band}: cropped from {src.width}x{src.height} to {data.shape[1]}x{data.shape[0]}")
+                    except Exception as e:
+                        logger.warning(f"Failed to crop band {band} to bbox: {e}, loading full raster")
+                        data = src.read(1).astype(np.float32)
+                        if self.band_meta is None:
+                            self.band_meta = src.meta.copy()
+                else:
+                    data = src.read(1).astype(np.float32)
+                    if self.band_meta is None:
+                        self.band_meta = src.meta.copy()
+
                 self.band_data[band] = data
-        
+
         logger.info(f"Loaded {len(bands)} bands: {bands}")
     
     def _resample_to_10m(self, band_20m: np.ndarray, reference_10m: np.ndarray) -> np.ndarray:
