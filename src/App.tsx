@@ -15,6 +15,35 @@ import { useVegetationApi } from './services/api';
 import { Calendar, Layers, Leaf, ChevronRight, BarChart3, FileDown, Bell, MapPin } from 'lucide-react';
 import { SkeletonCard } from './components/widgets/SkeletonCard';
 
+/**
+ * Compute area in hectares from a GeoJSON Polygon/MultiPolygon geometry.
+ * Uses the Shoelace formula on WGS84 coords with a cos(lat) correction.
+ */
+function computeAreaHa(geometry: any): number | null {
+  if (!geometry?.coordinates) return null;
+  try {
+    const rings = geometry.type === 'MultiPolygon'
+      ? geometry.coordinates.flat()
+      : geometry.coordinates;
+    const outer = rings[0]; // outer ring [[lng, lat], ...]
+    if (!outer || outer.length < 4) return null;
+
+    // Approximate area using Shoelace + cos(lat) scaling
+    const toRad = (d: number) => (d * Math.PI) / 180;
+    const R = 6371000; // Earth radius in meters
+    let area = 0;
+    for (let i = 0; i < outer.length - 1; i++) {
+      const [x1, y1] = outer[i];
+      const [x2, y2] = outer[i + 1];
+      area += toRad(x2 - x1) * (2 + Math.sin(toRad(y1)) + Math.sin(toRad(y2)));
+    }
+    area = Math.abs((area * R * R) / 2);
+    return area / 10000; // m² → ha
+  } catch {
+    return null;
+  }
+}
+
 // Lazy load new tabs for code splitting
 const PrescriptionTab = lazy(() => import('./components/pages/PrescriptionTab'));
 const AlertsTab = lazy(() => import('./components/pages/AlertsTab'));
@@ -185,15 +214,22 @@ const DashboardContent: React.FC = () => {
                       const parcelName = parcel.name?.value || parcel.name || parcel.id;
                       const cropSpecies = parcel.cropSpecies?.value || parcel.category?.value || t('dashboard.unassigned');
 
-                      // Handle area from Core (area_hectares) or NGSI-LD (area)
+                      // Handle area: NGSI-LD attribute → compute from geometry
                       let areaHa = '-';
                       const rawAreaHectares = parcel.area_hectares?.value ?? parcel.area_hectares ?? null;
                       const rawAreaSquareMeters = parcel.area?.value ?? parcel.area ?? null;
 
-                      if (rawAreaHectares !== null) {
+                      if (rawAreaHectares !== null && !isNaN(Number(rawAreaHectares))) {
                         areaHa = Number(rawAreaHectares).toFixed(2);
-                      } else if (rawAreaSquareMeters !== null) {
+                      } else if (rawAreaSquareMeters !== null && !isNaN(Number(rawAreaSquareMeters))) {
                         areaHa = (Number(rawAreaSquareMeters) / 10000).toFixed(2);
+                      } else {
+                        // Fallback: compute from location geometry
+                        const geom = parcel.location?.value || parcel.location;
+                        const computed = geom ? computeAreaHa(geom) : null;
+                        if (computed !== null && computed > 0) {
+                          areaHa = computed.toFixed(2);
+                        }
                       }
 
                       // NDVI health badge: green ≥ 0.6, yellow 0.3-0.6, red < 0.3
