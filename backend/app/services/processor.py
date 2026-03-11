@@ -86,15 +86,26 @@ class VegetationIndexProcessor:
 
             with rasterio.open(band_path) as src:
                 if self.bbox:
-                    # Crop to bbox with a small buffer (500m ~ 0.005 degrees)
-                    buf = 0.005
+                    # Reproject bbox from EPSG:4326 to raster CRS, then crop
+                    from pyproj import Transformer
+                    buf = 0.005  # ~500m buffer in degrees
                     minx, miny, maxx, maxy = self.bbox
                     try:
+                        raster_crs = src.crs
+                        if raster_crs and str(raster_crs) != 'EPSG:4326':
+                            transformer = Transformer.from_crs(
+                                'EPSG:4326', raster_crs, always_xy=True
+                            )
+                            proj_minx, proj_miny = transformer.transform(minx - buf, miny - buf)
+                            proj_maxx, proj_maxy = transformer.transform(maxx + buf, maxy + buf)
+                        else:
+                            proj_minx, proj_miny = minx - buf, miny - buf
+                            proj_maxx, proj_maxy = maxx + buf, maxy + buf
+
                         window = from_bounds(
-                            minx - buf, miny - buf, maxx + buf, maxy + buf,
+                            proj_minx, proj_miny, proj_maxx, proj_maxy,
                             src.transform
                         )
-                        # Clamp window to raster bounds
                         window = window.intersection(
                             rasterio.windows.Window(0, 0, src.width, src.height)
                         )
@@ -727,9 +738,10 @@ class VegetationIndexProcessor:
         if self.band_meta is None:
             raise ValueError("No band metadata available. Load bands first.")
         
-        # Update metadata for single band output
+        # Update metadata for single band output — force GeoTIFF driver
         output_meta = self.band_meta.copy()
         output_meta.update({
+            'driver': 'GTiff',
             'count': 1,
             'dtype': 'float32',
             'compress': 'lzw',
