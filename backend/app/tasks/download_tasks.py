@@ -182,7 +182,7 @@ def download_sentinel2_scene(self, job_id: str, tenant_id: str, parameters: Dict
             self.update_state(state='PROGRESS', meta={'progress': 30, 'message': f'Found scene {scene_id}'})
         
         # Determine which bands to download (SCL for cloud masking; rest for indices)
-        required_bands = ['B02', 'B03', 'B04', 'B08', 'B11', 'B12', 'SCL']
+        required_bands = ['B02', 'B03', 'B04', 'B08', 'B8A', 'B11', 'B12', 'SCL']
         
         # =============================================================================
         # HYBRID CACHE LOGIC: Check global cache first, then download if needed
@@ -364,21 +364,36 @@ def download_sentinel2_scene(self, job_id: str, tenant_id: str, parameters: Dict
         footprint = from_shape(geom_obj, srid=4326)
         centroid = from_shape(geom_obj.centroid, srid=4326)
 
-        scene = VegetationScene(
-            tenant_id=tenant_id,
-            scene_id=scene_id,
-            sensing_date=date.fromisoformat(best_scene['sensing_date']),
-            acquisition_datetime=acquisition_dt,
-            footprint=footprint,
-            centroid=centroid,
-            cloud_coverage=str(best_scene['cloud_cover']),
-            storage_path=f"{storage_path}scenes/{scene_id}/",
-            storage_bucket=tenant_bucket_name,
-            bands=storage_band_paths,
-            job_id=job.id
-        )
-        
-        db.add(scene)
+        # Get or create scene (avoid UniqueViolation on re-runs)
+        scene = db.query(VegetationScene).filter(
+            VegetationScene.tenant_id == tenant_id,
+            VegetationScene.scene_id == scene_id,
+        ).first()
+
+        if scene:
+            # Update existing scene with latest band paths and metadata
+            scene.bands = storage_band_paths
+            scene.storage_bucket = tenant_bucket_name
+            scene.is_valid = True
+            scene.job_id = job.id
+            logger.info(f"Reusing existing scene record {scene.id} for {scene_id}")
+        else:
+            scene = VegetationScene(
+                tenant_id=tenant_id,
+                scene_id=scene_id,
+                sensing_date=date.fromisoformat(best_scene['sensing_date']),
+                acquisition_datetime=acquisition_dt,
+                footprint=footprint,
+                centroid=centroid,
+                cloud_coverage=str(best_scene['cloud_cover']),
+                storage_path=f"{storage_path}scenes/{scene_id}/",
+                storage_bucket=tenant_bucket_name,
+                bands=storage_band_paths,
+                job_id=job.id
+            )
+            db.add(scene)
+            logger.info(f"Created new scene record for {scene_id}")
+
         db.commit()
         
         # Mark job as completed
