@@ -56,7 +56,7 @@ async def get_tile(
     if not raster_path:
         raise HTTPException(status_code=404, detail="Job has no raster output")
 
-    bucket = generate_tenant_bucket_name(tenant_id)
+    bucket = os.getenv("VEGETATION_COG_BUCKET") or generate_tenant_bucket_name(tenant_id)
     s3_url = f"s3://{bucket}/{raster_path}"
 
     # GDAL Configuration for S3 access
