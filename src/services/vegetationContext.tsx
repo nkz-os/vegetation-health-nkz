@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, ReactNode, useCallback, useEffect } from 'react';
+import React, { createContext, useContext, useState, ReactNode, useCallback, useEffect, useRef } from 'react';
 import type { VegetationIndexType } from '../types';
 
 interface DateRange {
@@ -42,15 +42,25 @@ interface VegetationContextType {
 
 const VegetationContext = createContext<VegetationContextType | undefined>(undefined);
 
+/**
+ * Hook to read selectedEntityId from the host ViewerContext.
+ * The host exposes its React Context via window.__nekazariViewerContextInstance.
+ * This is the ONLY reliable way to get entity selection in IIFE modules.
+ */
+function useHostViewerSync() {
+  const ViewerCtx = (window as any).__nekazariViewerContextInstance;
+  const hostCtx = ViewerCtx ? React.useContext(ViewerCtx) : null;
+  return hostCtx;
+}
+
 export const VegetationProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
   const [selectedSceneId, setSelectedSceneId] = useState<string | null>(null);
   const [selectedIndex, setSelectedIndex] = useState<VegetationIndexType | null>(null);
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
 
-  // Date range for temporal analysis (default: last 3 months)
   const [dateRange, setDateRange] = useState<DateRange>({
-    startDate: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000), // 90 days ago
+    startDate: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000),
     endDate: new Date(),
   });
 
@@ -58,9 +68,38 @@ export const VegetationProvider: React.FC<{ children: ReactNode }> = ({ children
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [indexResults, setIndexResults] = useState<Record<string, IndexResult>>({});
 
-  // --- CRITICAL FIX: Listen for Host Events (Selection & Time) ---
+  // Sync with host ViewerContext (the real source of truth for entity selection)
+  const hostCtx = useHostViewerSync();
+  const prevHostEntityRef = useRef<string | null>(null);
+
   useEffect(() => {
-    // 1. Entity Selection
+    if (!hostCtx) return;
+
+    const hostEntityId = hostCtx.selectedEntityId || null;
+
+    // Only update when the host entity actually changes
+    if (hostEntityId !== prevHostEntityRef.current) {
+      prevHostEntityRef.current = hostEntityId;
+
+      if (hostEntityId) {
+        setSelectedEntityId(hostEntityId);
+        setSelectedSceneId(null);
+        if (!selectedIndex) setSelectedIndex('NDVI');
+      } else {
+        setSelectedEntityId(null);
+        setSelectedGeometry(null);
+      }
+    }
+  }, [hostCtx?.selectedEntityId]);
+
+  // Also sync date from host if available
+  useEffect(() => {
+    if (!hostCtx?.currentDate) return;
+    setSelectedDate(new Date(hostCtx.currentDate));
+  }, [hostCtx?.currentDate]);
+
+  // Fallback: listen for custom events (used when rendered outside unified viewer, e.g. module page)
+  useEffect(() => {
     const handleEntitySelected = (event: CustomEvent<{ entityId: string | null, type?: string, geometry?: any }>) => {
       if (event.detail?.entityId) {
         setSelectedEntityId(event.detail.entityId);
@@ -70,27 +109,9 @@ export const VegetationProvider: React.FC<{ children: ReactNode }> = ({ children
       }
     };
 
-    // 2. Global Time Synchronization
-    const handleTimeChanged = (event: CustomEvent<{ date: string | Date }>) => {
-      const newDate = event.detail?.date ? new Date(event.detail.date) : null;
-      if (newDate) {
-        setSelectedDate(newDate);
-      }
-    };
-
     window.addEventListener('nekazari:entity-selected', handleEntitySelected as EventListener);
-    window.addEventListener('nekazari:time-changed', handleTimeChanged as EventListener);
-
-    // Initial sync from global host context
-    const globalContext = (window as any).__nekazariContext;
-    if (globalContext) {
-      if (globalContext.selectedEntityId) setSelectedEntityId(globalContext.selectedEntityId);
-      if (globalContext.currentDate) setSelectedDate(new Date(globalContext.currentDate));
-    }
-
     return () => {
       window.removeEventListener('nekazari:entity-selected', handleEntitySelected as EventListener);
-      window.removeEventListener('nekazari:time-changed', handleTimeChanged as EventListener);
     };
   }, []);
 
