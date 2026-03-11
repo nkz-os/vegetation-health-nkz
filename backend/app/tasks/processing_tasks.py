@@ -269,15 +269,18 @@ def calculate_vegetation_index(
                             0,
                             tzinfo=timezone.utc,
                         )
-                    write_index_timeseries_point(
-                        tenant_id=tenant_id,
-                        entity_id=job.entity_id,
-                        index_type=index_type,
-                        observed_at=observed_at,
-                        value=float(existing_cache.mean_value),
-                        device_id="vegetation_prime",
-                        unit="index",
-                    )
+                    try:
+                        write_index_timeseries_point(
+                            tenant_id=tenant_id,
+                            entity_id=job.entity_id,
+                            index_type=index_type,
+                            observed_at=observed_at,
+                            value=float(existing_cache.mean_value),
+                            device_id="vegetation_prime",
+                            unit="index",
+                        )
+                    except Exception as ts_exc:
+                        logger.warning("Non-critical: TimescaleDB write failed: %s", ts_exc)
 
                 job_result = {
                     "index_type": index_type,
@@ -469,8 +472,8 @@ def calculate_vegetation_index(
         job.mark_completed(job_result)
         db.commit()
 
-        # Persist aggregated value into TimescaleDB (critical: failure propagates
-        # so the task fails and retries; idempotency avoids re-uploading COG).
+        # Persist aggregated value into TimescaleDB (non-critical: telemetry table
+        # may not exist yet; the PostgreSQL cache is the source of truth).
         if primary_scene.sensing_date and job.entity_id:
             if primary_scene.acquisition_datetime is not None:
                 observed_at = primary_scene.acquisition_datetime
@@ -484,15 +487,18 @@ def calculate_vegetation_index(
                     0,
                     tzinfo=timezone.utc,
                 )
-            write_index_timeseries_point(
-                tenant_id=tenant_id,
-                entity_id=job.entity_id,
-                index_type=index_type,
-                observed_at=observed_at,
-                value=float(statistics['mean']),
-                device_id="vegetation_prime",
-                unit="index",
-            )
+            try:
+                write_index_timeseries_point(
+                    tenant_id=tenant_id,
+                    entity_id=job.entity_id,
+                    index_type=index_type,
+                    observed_at=observed_at,
+                    value=float(statistics['mean']),
+                    device_id="vegetation_prime",
+                    unit="index",
+                )
+            except Exception as ts_exc:
+                logger.warning("Non-critical: TimescaleDB write failed: %s", ts_exc)
 
         # Update job status in usage stats
         from app.services.usage_tracker import UsageTracker
