@@ -1,4 +1,5 @@
-import React, { createContext, useContext, useState, ReactNode, useCallback, useEffect, useRef } from 'react';
+import React, { createContext, useContext, useState, ReactNode, useCallback, useEffect, useRef, useSyncExternalStore } from 'react';
+import { useViewerOptional } from '@nekazari/sdk';
 import type { VegetationIndexType } from '../types';
 
 interface DateRange {
@@ -21,6 +22,66 @@ interface IndexResult {
   created_at: string | null;
 }
 
+// =============================================================================
+// Global Shared Store — singleton across all VegetationProvider instances
+// =============================================================================
+// Each slot (map-layer, context-panel, bottom-panel, layer-toggle) gets its own
+// VegetationProvider instance. This store synchronizes shared state between them.
+
+interface SharedState {
+  selectedIndex: VegetationIndexType | null;
+  activeJobId: string | null;
+  indexResults: Record<string, IndexResult>;
+  selectedSceneId: string | null;
+  selectedDate: Date | null;
+}
+
+interface VegetationStore {
+  state: SharedState;
+  _listeners: Set<() => void>;
+  _version: number;
+}
+
+const STORE_KEY = '__vegetationPrimeStore';
+
+function getStore(): VegetationStore {
+  if (!(window as any)[STORE_KEY]) {
+    (window as any)[STORE_KEY] = {
+      state: {
+        selectedIndex: null,
+        activeJobId: null,
+        indexResults: {},
+        selectedSceneId: null,
+        selectedDate: null,
+      },
+      _listeners: new Set(),
+      _version: 0,
+    } as VegetationStore;
+  }
+  return (window as any)[STORE_KEY];
+}
+
+function updateStore(partial: Partial<SharedState>) {
+  const store = getStore();
+  store.state = { ...store.state, ...partial };
+  store._version++;
+  store._listeners.forEach(l => l());
+}
+
+function subscribeStore(listener: () => void): () => void {
+  const store = getStore();
+  store._listeners.add(listener);
+  return () => { store._listeners.delete(listener); };
+}
+
+function getStoreSnapshot(): SharedState {
+  return getStore().state;
+}
+
+// =============================================================================
+// VegetationContext — local context for each provider instance
+// =============================================================================
+
 interface VegetationContextType {
   selectedEntityId: string | null;
   selectedSceneId: string | null;
@@ -42,70 +103,90 @@ interface VegetationContextType {
 
 const VegetationContext = createContext<VegetationContextType | undefined>(undefined);
 
-/**
- * Hook to read selectedEntityId from the host ViewerContext.
- * The host exposes its React Context via window.__nekazariViewerContextInstance.
- * This is the ONLY reliable way to get entity selection in IIFE modules.
- */
-function useHostViewerSync() {
-  const ViewerCtx = (window as any).__nekazariViewerContextInstance;
-  const hostCtx = ViewerCtx ? React.useContext(ViewerCtx) : null;
-  return hostCtx;
-}
-
 export const VegetationProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const [selectedEntityId, setSelectedEntityId] = useState<string | null>(null);
-  const [selectedSceneId, setSelectedSceneId] = useState<string | null>(null);
-  const [selectedIndex, setSelectedIndex] = useState<VegetationIndexType | null>(null);
-  const [selectedDate, setSelectedDate] = useState<Date | null>(null);
+  // Read shared state from the global store (reactive across all provider instances)
+  const sharedState = useSyncExternalStore(subscribeStore, getStoreSnapshot);
 
+  // Local-only state
+  const [selectedEntityId, setSelectedEntityIdLocal] = useState<string | null>(null);
+  const [selectedGeometry, setSelectedGeometry] = useState<any | null>(null);
   const [dateRange, setDateRange] = useState<DateRange>({
     startDate: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000),
     endDate: new Date(),
   });
 
-  const [selectedGeometry, setSelectedGeometry] = useState<any | null>(null);
-  const [activeJobId, setActiveJobId] = useState<string | null>(null);
-  const [indexResults, setIndexResults] = useState<Record<string, IndexResult>>({});
+  // Shared state setters — update the global store so all instances sync
+  const setSelectedIndex = useCallback((index: VegetationIndexType | null) => {
+    updateStore({ selectedIndex: index });
+  }, []);
 
-  // Sync with host ViewerContext (the real source of truth for entity selection)
-  const hostCtx = useHostViewerSync();
+  const setActiveJobId = useCallback((id: string | null) => {
+    updateStore({ activeJobId: id });
+  }, []);
+
+  const setIndexResults = useCallback((results: Record<string, IndexResult>) => {
+    updateStore({ indexResults: results });
+  }, []);
+
+  const setSelectedSceneId = useCallback((id: string | null) => {
+    updateStore({ selectedSceneId: id });
+  }, []);
+
+  const setSelectedDate = useCallback((date: Date | null) => {
+    updateStore({ selectedDate: date });
+  }, []);
+
+  // Wrapper for setSelectedEntityId (local + clear shared state on change)
+  const setSelectedEntityId = useCallback((id: string | null) => {
+    setSelectedEntityIdLocal(id);
+    if (!id) {
+      setSelectedGeometry(null);
+    }
+  }, []);
+
+  // ==========================================================================
+  // Sync entity selection from host ViewerContext (unified viewer page)
+  // ==========================================================================
+  const hostViewer = useViewerOptional();
   const prevHostEntityRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!hostCtx) return;
+    if (!hostViewer) return;
 
-    const hostEntityId = hostCtx.selectedEntityId || null;
+    const hostEntityId = hostViewer.selectedEntityId || null;
 
-    // Only update when the host entity actually changes
     if (hostEntityId !== prevHostEntityRef.current) {
       prevHostEntityRef.current = hostEntityId;
 
       if (hostEntityId) {
-        setSelectedEntityId(hostEntityId);
-        setSelectedSceneId(null);
-        if (!selectedIndex) setSelectedIndex('NDVI');
+        setSelectedEntityIdLocal(hostEntityId);
+        updateStore({ selectedSceneId: null });
+        if (!sharedState.selectedIndex) {
+          updateStore({ selectedIndex: 'NDVI' });
+        }
       } else {
-        setSelectedEntityId(null);
+        setSelectedEntityIdLocal(null);
         setSelectedGeometry(null);
       }
     }
-  }, [hostCtx?.selectedEntityId]);
+  }, [hostViewer?.selectedEntityId, sharedState.selectedIndex]);
 
-  // Also sync date from host if available
+  // Sync date from host viewer if available
   useEffect(() => {
-    if (!hostCtx?.currentDate) return;
-    setSelectedDate(new Date(hostCtx.currentDate));
-  }, [hostCtx?.currentDate]);
+    if (!hostViewer?.currentDate) return;
+    updateStore({ selectedDate: new Date(hostViewer.currentDate) });
+  }, [hostViewer?.currentDate]);
 
-  // Fallback: listen for custom events (used when rendered outside unified viewer, e.g. module page)
+  // Fallback: listen for custom events (module's own page, outside unified viewer)
   useEffect(() => {
     const handleEntitySelected = (event: CustomEvent<{ entityId: string | null, type?: string, geometry?: any }>) => {
       if (event.detail?.entityId) {
-        setSelectedEntityId(event.detail.entityId);
-        setSelectedSceneId(null);
+        setSelectedEntityIdLocal(event.detail.entityId);
+        updateStore({ selectedSceneId: null });
         setSelectedGeometry(event.detail.geometry || null);
-        if (!selectedIndex) setSelectedIndex('NDVI');
+        if (!getStoreSnapshot().selectedIndex) {
+          updateStore({ selectedIndex: 'NDVI' });
+        }
       }
     };
 
@@ -116,13 +197,15 @@ export const VegetationProvider: React.FC<{ children: ReactNode }> = ({ children
   }, []);
 
   const resetContext = useCallback(() => {
-    setSelectedEntityId(null);
-    setSelectedSceneId(null);
-    setSelectedIndex(null);
-    setSelectedDate(null);
+    setSelectedEntityIdLocal(null);
     setSelectedGeometry(null);
-    setActiveJobId(null);
-    setIndexResults({});
+    updateStore({
+      selectedIndex: null,
+      activeJobId: null,
+      indexResults: {},
+      selectedSceneId: null,
+      selectedDate: null,
+    });
     setDateRange({
       startDate: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000),
       endDate: new Date(),
@@ -133,13 +216,13 @@ export const VegetationProvider: React.FC<{ children: ReactNode }> = ({ children
     <VegetationContext.Provider
       value={{
         selectedEntityId,
-        selectedSceneId,
-        selectedIndex,
-        selectedDate,
+        selectedSceneId: sharedState.selectedSceneId,
+        selectedIndex: sharedState.selectedIndex,
+        selectedDate: sharedState.selectedDate,
         dateRange,
         selectedGeometry,
-        activeJobId,
-        indexResults,
+        activeJobId: sharedState.activeJobId,
+        indexResults: sharedState.indexResults,
         setSelectedEntityId,
         setSelectedSceneId,
         setSelectedIndex,
