@@ -72,39 +72,15 @@ export const VegetationLayer: React.FC<VegetationLayerProps> = ({ viewer }) => {
       return;
     }
 
-    // Raster tile mode — requires activeJobId AND a selected parcel
-    // Without selectedEntityId, skip: avoids flooding requests from stale store state
+    // Raster tile mode — disabled until COG pipeline stores index rasters in MinIO.
+    // Currently the worker calculates statistics but does NOT persist the GeoTIFF,
+    // so the tile endpoint always returns 400. Enabling this floods the browser and
+    // blocks the base map. Re-enable once vegetation_indices_cache.result_raster_path
+    // points to a real COG object in MinIO.
+    //
+    // TODO: fix backend calculate_index task to upload NDVI.tif (COG) to MinIO,
+    // then re-enable this block.
     if (!activeJobId || !selectedIndex || !selectedEntityId) return;
-
-    // Build tile URL using the job ID — backend resolves the COG path
-    const tileUrlTemplate = `/api/vegetation/tiles/${activeJobId}/{z}/{x}/{y}.png?index=${selectedIndex}`;
-
-    try {
-      const provider = new Cesium.UrlTemplateImageryProvider({
-        url: tileUrlTemplate,
-        maximumLevel: 19,
-        minimumLevel: 10,
-        hasAlphaChannel: true,
-        credit: 'Vegetation Prime',
-      });
-
-      // Remove layer after repeated tile errors to avoid saturating the browser
-      let tileErrors = 0;
-      provider.errorEvent.addEventListener(() => {
-        tileErrors++;
-        if (tileErrors > 5 && layerRef.current) {
-          console.warn('[VegetationLayer] Too many tile errors, removing layer');
-          try { viewer.imageryLayers.remove(layerRef.current, true); } catch (_) {}
-          layerRef.current = null;
-        }
-      });
-
-      const layer = viewer.imageryLayers.addImageryProvider(provider);
-      layer.alpha = 0.8;
-      layerRef.current = layer;
-    } catch (err) {
-      console.error('[VegetationLayer] Error adding imagery layer:', err);
-    }
 
     return () => {
       if (viewer && !viewer.isDestroyed() && layerRef.current) {
