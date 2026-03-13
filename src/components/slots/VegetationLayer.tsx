@@ -72,8 +72,9 @@ export const VegetationLayer: React.FC<VegetationLayerProps> = ({ viewer }) => {
       return;
     }
 
-    // Raster tile mode — requires activeJobId
-    if (!activeJobId || !selectedIndex) return;
+    // Raster tile mode — requires activeJobId AND a selected parcel
+    // Without selectedEntityId, skip: avoids flooding requests from stale store state
+    if (!activeJobId || !selectedIndex || !selectedEntityId) return;
 
     // Build tile URL using the job ID — backend resolves the COG path
     const tileUrlTemplate = `/api/vegetation/tiles/${activeJobId}/{z}/{x}/{y}.png?index=${selectedIndex}`;
@@ -85,6 +86,17 @@ export const VegetationLayer: React.FC<VegetationLayerProps> = ({ viewer }) => {
         minimumLevel: 10,
         hasAlphaChannel: true,
         credit: 'Vegetation Prime',
+      });
+
+      // Remove layer after repeated tile errors to avoid saturating the browser
+      let tileErrors = 0;
+      provider.errorEvent.addEventListener(() => {
+        tileErrors++;
+        if (tileErrors > 5 && layerRef.current) {
+          console.warn('[VegetationLayer] Too many tile errors, removing layer');
+          try { viewer.imageryLayers.remove(layerRef.current, true); } catch (_) {}
+          layerRef.current = null;
+        }
       });
 
       const layer = viewer.imageryLayers.addImageryProvider(provider);
