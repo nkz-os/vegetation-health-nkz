@@ -214,15 +214,12 @@ const DashboardContent: React.FC = () => {
                       const parcelName = parcel.name?.value || parcel.name || parcel.id;
                       const cropSpecies = parcel.cropSpecies?.value || parcel.category?.value || t('dashboard.unassigned');
 
-                      // Handle area: NGSI-LD attribute → compute from geometry
+                      // Handle area: NGSI-LD `area` attribute is already in hectares
                       let areaHa = '-';
-                      const rawAreaHectares = parcel.area_hectares?.value ?? parcel.area_hectares ?? null;
-                      const rawAreaSquareMeters = parcel.area?.value ?? parcel.area ?? null;
+                      const rawArea = parcel.area?.value ?? parcel.area ?? null;
 
-                      if (rawAreaHectares !== null && !isNaN(Number(rawAreaHectares))) {
-                        areaHa = Number(rawAreaHectares).toFixed(2);
-                      } else if (rawAreaSquareMeters !== null && !isNaN(Number(rawAreaSquareMeters))) {
-                        areaHa = (Number(rawAreaSquareMeters) / 10000).toFixed(2);
+                      if (rawArea !== null && !isNaN(Number(rawArea)) && Number(rawArea) > 0) {
+                        areaHa = Number(rawArea).toFixed(2);
                       } else {
                         // Fallback: compute from location geometry
                         const geom = parcel.location?.value || parcel.location;

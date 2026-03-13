@@ -24,8 +24,8 @@ const TimeseriesChart: React.FC<TimeseriesChartProps> = ({ entityId, indexType }
       try {
         // Fetch last 12 months
         const res = await api.getSceneStats(entityId, indexType, 12);
-        // Expected response: { stats: [{ date: '...', mean: 0.5 }, ...] }
-        setData(res?.stats || []);
+        // Backend returns { data_points: [{ date, mean, min, max, std_dev }, ...] }
+        setData(res?.data_points || res?.stats || []);
       } catch (err) {
         setError(t('timeline.errorLoadingData'));
         console.error(err);
