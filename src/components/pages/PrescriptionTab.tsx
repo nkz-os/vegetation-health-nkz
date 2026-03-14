@@ -6,11 +6,13 @@
  */
 
 import React, { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useVegetationContext } from '../../services/vegetationContext';
 import { useVegetationApi } from '../../services/api';
 import { FileDown, Map } from 'lucide-react';
 
 const PrescriptionTab: React.FC = () => {
+  const { t } = useTranslation();
   const { selectedEntityId } = useVegetationContext();
   const api = useVegetationApi();
 
@@ -52,10 +54,10 @@ const PrescriptionTab: React.FC = () => {
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
 
-      setExportMessage({ type: 'success', text: `Exportado correctamente: ${filename}` });
+      setExportMessage({ type: 'success', text: t('prescription.exportSuccess', { filename }) });
     } catch (error) {
       console.error('Export failed:', error);
-      setExportMessage({ type: 'error', text: 'Error al exportar. Inténtalo de nuevo.' });
+      setExportMessage({ type: 'error', text: t('prescription.exportError') });
     } finally {
       setIsExporting(null);
     }
@@ -77,9 +79,9 @@ const PrescriptionTab: React.FC = () => {
   if (!selectedEntityId) {
     return (
       <div className="p-6 text-center">
-        <div className="text-slate-400 text-lg mb-2">Selecciona una parcela</div>
+        <div className="text-slate-400 text-lg mb-2">{t('prescription.selectParcel')}</div>
         <p className="text-slate-500 text-sm">
-          Vuelve al listado y selecciona una parcela para exportar mapas de prescripción.
+          {t('prescription.selectParcelHint')}
         </p>
       </div>
     );
@@ -88,9 +90,9 @@ const PrescriptionTab: React.FC = () => {
   return (
     <div className="p-6 max-w-4xl mx-auto">
       <header className="mb-6">
-        <h1 className="text-xl font-bold text-slate-900">Exportar Mapa de Prescripción</h1>
+        <h1 className="text-xl font-bold text-slate-900">{t('prescription.exportTitle')}</h1>
         <p className="text-slate-600 text-sm mt-1">
-          Descarga el mapa de prescripción VRA en diferentes formatos.
+          {t('prescription.exportDesc')}
         </p>
       </header>
 
@@ -108,7 +110,7 @@ const PrescriptionTab: React.FC = () => {
       <section className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 mb-6">
         <h2 className="text-lg font-semibold text-slate-800 mb-4 flex items-center gap-2">
           <FileDown className="w-5 h-5 text-emerald-600" />
-          Formatos de Descarga
+          {t('prescription.downloadFormats')}
         </h2>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -122,8 +124,8 @@ const PrescriptionTab: React.FC = () => {
               <span className="text-emerald-700 font-bold text-sm">JSON</span>
             </div>
             <span className="font-medium text-slate-800">GeoJSON</span>
-            <span className="text-xs text-slate-500 mt-1">Para SIG y análisis</span>
-            {isExporting === 'geojson' && <span className="text-xs text-emerald-600 mt-2">Exportando...</span>}
+            <span className="text-xs text-slate-500 mt-1">{t('prescription.forGis')}</span>
+            {isExporting === 'geojson' && <span className="text-xs text-emerald-600 mt-2">{t('prescription.exporting')}</span>}
           </button>
 
           {/* Shapefile */}
@@ -136,8 +138,8 @@ const PrescriptionTab: React.FC = () => {
               <span className="text-blue-700 font-bold text-sm">SHP</span>
             </div>
             <span className="font-medium text-slate-800">Shapefile</span>
-            <span className="text-xs text-slate-500 mt-1">Formato estándar SIG</span>
-            {isExporting === 'shapefile' && <span className="text-xs text-blue-600 mt-2">Exportando...</span>}
+            <span className="text-xs text-slate-500 mt-1">{t('prescription.gisStandard')}</span>
+            {isExporting === 'shapefile' && <span className="text-xs text-blue-600 mt-2">{t('prescription.exporting')}</span>}
           </button>
 
           {/* CSV */}
@@ -150,8 +152,8 @@ const PrescriptionTab: React.FC = () => {
               <span className="text-amber-700 font-bold text-sm">CSV</span>
             </div>
             <span className="font-medium text-slate-800">CSV</span>
-            <span className="text-xs text-slate-500 mt-1">Datos tabulares</span>
-            {isExporting === 'csv' && <span className="text-xs text-amber-600 mt-2">Exportando...</span>}
+            <span className="text-xs text-slate-500 mt-1">{t('prescription.tabularData')}</span>
+            {isExporting === 'csv' && <span className="text-xs text-amber-600 mt-2">{t('prescription.exporting')}</span>}
           </button>
         </div>
       </section>
@@ -163,7 +165,7 @@ const PrescriptionTab: React.FC = () => {
           className="w-full flex items-center justify-center gap-2 py-3 text-emerald-700 hover:text-emerald-800 font-medium transition-colors"
         >
           <Map className="w-5 h-5" />
-          Ver en el mapa
+          {t('prescription.viewOnMap')}
         </button>
       </section>
     </div>

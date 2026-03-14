@@ -430,8 +430,28 @@ def calculate_vegetation_index(
 
         processor.save_index_raster(composite_array, str(local_output_path))
 
+        # Convert to Cloud Optimized GeoTIFF for efficient XYZ tile serving
+        local_cog_path = local_dir / f"{index_type}_cog.tif"
+        try:
+            from rio_cogeo.cogeo import cog_translate
+            from rio_cogeo.profiles import cog_profiles
+
+            dst_profile = cog_profiles.get("deflate")
+            cog_translate(
+                str(local_output_path),
+                str(local_cog_path),
+                dst_profile,
+                in_memory=True,
+                quiet=True,
+            )
+            logger.info("COG conversion successful for %s", index_type)
+            upload_path = str(local_cog_path)
+        except Exception as cog_err:
+            logger.warning("COG conversion failed (%s), uploading raw GeoTIFF", cog_err)
+            upload_path = str(local_output_path)
+
         # Upload to storage using the canonical remote path.
-        storage.upload_file(str(local_output_path), remote_raster_path, bucket_name)
+        storage.upload_file(upload_path, remote_raster_path, bucket_name)
         
         # Create cache entry (use first scene's ID for reference, or create composite entry)
         primary_scene_id = primary_scene.id

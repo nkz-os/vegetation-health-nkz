@@ -129,10 +129,18 @@
         "geojson": "GeoJSON",
         "shapefile": "Shapefile",
         "csv": "CSV",
-        "isoxml": "ISOXML (Makineria)",
-        "sendToCloud": "Bidali Hodeira",
-        "n8nIntegration": "N8N Integrazioa",
-        "notAvailable": "Ezaugarri honek N8N integrazioa behar du"
+        "selectParcel": "Aukeratu lurzati bat",
+        "selectParcelHint": "Itzuli zerrendara eta aukeratu lurzati bat preskripzio mapak esportatzeko.",
+        "exportTitle": "Preskripzio Mapa Esportatu",
+        "exportDesc": "Deskargatu VRA preskripzio mapa formatu ezberdinetan.",
+        "downloadFormats": "Deskarga Formatuak",
+        "forGis": "SIG eta analisirako",
+        "gisStandard": "SIG formatu estandarra",
+        "tabularData": "Datu tabularrak",
+        "exporting": "Esportatzen...",
+        "exportSuccess": "Behar bezala esportatu da: {{filename}}",
+        "exportError": "Errorea esportatzerakoan. Saiatu berriro.",
+        "viewOnMap": "Ikusi mapan"
     },
     "alerts": {
         "title": "Landaretza Alertak",

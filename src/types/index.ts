@@ -236,59 +236,6 @@ export interface AlertFormatResponse {
 }
 
 /**
- * Weather data for an entity
- */
-export interface WeatherData {
-  entity_id: string;
-  period: {
-    start: string;
-    end: string;
-  };
-  gdd: number; // Growing Degree Days
-  water_balance: number; // mm
-  frost_days: number;
-  heat_days: number;
-  precipitation_total: number;
-  evapotranspiration: number;
-  daily_data?: Array<{
-    date: string;
-    temp_min: number;
-    temp_max: number;
-    precipitation: number;
-    humidity: number;
-  }>;
-}
-
-/**
- * Weather interpretation response
- */
-export interface WeatherInterpretation {
-  entity_id: string;
-  interpretation: string;
-  recommendations: string[];
-  impact_on_vegetation: 'positive' | 'neutral' | 'negative';
-  confidence: number;
-}
-
-/**
- * Weather sensors for an entity
- */
-export interface WeatherSensor {
-  id: string;
-  type: string;
-  name: string;
-  location: {
-    lat: number;
-    lon: number;
-  };
-  last_reading?: {
-    timestamp: string;
-    value: number;
-    unit: string;
-  };
-}
-
-/**
  * Formula preview request
  */
 export interface FormulaPreviewParams {
@@ -361,16 +308,6 @@ export interface ZoningGeoJsonResponse {
 }
 
 /**
- * Send to cloud (N8N) response
- */
-export interface SendToCloudResponse {
-  success: boolean;
-  message: string;
-  webhook_id?: string;
-  timestamp: string;
-}
-
-/**
  * Crop recommendation response
  */
 export interface CropRecommendation {
@@ -380,17 +317,3 @@ export interface CropRecommendation {
   recommendations?: string[];
 }
 
-/**
- * Module capabilities (for graceful degradation)
- */
-export interface ModuleCapabilities {
-  n8n_available: boolean;
-  intelligence_available: boolean;
-  isobus_available: boolean;
-  features: {
-    predictions: boolean;
-    alerts_webhook: boolean;
-    export_isoxml: boolean;
-    send_to_cloud: boolean;
-  };
-}

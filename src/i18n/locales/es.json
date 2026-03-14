@@ -129,10 +129,18 @@
         "geojson": "GeoJSON",
         "shapefile": "Shapefile",
         "csv": "CSV",
-        "isoxml": "ISOXML (Maquinaria)",
-        "sendToCloud": "Enviar a Nube",
-        "n8nIntegration": "Integración N8N",
-        "notAvailable": "Esta función requiere integración con N8N"
+        "selectParcel": "Selecciona una parcela",
+        "selectParcelHint": "Vuelve al listado y selecciona una parcela para exportar mapas de prescripción.",
+        "exportTitle": "Exportar Mapa de Prescripción",
+        "exportDesc": "Descarga el mapa de prescripción VRA en diferentes formatos.",
+        "downloadFormats": "Formatos de Descarga",
+        "forGis": "Para SIG y análisis",
+        "gisStandard": "Formato estándar SIG",
+        "tabularData": "Datos tabulares",
+        "exporting": "Exportando...",
+        "exportSuccess": "Exportado correctamente: {{filename}}",
+        "exportError": "Error al exportar. Inténtalo de nuevo.",
+        "viewOnMap": "Ver en el mapa"
     },
     "alerts": {
         "title": "Alertas de Vegetación",

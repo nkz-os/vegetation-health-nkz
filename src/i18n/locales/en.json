@@ -129,10 +129,18 @@
         "geojson": "GeoJSON",
         "shapefile": "Shapefile",
         "csv": "CSV",
-        "isoxml": "ISOXML (Machinery)",
-        "sendToCloud": "Send to Cloud",
-        "n8nIntegration": "N8N Integration",
-        "notAvailable": "This feature requires N8N integration"
+        "selectParcel": "Select a parcel",
+        "selectParcelHint": "Go back to the list and select a parcel to export prescription maps.",
+        "exportTitle": "Export Prescription Map",
+        "exportDesc": "Download the VRA prescription map in different formats.",
+        "downloadFormats": "Download Formats",
+        "forGis": "For GIS and analysis",
+        "gisStandard": "Standard GIS format",
+        "tabularData": "Tabular data",
+        "exporting": "Exporting...",
+        "exportSuccess": "Exported successfully: {{filename}}",
+        "exportError": "Export failed. Please try again.",
+        "viewOnMap": "View on map"
     },
     "alerts": {
         "title": "Vegetation Alerts",
