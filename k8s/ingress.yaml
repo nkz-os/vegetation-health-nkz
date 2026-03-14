@@ -13,13 +13,6 @@ spec:
   - host: nekazari.robotika.cloud
     http:
       paths:
-      - path: /modules/vegetation-prime
-        pathType: Prefix
-        backend:
-          service:
-            name: vegetation-prime-frontend-service
-            port:
-              number: 80
       - path: /vegetation-prime
         pathType: Prefix
         backend:

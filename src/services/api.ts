@@ -12,13 +12,8 @@ import {
   AlertConfig,
   AlertTestResponse,
   AlertFormatResponse,
-  WeatherData,
-  WeatherInterpretation,
-  WeatherSensor,
   FormulaPreviewParams,
   FormulaPreviewResponse,
-  SendToCloudResponse,
-  ModuleCapabilities
 } from '../types';
 
 /**
@@ -699,34 +694,6 @@ export class VegetationApiClient {
   }
 
   // ==========================================================================
-  // Ferrari Frontend - Weather Data
-  // ==========================================================================
-
-  /**
-   * Get weather data for an entity
-   */
-  async getWeather(entityId: string): Promise<WeatherData> {
-    const response = await this.client.get(`/weather/${encodeURIComponent(entityId)}`);
-    return response as unknown as WeatherData;
-  }
-
-  /**
-   * Get weather interpretation for an entity
-   */
-  async getWeatherInterpretation(entityId: string): Promise<WeatherInterpretation> {
-    const response = await this.client.get(`/weather/${encodeURIComponent(entityId)}/interpret`);
-    return response as unknown as WeatherInterpretation;
-  }
-
-  /**
-   * Get weather sensors for an entity
-   */
-  async getWeatherSensors(entityId: string): Promise<WeatherSensor[]> {
-    const response = await this.client.get(`/weather/${encodeURIComponent(entityId)}/sensors`);
-    return response as unknown as WeatherSensor[];
-  }
-
-  // ==========================================================================
   // Ferrari Frontend - Formula Preview
   // ==========================================================================
 
@@ -746,83 +713,6 @@ export class VegetationApiClient {
     }
   }
 
-  // ==========================================================================
-  // Ferrari Frontend - Send to Cloud (N8N)
-  // ==========================================================================
-
-  /**
-   * Send prescription map to machinery cloud via N8N
-   * This goes through our backend which proxies to N8N (security: CORS + credentials)
-   */
-  async sendToCloud(
-    parcelId: string,
-    payload?: {
-      prescription_type?: string;
-      zones?: any;
-      metadata?: Record<string, any>;
-    }
-  ): Promise<SendToCloudResponse> {
-    try {
-      const response = await this.client.post('/export/n8n', {
-        parcel_id: parcelId,
-        ...payload
-      });
-      return response as unknown as SendToCloudResponse;
-    } catch (error) {
-      console.warn('[API] Send to cloud failed:', error);
-      throw error;
-    }
-  }
-
-  // ==========================================================================
-  // Ferrari Frontend - Module Capabilities (Graceful Degradation)
-  // ==========================================================================
-
-  /**
-   * Get module capabilities for graceful degradation
-   * Returns which optional integrations (N8N, Intelligence, ISOBUS) are available
-   */
-  async getCapabilities(): Promise<ModuleCapabilities> {
-    try {
-      const response = await this.client.get('/capabilities');
-      return response as unknown as ModuleCapabilities;
-    } catch (error) {
-      // If endpoint doesn't exist, return conservative defaults
-      console.warn('[API] Capabilities check failed, using defaults:', error);
-      return {
-        n8n_available: false,
-        intelligence_available: false,
-        isobus_available: false,
-        features: {
-          predictions: false,
-          alerts_webhook: false,
-          export_isoxml: false,
-          send_to_cloud: false
-        }
-      };
-    }
-  }
-
-  /**
-   * Check if ISOBUS module is available
-   * Uses host-provided callback or route check
-   */
-  isIsobusAvailable(): boolean {
-    try {
-      // Check if host provides ISOBUS callback
-      if (typeof (window as any).__nekazariOpenISOBUS === 'function') {
-        return true;
-      }
-      // Check if host has ISOBUS route registered
-      const hostModules = (window as any).__nekazariModules;
-      if (hostModules && Array.isArray(hostModules)) {
-        return hostModules.some((m: any) => m.id === 'isobus' || m.id === 'nkz-isobus');
-      }
-      return false;
-    } catch {
-      return false;
-    }
-  }
 }
 
 // Hook for using API client
