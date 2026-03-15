@@ -13,7 +13,7 @@ interface VegetationLayerProps {
 }
 
 export const VegetationLayer: React.FC<VegetationLayerProps> = ({ viewer }) => {
-  const { selectedIndex, activeJobId, selectedEntityId } = useVegetationContext();
+  const { selectedIndex, activeJobId, selectedEntityId, indexResults } = useVegetationContext();
   const layerRef = useRef<any>(null);
   const dataSourceRef = useRef<any>(null);
 
@@ -72,15 +72,33 @@ export const VegetationLayer: React.FC<VegetationLayerProps> = ({ viewer }) => {
       return;
     }
 
-    // Raster tile mode — disabled until COG pipeline stores index rasters in MinIO.
-    // Currently the worker calculates statistics but does NOT persist the GeoTIFF,
-    // so the tile endpoint always returns 400. Enabling this floods the browser and
-    // blocks the base map. Re-enable once vegetation_indices_cache.result_raster_path
-    // points to a real COG object in MinIO.
-    //
-    // TODO: fix backend calculate_index task to upload NDVI.tif (COG) to MinIO,
-    // then re-enable this block.
-    if (!activeJobId || !selectedIndex || !selectedEntityId) return;
+    // Raster tile mode — COG tiles served by backend /api/vegetation/tiles/{job_id}/{z}/{x}/{y}.png
+    // Resolve jobId: prefer activeJobId, fall back to indexResults for the selected index
+    const jobId = activeJobId
+      || (selectedIndex && indexResults?.[selectedIndex]?.job_id)
+      || null;
+
+    if (!jobId || !selectedIndex || !selectedEntityId) return;
+
+    const apiBase = window.location.origin;
+    const tileUrl = `${apiBase}/api/vegetation/tiles/${jobId}/{z}/{x}/{y}.png`;
+
+    try {
+      const provider = new Cesium.UrlTemplateImageryProvider({
+        url: tileUrl,
+        minimumLevel: 10,
+        maximumLevel: 18,
+        credit: 'Vegetation Prime',
+      });
+
+      const layer = viewer.imageryLayers.addImageryProvider(provider);
+      layer.alpha = 0.75;
+      layerRef.current = layer;
+
+      console.log('[VegetationLayer] Raster overlay added for', selectedIndex, 'job', jobId.substring(0, 8));
+    } catch (err) {
+      console.error('[VegetationLayer] Error creating imagery layer:', err);
+    }
 
     return () => {
       if (viewer && !viewer.isDestroyed() && layerRef.current) {
@@ -90,7 +108,7 @@ export const VegetationLayer: React.FC<VegetationLayerProps> = ({ viewer }) => {
         layerRef.current = null;
       }
     };
-  }, [viewer, selectedIndex, activeJobId, selectedEntityId]);
+  }, [viewer, selectedIndex, activeJobId, selectedEntityId, indexResults]);
 
   return null;
 };
