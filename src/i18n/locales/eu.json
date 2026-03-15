@@ -297,5 +297,19 @@
         "permissionDenied": "Baimena ukatua",
         "networkError": "Konexio errorea",
         "serverError": "Zerbitzari errorea"
+    },
+    "layerControl": {
+        "title": "Landaretza Geruzak",
+        "selectParcel": "Hautatu lurzati bat geruzak ikusteko",
+        "spectralIndex": "Indize Espektrala",
+        "imageDate": "Irudi Data",
+        "opacity": "Opakutasuna",
+        "cloudMask": "Laino Maskara",
+        "cloudMaskDesc": "Ezkutatu laino eremuak",
+        "dynamicRange": "Tarte Dinamikoa",
+        "dynamicRangeDesc": "Doitu kolorea min/max-era",
+        "colorLegend": "Kolore legenda",
+        "hide": "Ezkutatu",
+        "show": "Erakutsi"
     }
 }

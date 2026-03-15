@@ -7,8 +7,6 @@
 
 // Import UNWRAPPED components (Host's SlotRenderer will wrap with moduleProvider)
 import { TimelineWidget } from '../components/slots/TimelineWidget';
-import { VegetationConfig } from '../components/VegetationConfig';
-import { VegetationAnalytics } from '../components/VegetationAnalytics';
 import VegetationLayerControl from '../components/slots/VegetationLayerControl';
 import { VegetationLayer } from '../components/slots/VegetationLayer';
 import { VegetationProvider } from '../services/vegetationContext';
@@ -62,25 +60,8 @@ export const vegetationPrimeSlots: ModuleViewerSlots = {
       showWhen: { entityType: ['AgriParcel'] }
     }
   ],
-  'context-panel': [
-    {
-      id: 'vegetation-prime-config',
-      moduleId: MODULE_ID,
-      component: 'VegetationConfig',
-      priority: 20,
-      localComponent: VegetationConfig,
-      defaultProps: { mode: 'panel' },
-      showWhen: { entityType: ['AgriParcel'] }
-    },
-    {
-      id: 'vegetation-prime-analytics',
-      moduleId: MODULE_ID,
-      component: 'VegetationAnalytics',
-      priority: 30,
-      localComponent: VegetationAnalytics,
-      showWhen: { entityType: ['AgriParcel'] }
-    }
-  ],
+  // Config & Analytics live in the module page tabs — not duplicated here.
+  'context-panel': [],
   'bottom-panel': [
     {
       id: 'vegetation-prime-timeline',

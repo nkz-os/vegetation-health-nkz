@@ -297,5 +297,19 @@
         "permissionDenied": "Permiso denegado",
         "networkError": "Error de conexión",
         "serverError": "Error del servidor"
+    },
+    "layerControl": {
+        "title": "Capas de Vegetación",
+        "selectParcel": "Selecciona una parcela para ver capas",
+        "spectralIndex": "Índice Espectral",
+        "imageDate": "Fecha de Imagen",
+        "opacity": "Opacidad",
+        "cloudMask": "Máscara de Nubes",
+        "cloudMaskDesc": "Ocultar áreas nubladas",
+        "dynamicRange": "Rango Dinámico",
+        "dynamicRangeDesc": "Ajustar color a min/max",
+        "colorLegend": "Leyenda de colores",
+        "hide": "Ocultar",
+        "show": "Mostrar"
     }
 }

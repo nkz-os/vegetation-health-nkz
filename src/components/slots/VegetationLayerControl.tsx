@@ -4,19 +4,21 @@
 
 import React, { useState, useEffect } from 'react';
 import { Layers, Cloud } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { useUIKit } from '../../hooks/useUIKit';
 import { useViewer } from '@nekazari/sdk';
 import { useVegetationContext } from '../../services/vegetationContext';
 import { useVegetationScenes } from '../../hooks/useVegetationScenes';
 import { VegetationIndexType } from '../../types';
-import { IndexPillSelector } from '../widgets/IndexPillSelector'; 
+import { IndexPillSelector } from '../widgets/IndexPillSelector';
 import { ColorScaleLegend } from '../widgets/ColorScaleLegend';
 import DateSelector from '../widgets/DateSelector';
 
 const VegetationLayerControl: React.FC = () => {
+  const { t } = useTranslation();
   // Get UI components safely from Host
   const { Card } = useUIKit();
-  const { setCurrentDate } = useViewer(); 
+  const { setCurrentDate } = useViewer();
   
   // Get Module Context
   const {
@@ -68,7 +70,7 @@ const VegetationLayerControl: React.FC = () => {
       <Card padding="md" className="bg-white/90 backdrop-blur-md border border-slate-200/50 rounded-xl w-full">
         <div className="flex items-center justify-center gap-2 py-4 text-slate-500">
           <Layers className="w-5 h-5" />
-          <p>Selecciona una parcela para ver capas</p>
+          <p>{t('layerControl.selectParcel', 'Selecciona una parcela para ver capas')}</p>
         </div>
       </Card>
     );
@@ -82,7 +84,7 @@ const VegetationLayerControl: React.FC = () => {
           <div className="flex items-center justify-between border-b border-slate-100 pb-2">
             <h3 className="font-semibold text-slate-800 flex items-center gap-2">
               <Layers className="w-4 h-4 text-green-600" />
-              Capas de Vegetación
+              {t('layerControl.title', 'Capas de Vegetación')}
             </h3>
             <div className="flex items-center gap-1">
               <span className="text-xs text-slate-500 font-mono">
@@ -93,7 +95,7 @@ const VegetationLayerControl: React.FC = () => {
 
           {/* Index Selector */}
           <div className="space-y-2">
-            <label className="text-xs font-medium text-slate-600 uppercase tracking-wider">Índice Espectral</label>
+            <label className="text-xs font-medium text-slate-600 uppercase tracking-wider">{t('layerControl.spectralIndex', 'Índice Espectral')}</label>
             <IndexPillSelector 
               selectedIndex={(selectedIndex || 'NDVI') as VegetationIndexType} 
               onIndexChange={(idx: any) => setSelectedIndex(idx)} 
@@ -103,8 +105,8 @@ const VegetationLayerControl: React.FC = () => {
           {/* Date Selector */}
           <div className="space-y-2">
             <label className="text-xs font-medium text-slate-600 uppercase tracking-wider flex justify-between">
-              Fecha de Imagen
-              {scenesLoading && <span className="text-slate-400">Cargando...</span>}
+              {t('layerControl.imageDate', 'Fecha de Imagen')}
+              {scenesLoading && <span className="text-slate-400">{t('common.loading')}</span>}
             </label>
             <DateSelector 
               selectedSceneId={selectedSceneId}

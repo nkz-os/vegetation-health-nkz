@@ -297,5 +297,19 @@
         "permissionDenied": "Permission denied",
         "networkError": "Connection error",
         "serverError": "Server error"
+    },
+    "layerControl": {
+        "title": "Vegetation Layers",
+        "selectParcel": "Select a parcel to view layers",
+        "spectralIndex": "Spectral Index",
+        "imageDate": "Image Date",
+        "opacity": "Opacity",
+        "cloudMask": "Cloud Mask",
+        "cloudMaskDesc": "Hide cloudy areas",
+        "dynamicRange": "Dynamic Range",
+        "dynamicRangeDesc": "Adjust color to min/max",
+        "colorLegend": "Color legend",
+        "hide": "Hide",
+        "show": "Show"
     }
 }
