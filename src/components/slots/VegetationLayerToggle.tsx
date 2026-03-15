@@ -1,0 +1,38 @@
+/**
+ * Vegetation Layer Toggle - Simple on/off toggle for the layer-toggle slot.
+ * The full control panel lives in the context-panel slot.
+ */
+
+import React, { useState } from 'react';
+import { Leaf } from 'lucide-react';
+import { useVegetationContext } from '../../services/vegetationContext';
+
+const VegetationLayerToggle: React.FC = () => {
+  const { selectedEntityId, selectedIndex, activeJobId, indexResults } = useVegetationContext();
+  const [enabled, setEnabled] = useState(true);
+
+  const hasLayer = !!(activeJobId || (selectedIndex && indexResults?.[selectedIndex]?.job_id));
+
+  if (!selectedEntityId) return null;
+
+  return (
+    <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/90 border border-slate-200/50 shadow-sm pointer-events-auto">
+      <Leaf className="w-4 h-4 text-green-600" />
+      <span className="text-sm font-medium text-slate-700">Vegetación</span>
+      {hasLayer && (
+        <input
+          type="checkbox"
+          checked={enabled}
+          onChange={(e) => setEnabled(e.target.checked)}
+          className="ml-auto toggle toggle-sm toggle-success"
+          title={enabled ? 'Ocultar capa' : 'Mostrar capa'}
+        />
+      )}
+      {!hasLayer && (
+        <span className="ml-auto text-xs text-slate-400">Sin datos</span>
+      )}
+    </div>
+  );
+};
+
+export default VegetationLayerToggle;

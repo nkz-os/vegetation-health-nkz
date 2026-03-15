@@ -70,12 +70,12 @@ export const SmartTimeline: React.FC<SmartTimelineProps> = ({
   const { t } = useTranslation();
   const colors = INDEX_COLORS[indexType] || INDEX_COLORS.NDVI;
 
-  // Prepare chart data - reverse to show oldest first (left to right)
+  // Prepare chart data — oldest on the left, newest on the right
   const chartData = useMemo(() => {
     // Filter out entries without mean_value for cleaner chart
     const validStats = stats.filter(s => s.mean_value !== null);
 
-    return validStats.reverse().map((stat) => {
+    return validStats.map((stat) => {
       const prevYearStat = previousYearStats?.find(p => {
         // Match by month/day for comparison
         const currDate = new Date(stat.sensing_date);

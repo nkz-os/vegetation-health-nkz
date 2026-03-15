@@ -313,6 +313,10 @@
         "show": "Mostrar",
         "cloudCoverage": "Cobertura de nubes"
     },
+    "monitoring": {
+        "activate": "Activar monitoreo",
+        "deactivate": "Desactivar monitoreo"
+    },
     "dateSelector": {
         "placeholder": "Selecciona una fecha..."
     }

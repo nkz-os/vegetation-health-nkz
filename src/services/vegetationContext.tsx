@@ -31,9 +31,11 @@ interface IndexResult {
 interface SharedState {
   selectedIndex: VegetationIndexType | null;
   activeJobId: string | null;
+  activeRasterPath: string | null;
   indexResults: Record<string, IndexResult>;
   selectedSceneId: string | null;
   selectedDate: Date | null;
+  layerOpacity: number; // 0-100
 }
 
 interface VegetationStore {
@@ -50,9 +52,11 @@ function getStore(): VegetationStore {
       state: {
         selectedIndex: null,
         activeJobId: null,
+        activeRasterPath: null,
         indexResults: {},
         selectedSceneId: null,
         selectedDate: null,
+        layerOpacity: 75,
       },
       _listeners: new Set(),
       _version: 0,
@@ -90,14 +94,18 @@ interface VegetationContextType {
   dateRange: DateRange;
   selectedGeometry?: any | null;
   activeJobId: string | null;
+  activeRasterPath: string | null;
   indexResults: Record<string, IndexResult>;
+  layerOpacity: number;
   setSelectedEntityId: (id: string | null) => void;
   setSelectedSceneId: (id: string | null) => void;
   setSelectedIndex: (index: VegetationIndexType | null) => void;
   setSelectedDate: (date: Date | null) => void;
   setDateRange: (range: DateRange) => void;
   setActiveJobId: (id: string | null) => void;
+  setActiveRasterPath: (path: string | null) => void;
   setIndexResults: (results: Record<string, IndexResult>) => void;
+  setLayerOpacity: (opacity: number) => void;
   resetContext: () => void;
 }
 
@@ -124,6 +132,10 @@ export const VegetationProvider: React.FC<{ children: ReactNode }> = ({ children
     updateStore({ activeJobId: id });
   }, []);
 
+  const setActiveRasterPath = useCallback((path: string | null) => {
+    updateStore({ activeRasterPath: path });
+  }, []);
+
   const setIndexResults = useCallback((results: Record<string, IndexResult>) => {
     updateStore({ indexResults: results });
   }, []);
@@ -134,6 +146,10 @@ export const VegetationProvider: React.FC<{ children: ReactNode }> = ({ children
 
   const setSelectedDate = useCallback((date: Date | null) => {
     updateStore({ selectedDate: date });
+  }, []);
+
+  const setLayerOpacity = useCallback((opacity: number) => {
+    updateStore({ layerOpacity: opacity });
   }, []);
 
   // Wrapper for setSelectedEntityId (local + clear shared state on change)
@@ -202,9 +218,11 @@ export const VegetationProvider: React.FC<{ children: ReactNode }> = ({ children
     updateStore({
       selectedIndex: null,
       activeJobId: null,
+      activeRasterPath: null,
       indexResults: {},
       selectedSceneId: null,
       selectedDate: null,
+      layerOpacity: 75,
     });
     setDateRange({
       startDate: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000),
@@ -222,14 +240,18 @@ export const VegetationProvider: React.FC<{ children: ReactNode }> = ({ children
         dateRange,
         selectedGeometry,
         activeJobId: sharedState.activeJobId,
+        activeRasterPath: sharedState.activeRasterPath,
         indexResults: sharedState.indexResults,
+        layerOpacity: sharedState.layerOpacity,
         setSelectedEntityId,
         setSelectedSceneId,
         setSelectedIndex,
         setSelectedDate,
         setDateRange,
         setActiveJobId,
+        setActiveRasterPath,
         setIndexResults,
+        setLayerOpacity,
         resetContext,
       }}
     >

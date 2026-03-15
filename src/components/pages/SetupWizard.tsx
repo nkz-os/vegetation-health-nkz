@@ -157,7 +157,25 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
             onClose();
         } catch (err: any) {
             console.error('[SetupWizard] Error creating subscription:', err);
-            if (err.response && err.response.status === 422) {
+            if (err.response && err.response.status === 400) {
+                // Subscription already exists — reactivate it instead
+                try {
+                    const existing = await api.getSubscriptionForEntity(entityId);
+                    if (existing?.id) {
+                        await api.updateSubscription(existing.id, {
+                            is_active: true,
+                            frequency: frequency,
+                            index_types: selectedIndices,
+                        });
+                        onComplete();
+                        onClose();
+                        return;
+                    }
+                } catch {
+                    // Fall through to error display
+                }
+                setError(t('setup.subscriptionExists', 'A monitoring subscription already exists for this parcel. It has been reactivated.'));
+            } else if (err.response && err.response.status === 422) {
                 console.error('[SetupWizard] Validation Error Data:', err.response.data);
                 setError(t('setup.validationError'));
             } else {

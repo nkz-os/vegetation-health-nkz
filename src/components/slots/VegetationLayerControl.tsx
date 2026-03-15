@@ -26,9 +26,11 @@ const VegetationLayerControl: React.FC = () => {
     selectedDate,
     selectedEntityId,
     selectedSceneId,
+    layerOpacity,
     setSelectedIndex,
     setSelectedDate,
     setSelectedSceneId,
+    setLayerOpacity,
   } = useVegetationContext();
 
   // Load scenes for current entity
@@ -38,7 +40,8 @@ const VegetationLayerControl: React.FC = () => {
   
   // Local state for UI controls
   const [showCloudMask, setShowCloudMask] = useState(false);
-  const [opacity, setOpacity] = useState(100);
+  const opacity = layerOpacity;
+  const setOpacity = setLayerOpacity;
   const [showLegend, setShowLegend] = useState(true);
   
   // Helpers
@@ -47,13 +50,14 @@ const VegetationLayerControl: React.FC = () => {
   
   const [legendDynamic, setLegendDynamic] = useState(false);
 
-  // Effect to sync viewer date
+  // Sync viewer date — compare by timestamp to avoid infinite re-render loop
+  const lastSyncedDateRef = React.useRef<number>(0);
   useEffect(() => {
-    // selectedDate is Date | null in context
-    if (selectedDate && setCurrentDate) {
-      // setCurrentDate expects Date
-      setCurrentDate(selectedDate);
-    }
+    if (!selectedDate || !setCurrentDate) return;
+    const ts = selectedDate.getTime();
+    if (ts === lastSyncedDateRef.current) return;
+    lastSyncedDateRef.current = ts;
+    setCurrentDate(selectedDate);
   }, [selectedDate, setCurrentDate]);
 
   // Handle date change from DateSelector (receives only sceneId)

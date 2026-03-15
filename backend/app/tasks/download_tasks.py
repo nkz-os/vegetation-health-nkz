@@ -424,7 +424,8 @@ def download_sentinel2_scene(self, job_id: str, tenant_id: str, parameters: Dict
                         'scene_id': scene_id,
                         'index_type': index_type,
                         'entity_id': parameters.get('entity_id'),
-                        'bbox': parameters.get('bbox')
+                        'bbox': parameters.get('bbox'),
+                        'bounds': parameters.get('bounds'),
                     }
                     
                     # Create job record

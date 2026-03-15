@@ -26,6 +26,7 @@ export const TimelineWidget: React.FC<TimelineWidgetProps> = ({ entityId }) => {
     selectedEntityId,
     setSelectedDate,
     setSelectedSceneId,
+    setActiveRasterPath,
     dateRange,
   } = useVegetationContext();
 
@@ -40,6 +41,9 @@ export const TimelineWidget: React.FC<TimelineWidgetProps> = ({ entityId }) => {
   const effectiveEntityId = entityId || selectedEntityId;
 
   // Load timeline from availability API (§12.8.1) — sparse ticks, mean_value for heatmap, local_cloud_pct for tooltips
+  // Ref to track if we already auto-selected a date for this entity+index
+  const autoSelectedRef = React.useRef<string | null>(null);
+
   const loadStats = useCallback(async () => {
     if (!effectiveEntityId) return;
 
@@ -57,20 +61,27 @@ export const TimelineWidget: React.FC<TimelineWidgetProps> = ({ entityId }) => {
       );
       const timeline = response?.timeline || [];
       const mapped: SceneStats[] = timeline.map((item: any) => ({
-        scene_id: item.scene_id,
+        scene_id: item.scene_id || item.id,
         sensing_date: item.date,
         mean_value: item.mean_value ?? null,
         min_value: null,
         max_value: null,
         std_dev: null,
         cloud_coverage: item.local_cloud_pct != null ? Number(item.local_cloud_pct) : null,
+        raster_path: item.raster_path || null,
       }));
       setStats(mapped);
 
-      if (!selectedDate && mapped.length > 0) {
+      // Auto-select most recent date only once per entity+index
+      const autoKey = `${effectiveEntityId}:${selectedIndex}`;
+      if (autoSelectedRef.current !== autoKey && mapped.length > 0) {
+        autoSelectedRef.current = autoKey;
         const mostRecent = mapped[mapped.length - 1];
         setSelectedDate(new Date(mostRecent.sensing_date));
         setSelectedSceneId(mostRecent.scene_id);
+        if (mostRecent.raster_path) {
+          setActiveRasterPath(mostRecent.raster_path);
+        }
       }
     } catch (err) {
       console.error('[TimelineWidget] Error fetching availability:', err);
@@ -78,7 +89,7 @@ export const TimelineWidget: React.FC<TimelineWidgetProps> = ({ entityId }) => {
     } finally {
       setLoading(false);
     }
-  }, [effectiveEntityId, selectedIndex, api, dateRange?.startDate, dateRange?.endDate, selectedDate, setSelectedDate, setSelectedSceneId]);
+  }, [effectiveEntityId, selectedIndex, api, dateRange?.startDate, dateRange?.endDate, setSelectedDate, setSelectedSceneId]);
 
   // Load comparison data when enabled
   const loadComparison = useCallback(async () => {
@@ -115,28 +126,36 @@ export const TimelineWidget: React.FC<TimelineWidgetProps> = ({ entityId }) => {
 
   // Handle date selection from chart
   const handleDateSelect = useCallback((dateStr: string, sceneId: string) => {
-    setSelectedDate(new Date(dateStr)); // Fix: Convert string to Date
+    setSelectedDate(new Date(dateStr));
     setSelectedSceneId(sceneId);
-    
+
+    // Find raster_path for this scene and update it
+    const scene = stats.find(s => s.scene_id === sceneId);
+    if (scene?.raster_path) {
+      setActiveRasterPath(scene.raster_path);
+    }
+
     // Update viewer's currentDate
     if (setCurrentDate) {
       setCurrentDate(new Date(dateStr));
     }
-  }, [setSelectedDate, setSelectedSceneId, setCurrentDate]);
+  }, [setSelectedDate, setSelectedSceneId, setActiveRasterPath, setCurrentDate, stats]);
 
-  // Sync with viewer's currentDate changes
+  // Sync with viewer's currentDate changes — use ref to avoid re-render loop
+  const lastViewerDateRef = React.useRef<number>(0);
   useEffect(() => {
-    if (currentDate && stats.length > 0) {
-      const currentDateStr = currentDate.toISOString().split('T')[0];
-      // Find closest scene to currentDate
-      const closestScene = stats.find(s => s.sensing_date === currentDateStr);
-      // Fix comparison: Convert selectedDate (Date) to string
-      const selectedDateStr = selectedDate ? selectedDate.toISOString().split('T')[0] : null;
-      
-      if (closestScene && closestScene.sensing_date !== selectedDateStr) {
-        setSelectedDate(new Date(closestScene.sensing_date)); // Fix: Convert string to Date
-        setSelectedSceneId(closestScene.scene_id);
-      }
+    if (!currentDate || stats.length === 0) return;
+    const ts = currentDate.getTime();
+    if (ts === lastViewerDateRef.current) return;
+    lastViewerDateRef.current = ts;
+
+    const currentDateStr = currentDate.toISOString().split('T')[0];
+    const closestScene = stats.find(s => s.sensing_date === currentDateStr);
+    const selectedDateStr = selectedDate ? selectedDate.toISOString().split('T')[0] : null;
+
+    if (closestScene && closestScene.sensing_date !== selectedDateStr) {
+      setSelectedDate(new Date(closestScene.sensing_date));
+      setSelectedSceneId(closestScene.scene_id);
     }
   }, [currentDate, stats, selectedDate, setSelectedDate, setSelectedSceneId]);
 

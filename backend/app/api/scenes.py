@@ -160,40 +160,77 @@ async def analyze_parcel(
             detail="Could not determine parcel geometry. Ensure the parcel has a location in the context broker.",
         )
 
-    # Create the download job with chained calculations
-    job = VegetationJob(
-        tenant_id=tenant_id,
-        job_type="download",
-        entity_id=entity_id,
-        entity_type="AgriParcel",
-        parameters={
-            "bbox": bbox,
-            "bounds": geometry,
-            "start_date": start_date,
-            "end_date": end_date,
-            "entity_id": entity_id,
-            "cloud_coverage_threshold": 30,
-            "calculate_indices": indices,
-        },
-        created_by=current_user.get("user_id"),
-    )
-    db.add(job)
-    db.commit()
-    db.refresh(job)
+    # Search ALL available scenes in the date range via Copernicus STAC
+    from app.services.copernicus_client import CopernicusDataSpaceClient
+    from app.services.platform_credentials import get_copernicus_credentials_with_fallback
+    from app.services.temporal_utils import group_scenes_into_windows
 
-    # Dispatch Celery task
-    download_sentinel2_scene.delay(str(job.id), tenant_id, job.parameters)
+    creds = get_copernicus_credentials_with_fallback()
+    if not creds:
+        raise HTTPException(status_code=503, detail="Copernicus credentials not configured")
+
+    copernicus = CopernicusDataSpaceClient()
+    copernicus.set_credentials(creds['client_id'], creds['client_secret'])
+
+    from shapely.geometry import shape as shp_fn
+    geom_obj = shp_fn(geometry)
+    intersects_geojson = geometry
+    if geom_obj.geom_type == 'MultiPolygon':
+        largest = max(geom_obj.geoms, key=lambda g: g.area)
+        intersects_geojson = largest.__geo_interface__
+
+    all_scenes = copernicus.search_scenes(
+        intersects=intersects_geojson,
+        start_date=date_type.fromisoformat(start_date),
+        end_date=date_type.fromisoformat(end_date),
+        cloud_cover_lte=60,
+        limit=50,
+    )
+
+    if not all_scenes:
+        raise HTTPException(status_code=404, detail="No scenes found in the selected date range")
+
+    # Group into dekadal (10-day) windows and pick best scene per window
+    windows = group_scenes_into_windows(all_scenes, date_key='sensing_date')
+
+    job_ids = []
+    for window in windows:
+        # Pick the scene with lowest cloud cover in each window
+        best = sorted(window['scenes'], key=lambda s: s.get('cloud_cover', 100))[0]
+
+        job = VegetationJob(
+            tenant_id=tenant_id,
+            job_type="download",
+            entity_id=entity_id,
+            entity_type="AgriParcel",
+            parameters={
+                "scene_id": best['id'],
+                "bbox": bbox,
+                "bounds": geometry,
+                "entity_id": entity_id,
+                "cloud_coverage_threshold": 60,
+                "calculate_indices": indices,
+            },
+            created_by=current_user.get("user_id"),
+        )
+        db.add(job)
+        db.commit()
+        db.refresh(job)
+
+        download_sentinel2_scene.delay(str(job.id), tenant_id, job.parameters)
+        job_ids.append(str(job.id))
 
     logger.info(
-        "Analyze job %s dispatched for entity %s (indices: %s)",
-        job.id,
-        entity_id,
-        indices,
+        "Multi-scene analysis: %d windows dispatched for entity %s (scenes: %d, indices: %s)",
+        len(windows), entity_id, len(all_scenes), indices,
     )
     return {
-        "job_id": str(job.id),
-        "message": "Analysis started",
+        "job_id": job_ids[0] if job_ids else None,
+        "job_ids": job_ids,
+        "message": f"Analysis started: {len(windows)} date windows, {len(all_scenes)} scenes found",
         "indices": indices,
+        "windows": len(windows),
+        "scenes_found": len(all_scenes),
         "date_range": {"start": start_date, "end": end_date},
     }
 

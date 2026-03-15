@@ -63,9 +63,12 @@ async def get_available_scenes(
         "timeline": [
             {
                 "id": str(s.id),
+                "scene_id": str(s.id),
                 "date": s.sensing_date.isoformat(),
                 "mean_value": float(c.mean_value) if c.mean_value else None,
-                "cloud_pct": s.cloud_coverage
+                "local_cloud_pct": s.cloud_coverage,
+                "cloud_pct": s.cloud_coverage,
+                "raster_path": c.result_raster_path,
             } for s, c in rows
         ]
     }

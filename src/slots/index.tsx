@@ -8,6 +8,7 @@
 // Import UNWRAPPED components (Host's SlotRenderer will wrap with moduleProvider)
 import { TimelineWidget } from '../components/slots/TimelineWidget';
 import VegetationLayerControl from '../components/slots/VegetationLayerControl';
+import VegetationLayerToggle from '../components/slots/VegetationLayerToggle';
 import { VegetationLayer } from '../components/slots/VegetationLayer';
 import { VegetationProvider } from '../services/vegetationContext';
 
@@ -51,6 +52,16 @@ export const vegetationPrimeSlots: ModuleViewerSlots = {
   ],
   'layer-toggle': [
     {
+      id: 'vegetation-prime-layer-toggle',
+      moduleId: MODULE_ID,
+      component: 'VegetationLayerToggle',
+      priority: 10,
+      localComponent: VegetationLayerToggle,
+      showWhen: { entityType: ['AgriParcel'] }
+    }
+  ],
+  'context-panel': [
+    {
       id: 'vegetation-prime-layer-control',
       moduleId: MODULE_ID,
       component: 'VegetationLayerControl',
@@ -60,8 +71,6 @@ export const vegetationPrimeSlots: ModuleViewerSlots = {
       showWhen: { entityType: ['AgriParcel'] }
     }
   ],
-  // Config & Analytics live in the module page tabs — not duplicated here.
-  'context-panel': [],
   'bottom-panel': [
     {
       id: 'vegetation-prime-timeline',

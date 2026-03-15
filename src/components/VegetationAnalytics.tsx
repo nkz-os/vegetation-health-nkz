@@ -12,13 +12,14 @@ import { Card } from '@nekazari/ui-kit';
 import { useVegetationContext } from '../services/vegetationContext';
 import { useVegetationApi } from '../services/api';
 import TimeseriesChart from './widgets/TimeseriesChart';
+import { SetupWizard } from './pages/SetupWizard';
 import { useAuth } from '../hooks/useAuth';
 import { useTranslation } from 'react-i18next';
 import type { VegetationJob } from '../types';
 import {
   Loader2, Calculator, AlertCircle, CheckCircle,
   RefreshCw, BarChart3, Satellite, Leaf,
-  Trash2, Clock, Play, XCircle,
+  Trash2, Clock, Play, XCircle, Activity, Power,
 } from 'lucide-react';
 
 // Main indices the user can browse after analysis
@@ -51,6 +52,12 @@ export const VegetationAnalytics: React.FC = () => {
   const [loadingJobs, setLoadingJobs] = useState(false);
   const [loadingResults, setLoadingResults] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Monitoring subscription state
+  const [subscription, setSubscription] = useState<any | null>(null);
+  const [loadingSub, setLoadingSub] = useState(false);
+  const [togglingMonitoring, setTogglingMonitoring] = useState(false);
+  const [showSetupWizard, setShowSetupWizard] = useState(false);
 
   // Date range for analysis
   const [startDate, setStartDate] = useState(() => {
@@ -93,6 +100,48 @@ export const VegetationAnalytics: React.FC = () => {
   useEffect(() => {
     loadResults();
   }, [loadResults]);
+
+  // Load subscription status for this entity
+  const loadSubscription = useCallback(async () => {
+    if (!selectedEntityId || !isAuthenticated) {
+      setSubscription(null);
+      return;
+    }
+    setLoadingSub(true);
+    try {
+      const sub = await api.getSubscriptionForEntity(selectedEntityId);
+      setSubscription(sub);
+    } catch {
+      setSubscription(null);
+    } finally {
+      setLoadingSub(false);
+    }
+  }, [selectedEntityId, isAuthenticated]);
+
+  useEffect(() => {
+    loadSubscription();
+  }, [loadSubscription]);
+
+  // Toggle monitoring active/inactive
+  const handleToggleMonitoring = async () => {
+    if (!subscription) return;
+    setTogglingMonitoring(true);
+    try {
+      await api.updateSubscription(subscription.id, { is_active: !subscription.is_active });
+      await loadSubscription();
+    } catch {
+      // Silently fail — user sees no change
+    } finally {
+      setTogglingMonitoring(false);
+    }
+  };
+
+  // Called when SetupWizard completes
+  const handleMonitoringActivated = () => {
+    setShowSetupWizard(false);
+    loadSubscription();
+    loadResults();
+  };
 
   // Load jobs for this entity
   const loadJobs = useCallback(async () => {
@@ -263,12 +312,53 @@ export const VegetationAnalytics: React.FC = () => {
           <h2 className="text-xl font-bold text-slate-800">{parcelShortName}</h2>
           <p className="text-sm text-slate-500">{t('analyticsPage.analyticsDashboard')}</p>
         </div>
-        <button
-          onClick={() => setSelectedEntityId(null)}
-          className="text-sm text-slate-500 hover:text-slate-700 underline"
-        >
-          {t('analyticsPage.changeParcel')}
-        </button>
+        <div className="flex items-center gap-3">
+          {/* Monitoring status badge */}
+          {!loadingSub && (
+            subscription ? (
+              <div className="flex items-center gap-2">
+                <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium ${
+                  subscription.is_active
+                    ? 'bg-emerald-100 text-emerald-700'
+                    : 'bg-amber-100 text-amber-700'
+                }`}>
+                  <Activity className="w-3 h-3" />
+                  {subscription.is_active
+                    ? t('analyticsPage.activeMonitoring')
+                    : t('analyticsPage.inactiveMonitoring')}
+                </span>
+                <button
+                  onClick={handleToggleMonitoring}
+                  disabled={togglingMonitoring}
+                  className={`p-1.5 rounded-lg transition-colors ${
+                    subscription.is_active
+                      ? 'text-amber-500 hover:bg-amber-50 hover:text-amber-700'
+                      : 'text-emerald-500 hover:bg-emerald-50 hover:text-emerald-700'
+                  }`}
+                  title={subscription.is_active
+                    ? t('monitoring.deactivate')
+                    : t('monitoring.activate')}
+                >
+                  <Power className={`w-4 h-4 ${togglingMonitoring ? 'animate-pulse' : ''}`} />
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => setShowSetupWizard(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-emerald-600 text-white hover:bg-emerald-700 transition-colors"
+              >
+                <Activity className="w-3 h-3" />
+                {t('analyticsPage.configureMonitoring')}
+              </button>
+            )
+          )}
+          <button
+            onClick={() => setSelectedEntityId(null)}
+            className="text-sm text-slate-500 hover:text-slate-700 underline"
+          >
+            {t('analyticsPage.changeParcel')}
+          </button>
+        </div>
       </div>
 
       {/* Analyze Section */}
@@ -447,9 +537,18 @@ export const VegetationAnalytics: React.FC = () => {
           <div className="text-center py-8">
             <Leaf className="w-12 h-12 text-slate-200 mx-auto mb-3" />
             <h3 className="text-lg font-medium text-slate-600 mb-1">{t('analytics.noScenes')}</h3>
-            <p className="text-sm text-slate-400 max-w-md mx-auto">
+            <p className="text-sm text-slate-400 max-w-md mx-auto mb-4">
               {t('analyticsPage.inactiveMonitoringDesc')}
             </p>
+            {!subscription && (
+              <button
+                onClick={() => setShowSetupWizard(true)}
+                className="inline-flex items-center gap-2 px-5 py-2.5 bg-emerald-600 text-white rounded-lg text-sm font-semibold hover:bg-emerald-700 transition-colors shadow-sm"
+              >
+                <Activity className="w-4 h-4" />
+                {t('analyticsPage.configureMonitoring')}
+              </button>
+            )}
           </div>
         </Card>
       )}
@@ -506,6 +605,18 @@ export const VegetationAnalytics: React.FC = () => {
           </div>
         )}
       </Card>
+
+      {/* Setup Wizard Modal */}
+      {selectedEntityId && (
+        <SetupWizard
+          open={showSetupWizard}
+          onClose={() => setShowSetupWizard(false)}
+          entityId={selectedEntityId}
+          entityName={parcelShortName}
+          geometry={null}
+          onComplete={handleMonitoringActivated}
+        />
+      )}
     </div>
   );
 };

@@ -694,20 +694,53 @@ class VegetationIndexProcessor:
         
         return found_bands
     
+    def create_geometry_mask(self, geometry_geojson: dict) -> np.ndarray:
+        """Rasterize a GeoJSON polygon into a boolean mask matching the raster grid.
+
+        Returns:
+            Boolean mask where True = pixel is OUTSIDE the polygon (to be excluded).
+        """
+        from rasterio.features import rasterize as rio_rasterize
+        from shapely.geometry import shape as shp
+        from pyproj import Transformer
+        from shapely.ops import transform
+
+        geom = shp(geometry_geojson)
+
+        # Reproject geometry to raster CRS if needed
+        raster_crs = self.band_meta.get('crs')
+        if raster_crs and str(raster_crs) != 'EPSG:4326':
+            transformer = Transformer.from_crs('EPSG:4326', raster_crs, always_xy=True)
+            geom = transform(transformer.transform, geom)
+
+        # Rasterize: 1 inside polygon, 0 outside
+        inside = rio_rasterize(
+            [(geom, 1)],
+            out_shape=(self.band_meta['height'], self.band_meta['width']),
+            transform=self.band_meta['transform'],
+            fill=0,
+            dtype=np.uint8,
+        )
+        # Invert: True where pixel should be excluded
+        return inside == 0
+
     def calculate_statistics(self, index_array: np.ndarray, mask: Optional[np.ndarray] = None) -> Dict[str, float]:
         """Calculate statistics for index array.
-        
+
         Args:
             index_array: Index values array
-            mask: Optional mask to exclude certain pixels
-            
+            mask: Optional boolean mask (True = exclude pixel)
+
         Returns:
             Dictionary with statistics
         """
         if mask is not None:
-            index_array = np.ma.masked_array(index_array, mask=mask)
-        
-        valid_data = index_array[~np.isnan(index_array)]
+            masked = np.ma.masked_array(index_array, mask=mask)
+            valid_data = masked.compressed()  # removes masked values
+            valid_data = valid_data[~np.isnan(valid_data)]
+        else:
+            valid_data = index_array[~np.isnan(index_array)]
+
         if len(valid_data) == 0:
             return {
                 'mean': 0.0,
@@ -716,7 +749,7 @@ class VegetationIndexProcessor:
                 'std': 0.0,
                 'pixel_count': 0
             }
-        
+
         return {
             'mean': float(np.mean(valid_data)),
             'min': float(np.min(valid_data)),

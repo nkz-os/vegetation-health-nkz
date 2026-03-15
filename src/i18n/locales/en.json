@@ -313,6 +313,10 @@
         "show": "Show",
         "cloudCoverage": "Cloud coverage"
     },
+    "monitoring": {
+        "activate": "Activate monitoring",
+        "deactivate": "Deactivate monitoring"
+    },
     "dateSelector": {
         "placeholder": "Select a date..."
     }

@@ -14,6 +14,7 @@ import {
   AlertFormatResponse,
   FormulaPreviewParams,
   FormulaPreviewResponse,
+  ModuleCapabilities,
 } from '../types';
 
 /**
@@ -578,6 +579,27 @@ export class VegetationApiClient {
     return subs.find((s: any) => s.entity_id === entityId) || null;
   }
 
+  /**
+   * Update a subscription (toggle is_active, change frequency, etc.)
+   */
+  async updateSubscription(subId: string, updates: {
+    is_active?: boolean;
+    frequency?: string;
+    index_types?: string[];
+    status?: string;
+  }): Promise<any> {
+    const response = await this.client.patch(`/subscriptions/${subId}`, updates);
+    return response;
+  }
+
+  /**
+   * Delete a subscription
+   */
+  async deleteSubscription(subId: string): Promise<{ message: string }> {
+    const response = await this.client.delete(`/subscriptions/${subId}`);
+    return response as unknown as { message: string };
+  }
+
   // ==========================================================================
   // Ferrari Frontend - Export Methods
   // ==========================================================================
@@ -663,6 +685,18 @@ export class VegetationApiClient {
       console.warn('[API] Anomaly check failed:', error);
       throw error;
     }
+  }
+
+  // ==========================================================================
+  // Module Capabilities
+  // ==========================================================================
+
+  /**
+   * Get module capabilities for graceful degradation
+   */
+  async getCapabilities(): Promise<ModuleCapabilities> {
+    const response = await this.client.get('/capabilities');
+    return response as unknown as ModuleCapabilities;
   }
 
   // ==========================================================================

@@ -313,6 +313,10 @@
         "show": "Erakutsi",
         "cloudCoverage": "Laino estaldura"
     },
+    "monitoring": {
+        "activate": "Monitorizazioa aktibatu",
+        "deactivate": "Monitorizazioa desaktibatu"
+    },
     "dateSelector": {
         "placeholder": "Hautatu data bat..."
     }

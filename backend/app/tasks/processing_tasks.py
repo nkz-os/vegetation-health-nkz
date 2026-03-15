@@ -8,6 +8,7 @@ from typing import Dict, Any, List, Optional
 from datetime import datetime, date, timezone
 import uuid
 from pathlib import Path
+import numpy as np
 
 from app.celery_app import celery_app
 from app.models import VegetationJob, VegetationScene, VegetationIndexCache
@@ -394,12 +395,26 @@ def calculate_vegetation_index(
         else:
             composite_array = index_arrays[0]
         
-        # Calculate statistics
+        # Calculate statistics with geometry mask (if parcel polygon available)
         self.update_state(state='PROGRESS', meta={'progress': 80, 'message': 'Calculating statistics'})
         processor = VegetationIndexProcessor({})  # Dummy processor for statistics
         processor.band_meta = reference_meta
-        statistics = processor.calculate_statistics(composite_array)
-        
+
+        geometry_mask = None
+        parcel_geojson = job.parameters.get('bounds') if job.parameters else None
+        if parcel_geojson and isinstance(parcel_geojson, dict) and 'coordinates' in parcel_geojson:
+            try:
+                geometry_mask = processor.create_geometry_mask(parcel_geojson)
+                logger.info("Geometry mask applied — stats will only include parcel pixels")
+            except Exception as mask_err:
+                logger.warning("Could not create geometry mask: %s — using full raster", mask_err)
+
+        statistics = processor.calculate_statistics(composite_array, mask=geometry_mask)
+
+        # Apply mask to raster: set pixels outside parcel to nodata
+        if geometry_mask is not None:
+            composite_array = np.where(geometry_mask, np.nan, composite_array)
+
         # Save raster
         self.update_state(
             state="PROGRESS",

@@ -133,12 +133,27 @@ export interface SceneStats {
   max_value: number | null;
   std_dev: number | null;
   cloud_coverage: number | null;
+  raster_path?: string | null;
 }
 
 export interface TimelineStatsResponse {
   entity_id: string;
   index_type: string;
   stats: SceneStats[];
+  data_points: Array<{
+    date: string;
+    mean: number | null;
+    min: number | null;
+    max: number | null;
+    std_dev: number | null;
+  }>;
+  summary: {
+    avg: number | null;
+    min: number | null;
+    max: number | null;
+    count: number;
+  };
+  months: number;
   period_start: string;
   period_end: string;
 }
@@ -305,6 +320,21 @@ export interface ZoningGeoJsonResponse {
       coordinates: number[][][] | number[][][][];
     };
   }>;
+}
+
+/**
+ * Module capabilities for graceful degradation
+ */
+export interface ModuleCapabilities {
+  n8n_available: boolean;
+  intelligence_available: boolean;
+  isobus_available: boolean;
+  features: {
+    predictions: boolean;
+    alerts_webhook: boolean;
+    export_isoxml: boolean;
+    send_to_cloud: boolean;
+  };
 }
 
 /**
