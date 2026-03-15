@@ -310,6 +310,10 @@
         "dynamicRangeDesc": "Ajustar color a min/max",
         "colorLegend": "Leyenda de colores",
         "hide": "Ocultar",
-        "show": "Mostrar"
+        "show": "Mostrar",
+        "cloudCoverage": "Cobertura de nubes"
+    },
+    "dateSelector": {
+        "placeholder": "Selecciona una fecha..."
     }
 }

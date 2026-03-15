@@ -117,7 +117,7 @@ const VegetationLayerControl: React.FC = () => {
             {/* Scene Info */}
             {currentScene && (
               <div className="flex items-center gap-4 text-xs text-slate-500 mt-1 bg-slate-50 p-1.5 rounded border border-slate-100">
-                <div className="flex items-center gap-1" title="Cobertura de nubes">
+                <div className="flex items-center gap-1" title={t('layerControl.cloudCoverage', 'Cobertura de nubes')}>
                   <Cloud className={`w-3 h-3 ${cloudCoverage > 20 ? 'text-amber-500' : 'text-slate-400'}`} />
                   <span>{cloudCoverage.toFixed(1)}%</span>
                 </div>
@@ -129,7 +129,7 @@ const VegetationLayerControl: React.FC = () => {
           {/* Layer Opacity */}
           <div className="space-y-1">
             <div className="flex justify-between text-xs text-slate-600">
-               <span>Opacidad</span>
+               <span>{t('layerControl.opacity', 'Opacidad')}</span>
                <span>{opacity}%</span>
             </div>
             <input 
@@ -146,8 +146,8 @@ const VegetationLayerControl: React.FC = () => {
           <div className="space-y-2 pt-2 border-t border-slate-100">
              <div className="flex items-center justify-between">
                 <label className="text-sm text-slate-700 flex flex-col">
-                   <span>Máscara de Nubes</span>
-                   <span className="text-xs text-slate-400">Ocultar áreas nubladas</span>
+                   <span>{t('layerControl.cloudMask', 'Máscara de Nubes')}</span>
+                   <span className="text-xs text-slate-400">{t('layerControl.cloudMaskDesc', 'Ocultar áreas nubladas')}</span>
                 </label>
                 <input 
                    type="checkbox" 
@@ -159,8 +159,8 @@ const VegetationLayerControl: React.FC = () => {
             
              <div className="flex items-center justify-between mt-2">
                 <label className="text-sm text-slate-700 flex flex-col">
-                   <span>Rango Dinámico</span>
-                   <span className="text-xs text-slate-400">Ajustar color a min/max</span>
+                   <span>{t('layerControl.dynamicRange', 'Rango Dinámico')}</span>
+                   <span className="text-xs text-slate-400">{t('layerControl.dynamicRangeDesc', 'Ajustar color a min/max')}</span>
                 </label>
                 <input 
                    type="checkbox" 
@@ -173,12 +173,12 @@ const VegetationLayerControl: React.FC = () => {
 
           {/* Legend Toggle */}
           <div className="flex items-center justify-between pt-2 border-t border-slate-200">
-            <span className="text-xs text-slate-600">Leyenda de colores</span>
+            <span className="text-xs text-slate-600">{t('layerControl.colorLegend', 'Leyenda de colores')}</span>
             <button
               onClick={() => setShowLegend(!showLegend)}
               className="text-xs text-green-600 hover:text-green-700"
             >
-              {showLegend ? 'Ocultar' : 'Mostrar'}
+              {showLegend ? t('layerControl.hide', 'Ocultar') : t('layerControl.show', 'Mostrar')}
             </button>
           </div>
         </div>

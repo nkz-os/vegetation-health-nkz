@@ -1,5 +1,6 @@
 import React from 'react';
 import { Calendar, Cloud } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { VegetationScene } from '../../types';
 
 interface DateSelectorProps {
@@ -9,6 +10,7 @@ interface DateSelectorProps {
 }
 
 export const DateSelector: React.FC<DateSelectorProps> = ({ selectedSceneId, scenes, onSelect }) => {
+  const { t } = useTranslation();
   return (
     <div className="space-y-3">
       <div className="relative">
@@ -25,10 +27,10 @@ export const DateSelector: React.FC<DateSelectorProps> = ({ selectedSceneId, sce
           }}
           className="block w-full pl-10 pr-3 py-2 text-sm border border-slate-200 rounded-lg focus:ring-green-500 focus:border-green-500 bg-white text-slate-700 appearance-none cursor-pointer hover:bg-slate-50 transition-colors"
         >
-          <option value="">Selecciona una fecha...</option>
+          <option value="">{t('dateSelector.placeholder', 'Selecciona una fecha...')}</option>
           {scenes.map((scene) => (
             <option key={scene.id} value={scene.id}>
-              {scene.sensing_date} • {scene.cloud_coverage?.toFixed(0)}% nubes
+              {scene.sensing_date} — ☁ {scene.cloud_coverage?.toFixed(0)}%
             </option>
           ))}
         </select>

@@ -310,6 +310,10 @@
         "dynamicRangeDesc": "Doitu kolorea min/max-era",
         "colorLegend": "Kolore legenda",
         "hide": "Ezkutatu",
-        "show": "Erakutsi"
+        "show": "Erakutsi",
+        "cloudCoverage": "Laino estaldura"
+    },
+    "dateSelector": {
+        "placeholder": "Hautatu data bat..."
     }
 }
