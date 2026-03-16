@@ -56,23 +56,16 @@ def _render_tile(s3_url: str, z: int, x: int, y: int, index_type: str) -> Respon
     with Reader(s3_url) as cog:
         img = cog.tile(x, y, z)
 
-        # Build alpha mask: transparent where data is NaN or nodata
-        data = img.data
-        if data.dtype.kind == 'f':
-            valid = ~np.isnan(data[0])
-        else:
-            valid = np.ones(data[0].shape, dtype=bool)
-
-        # Also respect existing mask if present
-        if img.mask is not None and img.mask.shape == data[0].shape:
-            valid = valid & (img.mask > 0)
+        # Mask NaN pixels as transparent (rio-tiler v7: mask is read-only,
+        # must mask the underlying MaskedArray directly)
+        arr = img.array  # np.ma.MaskedArray
+        if arr.dtype.kind == 'f':
+            nan_pixels = np.isnan(arr.data[0])
+            if nan_pixels.any():
+                arr[:, nan_pixels] = np.ma.masked
 
         vmin, vmax = render['rescale']
         img.rescale(in_range=((vmin, vmax),))
-
-        # Apply alpha: 255 where valid, 0 where nodata
-        alpha = np.where(valid, 255, 0).astype(np.uint8)
-        img.mask = alpha
 
         content = img.render(img_format="PNG", colormap=cm)
         return Response(
