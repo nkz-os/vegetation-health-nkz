@@ -3,15 +3,14 @@
  * The full control panel lives in the context-panel slot.
  */
 
-import React, { useState } from 'react';
+import React from 'react';
 import { Leaf } from 'lucide-react';
 import { useVegetationContext } from '../../services/vegetationContext';
 
 const VegetationLayerToggle: React.FC = () => {
-  const { selectedEntityId, selectedIndex, activeJobId, indexResults } = useVegetationContext();
-  const [enabled, setEnabled] = useState(true);
+  const { selectedEntityId, selectedIndex, activeJobId, activeRasterPath, indexResults, layerVisible, setLayerVisible } = useVegetationContext();
 
-  const hasLayer = !!(activeJobId || (selectedIndex && indexResults?.[selectedIndex]?.job_id));
+  const hasLayer = !!(activeJobId || activeRasterPath || (selectedIndex && indexResults?.[selectedIndex]?.job_id));
 
   if (!selectedEntityId) return null;
 
@@ -22,10 +21,10 @@ const VegetationLayerToggle: React.FC = () => {
       {hasLayer && (
         <input
           type="checkbox"
-          checked={enabled}
-          onChange={(e) => setEnabled(e.target.checked)}
+          checked={layerVisible}
+          onChange={(e) => setLayerVisible(e.target.checked)}
           className="ml-auto toggle toggle-sm toggle-success"
-          title={enabled ? 'Ocultar capa' : 'Mostrar capa'}
+          title={layerVisible ? 'Ocultar capa' : 'Mostrar capa'}
         />
       )}
       {!hasLayer && (

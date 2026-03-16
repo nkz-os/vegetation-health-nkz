@@ -36,6 +36,7 @@ interface SharedState {
   selectedSceneId: string | null;
   selectedDate: Date | null;
   layerOpacity: number; // 0-100
+  layerVisible: boolean;
 }
 
 interface VegetationStore {
@@ -57,6 +58,7 @@ function getStore(): VegetationStore {
         selectedSceneId: null,
         selectedDate: null,
         layerOpacity: 75,
+        layerVisible: true,
       },
       _listeners: new Set(),
       _version: 0,
@@ -97,6 +99,7 @@ interface VegetationContextType {
   activeRasterPath: string | null;
   indexResults: Record<string, IndexResult>;
   layerOpacity: number;
+  layerVisible: boolean;
   setSelectedEntityId: (id: string | null) => void;
   setSelectedSceneId: (id: string | null) => void;
   setSelectedIndex: (index: VegetationIndexType | null) => void;
@@ -106,6 +109,7 @@ interface VegetationContextType {
   setActiveRasterPath: (path: string | null) => void;
   setIndexResults: (results: Record<string, IndexResult>) => void;
   setLayerOpacity: (opacity: number) => void;
+  setLayerVisible: (visible: boolean) => void;
   resetContext: () => void;
 }
 
@@ -150,6 +154,10 @@ export const VegetationProvider: React.FC<{ children: ReactNode }> = ({ children
 
   const setLayerOpacity = useCallback((opacity: number) => {
     updateStore({ layerOpacity: opacity });
+  }, []);
+
+  const setLayerVisible = useCallback((visible: boolean) => {
+    updateStore({ layerVisible: visible });
   }, []);
 
   // Wrapper for setSelectedEntityId (local + clear shared state on change)
@@ -223,6 +231,7 @@ export const VegetationProvider: React.FC<{ children: ReactNode }> = ({ children
       selectedSceneId: null,
       selectedDate: null,
       layerOpacity: 75,
+      layerVisible: true,
     });
     setDateRange({
       startDate: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000),
@@ -243,6 +252,7 @@ export const VegetationProvider: React.FC<{ children: ReactNode }> = ({ children
         activeRasterPath: sharedState.activeRasterPath,
         indexResults: sharedState.indexResults,
         layerOpacity: sharedState.layerOpacity,
+        layerVisible: sharedState.layerVisible,
         setSelectedEntityId,
         setSelectedSceneId,
         setSelectedIndex,
@@ -252,6 +262,7 @@ export const VegetationProvider: React.FC<{ children: ReactNode }> = ({ children
         setActiveRasterPath,
         setIndexResults,
         setLayerOpacity,
+        setLayerVisible,
         resetContext,
       }}
     >

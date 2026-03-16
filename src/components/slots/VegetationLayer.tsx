@@ -30,6 +30,7 @@ export const VegetationLayer: React.FC<VegetationLayerProps> = ({ viewer }) => {
     selectedEntityId, indexResults, setIndexResults,
     selectedDate,
     layerOpacity,
+    layerVisible,
   } = useVegetationContext();
   const api = useVegetationApi();
   const layerRef = useRef<any>(null);
@@ -185,12 +186,16 @@ export const VegetationLayer: React.FC<VegetationLayerProps> = ({ viewer }) => {
     };
   }, [viewer, selectedIndex, activeJobId, activeRasterPath, selectedEntityId, indexResults, tileBounds]);
 
-  // Update opacity without recreating the layer
+  // Update opacity and visibility without recreating the layer
   useEffect(() => {
     if (layerRef.current) {
-      layerRef.current.alpha = (layerOpacity ?? 75) / 100;
+      layerRef.current.alpha = layerVisible ? (layerOpacity ?? 75) / 100 : 0;
+      layerRef.current.show = layerVisible;
     }
-  }, [layerOpacity]);
+    if (dataSourceRef.current) {
+      dataSourceRef.current.show = layerVisible;
+    }
+  }, [layerOpacity, layerVisible]);
 
   // Fade flash when layer changes (brief opacity pulse)
   const [isTransitioning, setIsTransitioning] = useState(false);

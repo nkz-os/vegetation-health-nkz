@@ -43,14 +43,37 @@ os.environ.setdefault("GDAL_DISABLE_READDIR_ON_OPEN", "EMPTY_DIR")
 
 
 def _render_tile(s3_url: str, z: int, x: int, y: int, index_type: str) -> Response:
-    """Shared tile rendering logic."""
+    """Shared tile rendering logic.
+
+    Handles nodata / NaN pixels as fully transparent so areas outside
+    the parcel polygon are invisible on the map.
+    """
+    import numpy as np
+
     render = INDEX_RENDER_CONFIG.get(index_type.upper(), DEFAULT_RENDER)
     cm = colormap_handler.get(render['colormap_name'])
 
     with Reader(s3_url) as cog:
         img = cog.tile(x, y, z)
+
+        # Build alpha mask: transparent where data is NaN or nodata
+        data = img.data
+        if data.dtype.kind == 'f':
+            valid = ~np.isnan(data[0])
+        else:
+            valid = np.ones(data[0].shape, dtype=bool)
+
+        # Also respect existing mask if present
+        if img.mask is not None and img.mask.shape == data[0].shape:
+            valid = valid & (img.mask > 0)
+
         vmin, vmax = render['rescale']
         img.rescale(in_range=((vmin, vmax),))
+
+        # Apply alpha: 255 where valid, 0 where nodata
+        alpha = np.where(valid, 255, 0).astype(np.uint8)
+        img.mask = alpha
+
         content = img.render(img_format="PNG", colormap=cm)
         return Response(
             content,
