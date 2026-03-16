@@ -186,8 +186,8 @@ export const SmartTimeline: React.FC<SmartTimelineProps> = ({
       </div>
 
       {/* Chart */}
-      <div className="px-2 py-2" style={{ height: 160 }}>
-        <ResponsiveContainer width="100%" height="100%">
+      <div className="px-2 py-2" style={{ height: 160, minWidth: 100 }}>
+        <ResponsiveContainer width="100%" height="100%" minWidth={80}>
           <ComposedChart
             data={chartData}
             onClick={handleChartClick}
