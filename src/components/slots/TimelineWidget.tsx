@@ -70,6 +70,8 @@ export const TimelineWidget: React.FC<TimelineWidgetProps> = ({ entityId }) => {
         cloud_coverage: item.local_cloud_pct != null ? Number(item.local_cloud_pct) : null,
         raster_path: item.raster_path || null,
       }));
+      // Ensure ascending chronological order (oldest first)
+      mapped.sort((a, b) => a.sensing_date.localeCompare(b.sensing_date));
       setStats(mapped);
 
       // Auto-select most recent date only once per entity+index
