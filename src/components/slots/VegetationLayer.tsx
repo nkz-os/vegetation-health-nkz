@@ -138,7 +138,7 @@ export const VegetationLayer: React.FC<VegetationLayerProps> = ({ viewer }) => {
       tileUrl = `${apiBase}/api/vegetation/tiles/render/{z}/{x}/{y}.png?raster_path=${encodedPath}&index=${selectedIndex}`;
       boundsUrl = `${apiBase}/api/vegetation/tiles/bounds?raster_path=${encodedPath}`;
     } else {
-      tileUrl = `${apiBase}/api/vegetation/tiles/${jobId}/{z}/{x}/{y}.png`;
+      tileUrl = `${apiBase}/api/vegetation/tiles/${jobId}/{z}/{x}/{y}.png?index=${selectedIndex}`;
       boundsUrl = `${apiBase}/api/vegetation/tiles/${jobId}/bounds`;
     }
 

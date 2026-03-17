@@ -189,7 +189,7 @@ async def get_tile(
 
     bucket = os.getenv("VEGETATION_COG_BUCKET") or generate_tenant_bucket_name(job.tenant_id)
     s3_url = f"s3://{bucket}/{raster_path}"
-    index_type = (job.result.get('index_type') or index or 'NDVI').upper()
+    index_type = (index or job.result.get('index_type') or 'NDVI').upper()
 
     try:
         return _render_tile(s3_url, z, x, y, index_type)
