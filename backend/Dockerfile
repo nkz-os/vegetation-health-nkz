@@ -2,6 +2,7 @@
 # Optimized for GIS performance, security, and build reliability
 
 FROM python:3.11-slim
+LABEL org.opencontainers.image.source=https://github.com/nkz-os/vegetation-health-nkz
 
 # 1. Environment Variables
 # GDAL and Python configuration
