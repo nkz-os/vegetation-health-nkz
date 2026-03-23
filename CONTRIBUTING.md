@@ -13,7 +13,7 @@ Thank you for your interest in contributing to Vegetation Prime! This document p
 
 ### Reporting Bugs
 
-1. Check if the bug has already been reported in [Issues](https://github.com/k8-benetis/vegetation-health-nkz/issues)
+1. Check if the bug has already been reported in [Issues](https://github.com/nkz-os/vegetation-health-nkz/issues)
 2. If not, create a new issue with:
    - Clear title and description
    - Steps to reproduce
