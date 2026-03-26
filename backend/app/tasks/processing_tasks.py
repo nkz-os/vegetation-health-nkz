@@ -410,6 +410,15 @@ def calculate_vegetation_index(
                 logger.warning("Could not create geometry mask: %s — using full raster", mask_err)
 
         statistics = processor.calculate_statistics(composite_array, mask=geometry_mask)
+        
+        # SOTA: Generate Vectorized GeoJSON for offline mobile sync
+        self.update_state(state='PROGRESS', meta={'progress': 85, 'message': 'Vectorizing index for offline sync'})
+        try:
+            vector_geojson = processor.vectorize_index(composite_array, index_type, mask=geometry_mask)
+            logger.info(f"Vectorized index {index_type} for GeoJSON Sync")
+        except Exception as v_err:
+            logger.warning("Could not vectorize index: %s. Proceeding without vector data.", v_err)
+            vector_geojson = None
 
         # Apply mask to raster: set pixels outside parcel to nodata
         if geometry_mask is not None:
@@ -482,6 +491,7 @@ def calculate_vegetation_index(
             max_value=statistics['max'],
             std_dev=statistics['std'],
             pixel_count=statistics['pixel_count'],
+            statistics_geojson=vector_geojson,  # Inject vectorized GeoJSON FeatureCollection
             result_raster_path=remote_raster_path,
             calculated_at=datetime.utcnow().isoformat(),
             calculation_time_ms=None

@@ -799,23 +799,18 @@ class VegetationIndexProcessor:
             method: Composite method ('median' or 'mean'). Median is recommended for cloud removal.
             
         Returns:
-            Composite index array
+            Composite array
         """
         if not index_arrays:
-            raise ValueError("No index arrays provided for composite")
+            raise ValueError("No arrays provided for composite")
         
         if len(index_arrays) == 1:
             return index_arrays[0]
-        
-        # Stack arrays (shape: [n_scenes, height, width])
+            
         stacked = np.stack(index_arrays, axis=0)
         
-        # Replace NaN with -9999 for proper handling
-        stacked = np.where(np.isnan(stacked), -9999, stacked)
-        
         if method == 'median':
-            # Median composite (best for cloud removal)
-            composite = np.median(stacked, axis=0)
+            return np.nanmedian(stacked, axis=0)
         elif method == 'mean':
             # Mean composite
             composite = np.mean(stacked, axis=0)
@@ -827,4 +822,102 @@ class VegetationIndexProcessor:
         
         logger.info(f"Created {method} temporal composite from {len(index_arrays)} scenes")
         return composite
+
+    def vectorize_index(self, index_array: np.ndarray, index_type: str, mask: Optional[np.ndarray] = None) -> dict:
+        """
+        Vectorize the continuous index raster into discrete polygons (GeoJSON FeatureCollection).
+        Used for Asynchronous Sync to Cabin HMI (WatermelonDB).
+
+        Args:
+            index_array: The calculated vegetation index array.
+            index_type: The type of index (e.g. 'NDVI').
+            mask: Optional geometry mask. True pixels will be ignored.
+
+        Returns:
+            A GeoJSON FeatureCollection dict.
+        """
+        import rasterio.features
+        from pyproj import Transformer
+        from shapely.geometry import shape, mapping
+        from shapely.ops import transform
+        
+        if self.band_meta is None:
+            raise ValueError("Band metadata missing. Cannot vectorize.")
+
+        # Reclassify continuous data into 5 discrete zones for the frontend to render easily
+        # Classes: 1 (Very Low), 2 (Low), 3 (Moderate), 4 (High), 5 (Very High)
+        discrete = np.full_like(index_array, 0, dtype=np.uint8)
+        
+        # Valid range masks (avoid nodata/nans)
+        valid = ~np.isnan(index_array)
+        if mask is not None:
+            valid = valid & ~mask
+
+        # Example breaks for NDVI. For generic, we just use equidistant bins between min and max
+        min_val = float(np.nanmin(index_array[valid])) if np.any(valid) else 0.0
+        max_val = float(np.nanmax(index_array[valid])) if np.any(valid) else 1.0
+        
+        # If absolute range is tiny, fallback to standard -1 to +1 assumption
+        if (max_val - min_val) < 0.1:
+            min_val, max_val = 0.0, 1.0
+
+        bins = np.linspace(min_val, max_val, 6) # 5 bins
+        
+        discrete[valid & (index_array < bins[1])] = 1
+        discrete[valid & (index_array >= bins[1]) & (index_array < bins[2])] = 2
+        discrete[valid & (index_array >= bins[2]) & (index_array < bins[3])] = 3
+        discrete[valid & (index_array >= bins[3]) & (index_array < bins[4])] = 4
+        discrete[valid & (index_array >= bins[4])] = 5
+        
+        # Mask out nodata completely (0)
+        discrete[~valid] = 0
+
+        # Vectorize
+        shapes = rasterio.features.shapes(
+            discrete, 
+            transform=self.band_meta['transform'], 
+            mask=(discrete > 0)
+        )
+        
+        features = []
+        
+        # Setup projection transformer if needed (to EPSG:4326)
+        raster_crs = self.band_meta.get('crs')
+        transformer = None
+        if raster_crs and str(raster_crs) != 'EPSG:4326':
+            transformer = Transformer.from_crs(raster_crs, 'EPSG:4326', always_xy=True)
+
+        class_labels = {
+            1: "Very Low",
+            2: "Low",
+            3: "Moderate",
+            4: "High",
+            5: "Very High"
+        }
+
+        for geom, val in shapes:
+            value = int(val)
+            if value == 0:
+                continue
+                
+            poly = shape(geom)
+            if transformer:
+                poly = transform(transformer.transform, poly)
+                
+            features.append({
+                "type": "Feature",
+                "geometry": mapping(poly),
+                "properties": {
+                    "index_type": index_type,
+                    "zone_class": value,
+                    "label": class_labels.get(value, "Unknown"),
+                    "range_min": float(bins[value-1]),
+                    "range_max": float(bins[value])
+                }
+            })
+
+        return {
+            "type": "FeatureCollection",
+            "features": features
+        }
 
