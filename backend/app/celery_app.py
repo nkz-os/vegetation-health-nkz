@@ -28,11 +28,15 @@ celery_app.conf.update(
     worker_max_tasks_per_child=50,
 )
 
-# Periodic tasks (optional - for scheduled processing)
+# Periodic tasks
 celery_app.conf.beat_schedule = {
     'vegetation.process_subscriptions': {
         'task': 'vegetation.process_subscriptions',
-        'schedule': crontab(hour=2, minute=0), # Daily at 2 AM
+        'schedule': crontab(hour=2, minute=0),  # Daily at 2 AM
+    },
+    'vegetation.cleanup_global_cache': {
+        'task': 'vegetation.cleanup_global_cache',
+        'schedule': crontab(hour=3, minute=0),  # Daily at 3 AM
     },
 }
 

@@ -8,11 +8,9 @@ import { useTranslation } from 'react-i18next';
 
 // Export viewerSlots for host integration (align with module-template)
 export { viewerSlots } from './slots/index';
-import { VegetationConfig } from './components/VegetationConfig';
 import { VegetationAnalytics } from './components/VegetationAnalytics';
-import { CalculationsPage } from './components/pages/CalculationsPage';
 import { useVegetationApi } from './services/api';
-import { Calendar, Layers, Leaf, ChevronRight, BarChart3, FileDown, Bell, MapPin } from 'lucide-react';
+import { Layers, Leaf, ChevronRight, FileDown, MapPin } from 'lucide-react';
 import { SkeletonCard } from './components/widgets/SkeletonCard';
 
 /**
@@ -44,13 +42,12 @@ function computeAreaHa(geometry: any): number | null {
   }
 }
 
-// Lazy load new tabs for code splitting
-const PrescriptionTab = lazy(() => import('./components/pages/PrescriptionTab'));
-const AlertsTab = lazy(() => import('./components/pages/AlertsTab'));
+// Lazy load tabs for code splitting
+const ExportTab = lazy(() => import('./components/pages/ExportTab'));
 const ZoningTab = lazy(() => import('./components/pages/ZoningTab'));
 
-// Tab types for the Ferrari frontend (§12.3: Eguraldia/weather tab removed)
-type TabType = 'dashboard' | 'analytics' | 'config' | 'calculations' | 'prescription' | 'alerts' | 'zoning';
+// Simplified tabs: Analysis, Export, Zoning (consolidated from 6)
+type TabType = 'dashboard' | 'analysis' | 'export' | 'zoning';
 
 // Loading fallback for lazy loaded tabs
 const TabLoadingFallback: React.FC = () => {
@@ -67,7 +64,7 @@ const TabLoadingFallback: React.FC = () => {
 
 /**
  * Read URL search params for deep linking
- * Format: /vegetation?entityId=xxx&tab=analytics
+ * Format: /vegetation?entityId=xxx&tab=analysis
  */
 function useDeepLinkParams(): { entityId: string | null; tab: TabType | null } {
   const [params, setParams] = useState<{ entityId: string | null; tab: TabType | null }>({
@@ -80,8 +77,7 @@ function useDeepLinkParams(): { entityId: string | null; tab: TabType | null } {
     const entityId = searchParams.get('entityId');
     const tab = searchParams.get('tab') as TabType | null;
 
-    // Validate tab is a known type (weather removed in Phase 6)
-    const validTabs: TabType[] = ['dashboard', 'analytics', 'config', 'calculations', 'prescription', 'alerts', 'zoning'];
+    const validTabs: TabType[] = ['dashboard', 'analysis', 'export', 'zoning'];
     const validatedTab = tab && validTabs.includes(tab) ? tab : null;
 
     setParams({ entityId, tab: validatedTab });
@@ -154,7 +150,7 @@ const DashboardContent: React.FC = () => {
 
     if (deepLinkParams.entityId) {
       setSelectedEntityId(deepLinkParams.entityId);
-      setActiveTab(deepLinkParams.tab || 'analytics');
+      setActiveTab(deepLinkParams.tab || 'analysis');
       setDeepLinkApplied(true);
     }
   }, [deepLinkParams, deepLinkApplied, setSelectedEntityId]);
@@ -162,7 +158,7 @@ const DashboardContent: React.FC = () => {
   // If a parcel is selected and we're on dashboard, auto-switch to analytics (unless user opened calculations from dashboard)
   useEffect(() => {
     if (selectedEntityId && activeTab === 'dashboard' && !deepLinkParams.tab) {
-      setActiveTab('analytics');
+      setActiveTab('analysis');
     }
   }, [selectedEntityId, activeTab, deepLinkParams.tab]);
 
@@ -186,16 +182,6 @@ const DashboardContent: React.FC = () => {
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-4">
-            <div className="flex justify-end mb-2">
-              <button
-                type="button"
-                onClick={() => setActiveTab('calculations')}
-                className="inline-flex items-center gap-2 px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-sm font-medium transition-colors"
-              >
-                <BarChart3 className="w-4 h-4" />
-                {t('tabs.calculations')}
-              </button>
-            </div>
             <Card className="overflow-hidden">
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-sm text-slate-600">
@@ -303,59 +289,28 @@ const DashboardContent: React.FC = () => {
           </button>
           <div className="h-4 w-px bg-gray-300"></div>
           <h2 className="font-semibold text-slate-800">
-            {selectedEntityId
-              ? (parcels.find((p: any) => p.id === selectedEntityId)?.name?.value ||
-                parcels.find((p: any) => p.id === selectedEntityId)?.name ||
-                t('dashboard.detailAnalysis'))
-              : (activeTab === 'calculations' ? t('tabs.calculations') : t('dashboard.detailAnalysis'))}
+            {parcels.find((p: any) => p.id === selectedEntityId)?.name?.value ||
+              parcels.find((p: any) => p.id === selectedEntityId)?.name ||
+              t('dashboard.detailAnalysis')}
           </h2>
         </div>
       </div>
 
-      {/* Tab Bar - Ferrari Frontend (8 tabs) */}
+      {/* Tab Bar — 3 consolidated tabs */}
       <div className="bg-white border-b border-gray-200 px-6">
         <div className="flex overflow-x-auto scrollbar-hide -mb-px">
-          {/* Analytics Tab */}
           <TabButton
-            active={activeTab === 'analytics'}
-            onClick={() => setActiveTab('analytics')}
+            active={activeTab === 'analysis'}
+            onClick={() => setActiveTab('analysis')}
             icon={<Layers className="w-4 h-4" />}
-            label={t('tabs.analytics')}
+            label={t('tabs.analysis')}
           />
-
-          {/* Config Tab */}
           <TabButton
-            active={activeTab === 'config'}
-            onClick={() => setActiveTab('config')}
-            icon={<Calendar className="w-4 h-4" />}
-            label={t('tabs.config')}
-          />
-
-          {/* Calculations Tab */}
-          <TabButton
-            active={activeTab === 'calculations'}
-            onClick={() => setActiveTab('calculations')}
-            icon={<BarChart3 className="w-4 h-4" />}
-            label={t('tabs.calculations')}
-          />
-
-          {/* Prescription Tab (NEW) */}
-          <TabButton
-            active={activeTab === 'prescription'}
-            onClick={() => setActiveTab('prescription')}
+            active={activeTab === 'export'}
+            onClick={() => setActiveTab('export')}
             icon={<FileDown className="w-4 h-4" />}
-            label={t('tabs.prescription')}
+            label={t('tabs.export')}
           />
-
-          {/* Alerts Tab (NEW) */}
-          <TabButton
-            active={activeTab === 'alerts'}
-            onClick={() => setActiveTab('alerts')}
-            icon={<Bell className="w-4 h-4" />}
-            label={t('tabs.alerts')}
-          />
-
-          {/* Zoning Tab (NEW) */}
           <TabButton
             active={activeTab === 'zoning'}
             onClick={() => setActiveTab('zoning')}
@@ -368,11 +323,8 @@ const DashboardContent: React.FC = () => {
       {/* Content Area */}
       <div className="flex-1 overflow-auto bg-slate-50">
         <Suspense fallback={<TabLoadingFallback />}>
-          {activeTab === 'analytics' && <VegetationAnalytics />}
-          {activeTab === 'config' && <VegetationConfig />}
-          {activeTab === 'calculations' && <CalculationsPage />}
-          {activeTab === 'prescription' && <PrescriptionTab />}
-          {activeTab === 'alerts' && <AlertsTab />}
+          {activeTab === 'analysis' && <VegetationAnalytics />}
+          {activeTab === 'export' && <ExportTab />}
           {activeTab === 'zoning' && <ZoningTab />}
         </Suspense>
       </div>

@@ -26,6 +26,193 @@ router = APIRouter(tags=["timeseries-adapter"])
 
 ARROW_MIME = "application/vnd.apache.arrow.stream"
 
+# ---------------------------------------------------------------------------
+# BFF: JSON historical endpoint for VegetationIndex entities (reads from
+# telemetry_events hypertable populated via NGSI-LD subscription).
+# Only SELECT — zero INSERT. Used by the frontend timeseries chart.
+# ---------------------------------------------------------------------------
+
+
+def _get_telemetry_events_url() -> str:
+    """TimescaleDB connection for telemetry_events (may differ from legacy telemetry table)."""
+    return os.getenv("TELEMETRY_EVENTS_DATABASE_URL") or os.getenv("TIMESERIES_DATABASE_URL") or os.getenv("DATABASE_URL", "")
+
+
+@router.get("/api/vegetation/bff/history")
+async def get_vegetation_history(
+    entity_id: str = Query(..., description="AgriParcel entity URN"),
+    index_type: str = Query("NDVI", description="Index type: NDVI, EVI, SAVI, GNDVI, NDRE"),
+    start: str = Query(..., description="ISO 8601 start date"),
+    end: str = Query(..., description="ISO 8601 end date"),
+    current_user: dict = Depends(require_auth),
+):
+    """Return historical vegetation index data from telemetry_events.
+
+    Queries the telemetry_events hypertable for VegetationIndex entities
+    linked to the given parcel. Returns JSON points for the frontend chart.
+
+    Available when FIWARE_NATIVE_MODE is 'dual' or 'true'. Falls back to
+    the legacy vegetation_indices_cache table when 'false'.
+    """
+    import json as json_mod
+
+    tenant_id = current_user["tenant_id"]
+
+    try:
+        start_dt = datetime.fromisoformat(start.replace("Z", "+00:00"))
+        end_dt = datetime.fromisoformat(end.replace("Z", "+00:00"))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid date: {e}")
+
+    if start_dt.tzinfo is None:
+        start_dt = start_dt.replace(tzinfo=timezone.utc)
+    if end_dt.tzinfo is None:
+        end_dt = end_dt.replace(tzinfo=timezone.utc)
+
+    fiware_mode = os.getenv("FIWARE_NATIVE_MODE", "false").lower().strip()
+
+    if fiware_mode in ("dual", "true"):
+        points = await _history_from_telemetry_events(
+            tenant_id, entity_id, index_type, start_dt, end_dt,
+        )
+    else:
+        points = await _history_from_legacy_cache(
+            tenant_id, entity_id, index_type, start_dt, end_dt,
+        )
+
+    if not points:
+        return {"points": []}
+
+    return {"points": points}
+
+
+async def _history_from_telemetry_events(
+    tenant_id: str,
+    parcel_id: str,
+    index_type: str,
+    start_dt: datetime,
+    end_dt: datetime,
+) -> list:
+    """Read from telemetry_events hypertable (FIWARE native path)."""
+    import psycopg2
+    from psycopg2.extras import RealDictCursor
+
+    # The entity_id in telemetry_events is the VegetationIndex entity URN.
+    # We need to find entities whose payload contains refAgriParcel matching parcel_id.
+    # Entity ID pattern: urn:ngsi-ld:VegetationIndex:{tenant}:{parcel_short}
+    parcel_short = parcel_id.split(":")[-1] if ":" in parcel_id else parcel_id
+    vegetation_entity_pattern = f"urn:ngsi-ld:VegetationIndex:{tenant_id}:{parcel_short}"
+
+    # Attribute name in the payload
+    attr_mean = f"{index_type.lower()}Mean"
+    attr_min = f"{index_type.lower()}Min"
+    attr_max = f"{index_type.lower()}Max"
+    attr_std = f"{index_type.lower()}StdDev"
+
+    conn = None
+    try:
+        conn = psycopg2.connect(_get_telemetry_events_url(), cursor_factory=RealDictCursor)
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT observed_at, payload
+            FROM telemetry_events
+            WHERE tenant_id = %s
+              AND entity_id = %s
+              AND entity_type = 'VegetationIndex'
+              AND observed_at >= %s
+              AND observed_at < %s
+            ORDER BY observed_at ASC
+            """,
+            (tenant_id, vegetation_entity_pattern, start_dt, end_dt),
+        )
+        rows = cur.fetchall()
+        cur.close()
+    except Exception as e:
+        logger.exception("BFF telemetry_events query failed: %s", e)
+        raise HTTPException(status_code=500, detail="Error querying historical data")
+    finally:
+        if conn:
+            conn.close()
+
+    points = []
+    for row in rows:
+        payload = row.get("payload") or {}
+        if isinstance(payload, str):
+            import json as json_mod
+            payload = json_mod.loads(payload)
+
+        mean_prop = payload.get(attr_mean, {})
+        min_prop = payload.get(attr_min, {})
+        max_prop = payload.get(attr_max, {})
+        std_prop = payload.get(attr_std, {})
+
+        mean_val = mean_prop.get("value") if isinstance(mean_prop, dict) else None
+        if mean_val is None:
+            continue
+
+        points.append({
+            "date": row["observed_at"].isoformat() if hasattr(row["observed_at"], "isoformat") else str(row["observed_at"]),
+            "mean": float(mean_val),
+            "min": float(min_prop.get("value", 0)) if isinstance(min_prop, dict) else None,
+            "max": float(max_prop.get("value", 0)) if isinstance(max_prop, dict) else None,
+            "std": float(std_prop.get("value", 0)) if isinstance(std_prop, dict) else None,
+        })
+
+    return points
+
+
+async def _history_from_legacy_cache(
+    tenant_id: str,
+    entity_id: str,
+    index_type: str,
+    start_dt: datetime,
+    end_dt: datetime,
+) -> list:
+    """Read from vegetation_indices_cache (legacy fallback)."""
+    import psycopg2
+    from psycopg2.extras import RealDictCursor
+
+    conn = None
+    try:
+        conn = psycopg2.connect(_get_postgres_url(), cursor_factory=RealDictCursor)
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT calculated_at, mean_value, min_value, max_value, std_dev
+            FROM vegetation_indices_cache
+            WHERE tenant_id = %s
+              AND entity_id = %s
+              AND index_type = %s
+              AND calculated_at >= %s
+              AND calculated_at < %s
+            ORDER BY calculated_at ASC
+            """,
+            (tenant_id, entity_id, index_type.upper(), start_dt.isoformat(), end_dt.isoformat()),
+        )
+        rows = cur.fetchall()
+        cur.close()
+    except Exception as e:
+        logger.exception("BFF legacy cache query failed: %s", e)
+        raise HTTPException(status_code=500, detail="Error querying historical data")
+    finally:
+        if conn:
+            conn.close()
+
+    points = []
+    for row in rows:
+        if row.get("mean_value") is None:
+            continue
+        points.append({
+            "date": str(row["calculated_at"]),
+            "mean": float(row["mean_value"]),
+            "min": float(row["min_value"]) if row.get("min_value") is not None else None,
+            "max": float(row["max_value"]) if row.get("max_value") is not None else None,
+            "std": float(row["std_dev"]) if row.get("std_dev") is not None else None,
+        })
+
+    return points
+
 
 def _get_postgres_url() -> str:
     url = os.getenv("TIMESERIES_DATABASE_URL") or os.getenv("DATABASE_URL")

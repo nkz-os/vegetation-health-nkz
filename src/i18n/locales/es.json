@@ -31,12 +31,8 @@
         "health": "Salud"
     },
     "tabs": {
-        "analytics": "Análisis",
-        "config": "Configuración",
-        "calculations": "Cálculos",
-        "prescription": "Prescripción",
-        "alerts": "Alertas",
-        "weather": "Clima",
+        "analysis": "Análisis",
+        "export": "Exportar",
         "zoning": "Zonificación"
     },
     "analytics": {
@@ -141,6 +137,9 @@
         "exportSuccess": "Exportado correctamente: {{filename}}",
         "exportError": "Error al exportar. Inténtalo de nuevo.",
         "viewOnMap": "Ver en el mapa"
+    },
+    "export": {
+        "alertsSection": "Configurar Alertas"
     },
     "alerts": {
         "title": "Alertas de Vegetación",

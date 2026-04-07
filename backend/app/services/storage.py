@@ -322,6 +322,62 @@ class S3StorageService(StorageService):
                 raise FileNotFoundError(f"Source file not found: {source_path}")
             raise Exception(f"Failed to copy file in S3: {str(e)}")
     
+    def list_objects(self, prefix: str, bucket: Optional[str] = None) -> list:
+        """List objects in a bucket with the given prefix.
+
+        Args:
+            prefix: Key prefix to filter objects
+            bucket: Optional bucket name
+
+        Returns:
+            List of dicts with 'Key', 'Size', 'LastModified' for each object
+        """
+        bucket_name = self._get_bucket(bucket)
+        objects = []
+        try:
+            paginator = self.client.get_paginator('list_objects_v2')
+            for page in paginator.paginate(Bucket=bucket_name, Prefix=prefix):
+                for obj in page.get('Contents', []):
+                    objects.append({
+                        'Key': obj['Key'],
+                        'Size': obj.get('Size', 0),
+                        'LastModified': obj.get('LastModified'),
+                    })
+        except ClientError as e:
+            if e.response['Error']['Code'] == 'NoSuchBucket':
+                return []
+            raise
+        return objects
+
+    def delete_prefix(self, prefix: str, bucket: Optional[str] = None) -> int:
+        """Delete all objects under a prefix (batch delete).
+
+        Args:
+            prefix: Key prefix — all objects matching will be deleted
+            bucket: Optional bucket name
+
+        Returns:
+            Number of objects deleted
+        """
+        bucket_name = self._get_bucket(bucket)
+        objects = self.list_objects(prefix, bucket_name)
+        if not objects:
+            return 0
+
+        deleted = 0
+        # S3 delete_objects supports up to 1000 keys per call
+        batch_size = 1000
+        for i in range(0, len(objects), batch_size):
+            batch = objects[i:i + batch_size]
+            delete_req = {'Objects': [{'Key': obj['Key']} for obj in batch]}
+            try:
+                self.client.delete_objects(Bucket=bucket_name, Delete=delete_req)
+                deleted += len(batch)
+            except ClientError as e:
+                raise Exception(f"Failed to batch delete objects: {e}")
+
+        return deleted
+
     def _get_content_type(self, file_path: str) -> str:
         """Get content type based on file extension."""
         ext = Path(file_path).suffix.lower()
