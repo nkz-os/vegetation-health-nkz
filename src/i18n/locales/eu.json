@@ -31,12 +31,8 @@
         "health": "Osasuna"
     },
     "tabs": {
-        "analytics": "Analisia",
-        "config": "Konfigurazioa",
-        "calculations": "Kalkuluak",
-        "prescription": "Preskripzioa",
-        "alerts": "Alertak",
-        "weather": "Eguraldia",
+        "analysis": "Analisia",
+        "export": "Esportatu",
         "zoning": "Zonifikazioa"
     },
     "analytics": {
@@ -141,6 +137,9 @@
         "exportSuccess": "Behar bezala esportatu da: {{filename}}",
         "exportError": "Errorea esportatzerakoan. Saiatu berriro.",
         "viewOnMap": "Ikusi mapan"
+    },
+    "export": {
+        "alertsSection": "Alertak konfiguratu"
     },
     "alerts": {
         "title": "Landaretza Alertak",

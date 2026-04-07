@@ -11,7 +11,7 @@ from sqlalchemy import cast, String
 
 from app.database import get_db_session
 from app.models.indices import VegetationIndexCache
-from app.api.dependencies import get_tenant_id
+from app.middleware.auth import get_tenant_id
 
 logger = logging.getLogger(__name__)
 
