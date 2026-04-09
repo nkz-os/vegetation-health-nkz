@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Button } from '@nekazari/ui-kit';
 import { Calendar, Layers, Activity, CheckCircle, ArrowRight, ArrowLeft, X } from 'lucide-react';
-import { useTranslation } from 'react-i18next';
+import { useTranslation } from '@nekazari/sdk';
 
 // Simple Modal component with fixed header/footer and scrollable content
 const Modal: React.FC<{

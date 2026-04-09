@@ -2,9 +2,7 @@ import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { Card } from '@nekazari/ui-kit';
 import { VegetationProvider, useVegetationContext } from './services/vegetationContext';
 
-// Initialize i18n
-import './i18n';
-import { useTranslation } from 'react-i18next';
+import { useTranslation } from '@nekazari/sdk';
 
 // Export viewerSlots for host integration (align with module-template)
 export { viewerSlots } from './slots/index';

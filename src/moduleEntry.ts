@@ -3,7 +3,13 @@
  * slot imports fail. Then load slots async (heavy deps) and re-register with viewerSlots.
  */
 import React from 'react';
+import { i18n } from '@nekazari/sdk';
 import pkg from '../package.json';
+
+// Import translation bundles
+import esTranslations from './i18n/locales/es.json';
+import enTranslations from './i18n/locales/en.json';
+import euTranslations from './i18n/locales/eu.json';
 
 const MODULE_ID = 'vegetation-prime';
 
@@ -14,6 +20,12 @@ if (typeof console !== 'undefined' && console.debug) {
 if (!window.__NKZ__) {
   console.error(`[${MODULE_ID}] window.__NKZ__ not found! Module registration failed.`);
 } else {
+  // Inject module translations into the host i18n instance (deep merge)
+  if (i18n && i18n.addResourceBundle) {
+    i18n.addResourceBundle('es', 'common', esTranslations, true, true);
+    i18n.addResourceBundle('en', 'common', enTranslations, true, true);
+    i18n.addResourceBundle('eu', 'common', euTranslations, true, true);
+  }
   const LazyApp = React.lazy(() => import('./App'));
 
   const MainWrapper = () =>

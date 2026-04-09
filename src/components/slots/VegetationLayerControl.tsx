@@ -4,7 +4,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Layers, Cloud } from 'lucide-react';
-import { useTranslation } from 'react-i18next';
+import { useTranslation } from '@nekazari/sdk';
 import { useUIKit } from '../../hooks/useUIKit';
 import { useViewer } from '@nekazari/sdk';
 import { useVegetationContext } from '../../services/vegetationContext';
