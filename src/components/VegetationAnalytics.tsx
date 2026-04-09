@@ -15,23 +15,16 @@ import TimeseriesChart from './widgets/TimeseriesChart';
 import { SetupWizard } from './pages/SetupWizard';
 import { useAuth } from '../hooks/useAuth';
 import { useTranslation } from '@nekazari/sdk';
-import type { VegetationJob } from '../types';
+import type { VegetationJob, CustomFormula } from '../types';
 import {
   Loader2, Calculator, AlertCircle, CheckCircle,
   RefreshCw, BarChart3, Satellite, Leaf,
-  Trash2, Clock, Play, XCircle, Activity, Power,
+  Trash2, Clock, Play, XCircle, Activity, Power, Map, ChevronDown, Beaker,
 } from 'lucide-react';
 
 // Main indices the user can browse after analysis
 const MAIN_INDICES = ['NDVI', 'EVI', 'SAVI', 'GNDVI', 'NDRE'] as const;
-
-const INDEX_LABELS: Record<string, { name: string; description: string; color: string }> = {
-  NDVI: { name: 'NDVI', description: 'Salud general', color: 'emerald' },
-  EVI: { name: 'EVI', description: 'Vegetación densa', color: 'green' },
-  SAVI: { name: 'SAVI', description: 'Suelo expuesto', color: 'lime' },
-  GNDVI: { name: 'GNDVI', description: 'Clorofila', color: 'teal' },
-  NDRE: { name: 'NDRE', description: 'Estrés temprano', color: 'cyan' },
-};
+const AVAILABLE_BANDS = ['B02', 'B03', 'B04', 'B05', 'B06', 'B07', 'B08', 'B8A', 'B11', 'B12'] as const;
 
 export const VegetationAnalytics: React.FC = () => {
   const { t } = useTranslation();
@@ -52,6 +45,14 @@ export const VegetationAnalytics: React.FC = () => {
   const [loadingJobs, setLoadingJobs] = useState(false);
   const [loadingResults, setLoadingResults] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [expandedIndexKey, setExpandedIndexKey] = useState<string | null>(null);
+  const [customFormulas, setCustomFormulas] = useState<CustomFormula[]>([]);
+  const [selectedCustomFormulaIds, setSelectedCustomFormulaIds] = useState<string[]>([]);
+  const [customName, setCustomName] = useState('');
+  const [customFormula, setCustomFormula] = useState('');
+  const [customValidationMsg, setCustomValidationMsg] = useState<string | null>(null);
+  const [customError, setCustomError] = useState<string | null>(null);
+  const [customBusy, setCustomBusy] = useState(false);
 
   // Monitoring subscription state
   const [subscription, setSubscription] = useState<any | null>(null);
@@ -121,6 +122,20 @@ export const VegetationAnalytics: React.FC = () => {
   useEffect(() => {
     loadSubscription();
   }, [loadSubscription]);
+
+  const loadCustomFormulas = useCallback(async () => {
+    if (!isAuthenticated) return;
+    try {
+      const response = await api.listCustomFormulas();
+      setCustomFormulas(response.items || []);
+    } catch {
+      setCustomFormulas([]);
+    }
+  }, [api, isAuthenticated]);
+
+  useEffect(() => {
+    loadCustomFormulas();
+  }, [loadCustomFormulas]);
 
   // Toggle monitoring active/inactive
   const handleToggleMonitoring = async () => {
@@ -242,6 +257,7 @@ export const VegetationAnalytics: React.FC = () => {
         entity_id: selectedEntityId,
         start_date: startDate,
         end_date: endDate,
+        custom_formulas: selectedCustomFormulaIds,
       });
       setDownloadJobId(result.job_id);
     } catch (err: any) {
@@ -251,12 +267,62 @@ export const VegetationAnalytics: React.FC = () => {
     }
   };
 
-  // When user switches index, update active job
-  const handleIndexSwitch = (idx: string) => {
-    setSelectedIndex(idx as any);
-    const result = indexResults[idx];
-    if (result) {
-      setActiveJobId(result.job_id);
+  const getIndexDisplayName = (indexKey: string, result: any) => {
+    if (result?.is_custom) return result?.formula_name || indexKey;
+    return indexKey;
+  };
+
+  const handleValidateCustomFormula = async () => {
+    if (!customFormula.trim()) return;
+    setCustomBusy(true);
+    setCustomError(null);
+    setCustomValidationMsg(null);
+    try {
+      const response = await api.validateCustomFormula(customFormula.trim());
+      setCustomValidationMsg(`${t('analyticsPage.formulaValid')} (${response.bands.join(', ')})`);
+    } catch (err: any) {
+      const msg = err?.response?.data?.detail || err?.message || t('errors.serverError');
+      setCustomError(typeof msg === 'string' ? msg : JSON.stringify(msg));
+    } finally {
+      setCustomBusy(false);
+    }
+  };
+
+  const handleCreateAndAttachFormula = async () => {
+    if (!customName.trim() || !customFormula.trim() || !selectedEntityId) return;
+    setCustomBusy(true);
+    setCustomError(null);
+    setCustomValidationMsg(null);
+    try {
+      const created = await api.createCustomFormula({
+        name: customName.trim(),
+        formula: customFormula.trim(),
+      });
+      setSelectedCustomFormulaIds(prev => Array.from(new Set([...prev, created.id])));
+      setCustomName('');
+      setCustomFormula('');
+      await loadCustomFormulas();
+      await handleAnalyze();
+    } catch (err: any) {
+      const msg = err?.response?.data?.detail || err?.message || t('errors.serverError');
+      setCustomError(typeof msg === 'string' ? msg : JSON.stringify(msg));
+    } finally {
+      setCustomBusy(false);
+    }
+  };
+
+  const handleDeleteCustomFormula = async (id: string) => {
+    setCustomBusy(true);
+    setCustomError(null);
+    try {
+      await api.deleteCustomFormula(id);
+      setSelectedCustomFormulaIds(prev => prev.filter(item => item !== id));
+      await loadCustomFormulas();
+    } catch (err: any) {
+      const msg = err?.response?.data?.detail || err?.message || t('errors.serverError');
+      setCustomError(typeof msg === 'string' ? msg : JSON.stringify(msg));
+    } finally {
+      setCustomBusy(false);
     }
   };
 
@@ -292,7 +358,6 @@ export const VegetationAnalytics: React.FC = () => {
 
   const parcelShortName = selectedEntityId.split(':').pop() || selectedEntityId;
   const hasResults = Object.keys(indexResults).length > 0;
-  const currentResult = indexResults[effectiveIndex];
 
   const statusIcon = (status: string) => {
     switch (status) {
@@ -429,107 +494,176 @@ export const VegetationAnalytics: React.FC = () => {
         </div>
       </Card>
 
-      {/* Index Results Browser (shown when results available) */}
+      {/* Unified analysis table */}
       {hasResults && (
-        <>
-          {/* Index pills */}
-          <Card padding="md">
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-semibold text-slate-800">{t('analytics.indexSelector')}</h3>
-                <button
-                  onClick={loadResults}
-                  disabled={loadingResults}
-                  className="p-1 text-slate-400 hover:text-emerald-600"
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${loadingResults ? 'animate-spin' : ''}`} />
-                </button>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {MAIN_INDICES.map((idx) => {
-                  const result = indexResults[idx];
-                  const isAvailable = !!result;
-                  const isActive = effectiveIndex === idx;
-                  const info = INDEX_LABELS[idx];
-
-                  return (
-                    <button
-                      key={idx}
-                      onClick={() => isAvailable && handleIndexSwitch(idx)}
-                      disabled={!isAvailable}
-                      className={`
-                        px-3 py-2 rounded-lg text-sm font-medium transition-all border
-                        ${isActive
-                          ? 'bg-emerald-600 text-white border-emerald-600 shadow-md'
-                          : isAvailable
-                            ? 'bg-white text-slate-700 border-slate-200 hover:border-emerald-300 hover:bg-emerald-50'
-                            : 'bg-slate-50 text-slate-300 border-slate-100 cursor-not-allowed'
-                        }
-                      `}
-                    >
-                      <span className="block font-bold">{info.name}</span>
-                      <span className={`block text-[10px] ${isActive ? 'text-emerald-100' : 'text-slate-400'}`}>
-                        {info.description}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
+        <Card padding="md">
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-slate-800">{t('analyticsPage.analysisResults')}</h3>
+              <button
+                onClick={loadResults}
+                disabled={loadingResults}
+                className="p-1 text-slate-400 hover:text-emerald-600"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${loadingResults ? 'animate-spin' : ''}`} />
+              </button>
             </div>
-          </Card>
-
-          {/* Stats for selected index */}
-          {currentResult && currentResult.statistics && (
-            <Card padding="md">
-              <h3 className="text-sm font-semibold text-slate-800 mb-3">
-                {t('analyticsPage.quickStats')} — {effectiveIndex}
-              </h3>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <div className="p-3 bg-green-50 rounded-lg border border-green-100">
-                  <span className="block text-[10px] text-green-600 uppercase font-bold">{t('analytics.max')}</span>
-                  <span className="text-xl font-bold text-green-700">
-                    {currentResult.statistics.max != null ? currentResult.statistics.max.toFixed(3) : '-'}
-                  </span>
-                </div>
-                <div className="p-3 bg-blue-50 rounded-lg border border-blue-100">
-                  <span className="block text-[10px] text-blue-600 uppercase font-bold">{t('analytics.mean')}</span>
-                  <span className="text-xl font-bold text-blue-700">
-                    {currentResult.statistics.mean != null ? currentResult.statistics.mean.toFixed(3) : '-'}
-                  </span>
-                </div>
-                <div className="p-3 bg-amber-50 rounded-lg border border-amber-100">
-                  <span className="block text-[10px] text-amber-600 uppercase font-bold">{t('analytics.min')}</span>
-                  <span className="text-xl font-bold text-amber-700">
-                    {currentResult.statistics.min != null ? currentResult.statistics.min.toFixed(3) : '-'}
-                  </span>
-                </div>
-                <div className="p-3 bg-purple-50 rounded-lg border border-purple-100">
-                  <span className="block text-[10px] text-purple-600 uppercase font-bold">{t('analytics.stdDev')}</span>
-                  <span className="text-xl font-bold text-purple-700">
-                    {currentResult.statistics.std_dev != null ? currentResult.statistics.std_dev.toFixed(3) : '-'}
-                  </span>
-                </div>
-              </div>
-              {currentResult.created_at && (
-                <p className="text-[10px] text-slate-400 mt-2">
-                  {t('analyticsPage.lastUpdate')} {new Date(currentResult.created_at).toLocaleString('es-ES')}
-                </p>
-              )}
-            </Card>
-          )}
-
-          {/* Timeseries Chart */}
-          <Card padding="md">
-            <h3 className="text-sm font-semibold text-slate-800 mb-2">
-              {t('analyticsPage.vegetationTrends', { index: effectiveIndex })}
-            </h3>
-            <p className="text-xs text-slate-500 mb-3">{t('analyticsPage.historicEvolution')}</p>
-            <div className="h-56 bg-slate-50 rounded-lg">
-              <TimeseriesChart entityId={selectedEntityId} indexType={effectiveIndex} />
+            <div className="overflow-x-auto rounded-lg border border-slate-200">
+              <table className="min-w-full text-sm">
+                <thead className="bg-slate-50 text-slate-600">
+                  <tr>
+                    <th className="px-3 py-2 text-left">{t('analyticsPage.index')}</th>
+                    <th className="px-3 py-2 text-right">{t('analytics.mean')}</th>
+                    <th className="px-3 py-2 text-right">{t('analytics.min')}</th>
+                    <th className="px-3 py-2 text-right">{t('analytics.max')}</th>
+                    <th className="px-3 py-2 text-right">{t('analytics.stdDev')}</th>
+                    <th className="px-3 py-2 text-center">{t('analyticsPage.viewMap')}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {Object.entries(indexResults).map(([key, result]) => (
+                    <React.Fragment key={key}>
+                      <tr
+                        className="border-t border-slate-100 hover:bg-slate-50 cursor-pointer"
+                        onClick={() => setExpandedIndexKey(prev => (prev === key ? null : key))}
+                      >
+                        <td className="px-3 py-2 font-medium text-slate-800">
+                          {getIndexDisplayName(key, result)}
+                          {result?.is_custom ? <span className="ml-1 text-xs text-emerald-600">*</span> : null}
+                        </td>
+                        <td className="px-3 py-2 text-right">{result.statistics.mean != null ? result.statistics.mean.toFixed(3) : '-'}</td>
+                        <td className="px-3 py-2 text-right">{result.statistics.min != null ? result.statistics.min.toFixed(3) : '-'}</td>
+                        <td className="px-3 py-2 text-right">{result.statistics.max != null ? result.statistics.max.toFixed(3) : '-'}</td>
+                        <td className="px-3 py-2 text-right">{result.statistics.std_dev != null ? result.statistics.std_dev.toFixed(3) : '-'}</td>
+                        <td className="px-3 py-2 text-center">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedIndex((result.index_type || key) as any);
+                              setActiveJobId(result.job_id);
+                            }}
+                            className="inline-flex items-center gap-1 px-2 py-1 rounded border border-slate-200 text-slate-600 hover:bg-slate-100"
+                          >
+                            <Map className="w-3 h-3" />
+                            {t('analyticsPage.viewMap')}
+                          </button>
+                        </td>
+                      </tr>
+                      {expandedIndexKey === key && selectedEntityId && (
+                        <tr className="border-t border-slate-100 bg-slate-50">
+                          <td className="px-3 py-3" colSpan={6}>
+                            <div className="flex items-center gap-2 mb-2 text-slate-600">
+                              <ChevronDown className="w-4 h-4" />
+                              <span className="text-xs">{t('analyticsPage.historicEvolution')}</span>
+                            </div>
+                            {result.is_custom ? (
+                              <div className="p-3 text-xs text-slate-500 bg-white rounded-lg border border-slate-200">
+                                {t('analyticsPage.customTimeseriesNotAvailable')}
+                              </div>
+                            ) : (
+                              <div className="h-56 bg-white rounded-lg border border-slate-200">
+                                <TimeseriesChart
+                                  entityId={selectedEntityId}
+                                  indexType={(result.index_type || key) as any}
+                                />
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  ))}
+                </tbody>
+              </table>
             </div>
-          </Card>
-        </>
+          </div>
+        </Card>
       )}
+
+      {/* Custom index section */}
+      <Card padding="md">
+        <div className="space-y-3">
+          <div className="flex items-center gap-2">
+            <Beaker className="w-4 h-4 text-emerald-600" />
+            <h3 className="text-sm font-semibold text-slate-800">{t('analyticsPage.customIndex')}</h3>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs text-slate-500">{t('analyticsPage.customName')}</label>
+              <input
+                type="text"
+                value={customName}
+                onChange={(e) => setCustomName(e.target.value)}
+                className="mt-1 w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:ring-emerald-500 focus:border-emerald-500"
+                placeholder="NDMI"
+              />
+            </div>
+            <div>
+              <label className="text-xs text-slate-500">{t('analyticsPage.customFormula')}</label>
+              <input
+                type="text"
+                value={customFormula}
+                onChange={(e) => setCustomFormula(e.target.value)}
+                className="mt-1 w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:ring-emerald-500 focus:border-emerald-500"
+                placeholder="(B08-B11)/(B08+B11)"
+              />
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2 text-xs text-slate-500">
+            {AVAILABLE_BANDS.map(band => (
+              <span key={band} className="px-2 py-1 bg-slate-100 rounded-md">{band}</span>
+            ))}
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleValidateCustomFormula}
+              disabled={customBusy || !customFormula.trim()}
+              className="px-3 py-1.5 rounded-lg border border-slate-200 text-sm hover:bg-slate-50 disabled:opacity-50"
+            >
+              {t('analyticsPage.validateFormula')}
+            </button>
+            <button
+              onClick={handleCreateAndAttachFormula}
+              disabled={customBusy || !customFormula.trim() || !customName.trim() || !selectedEntityId}
+              className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-sm hover:bg-emerald-700 disabled:opacity-50"
+            >
+              {t('analyticsPage.addToAnalysis')}
+            </button>
+          </div>
+          {customValidationMsg && <p className="text-xs text-emerald-600">{customValidationMsg}</p>}
+          {customError && <p className="text-xs text-red-600">{customError}</p>}
+          <div className="space-y-2">
+            <label className="text-xs text-slate-500">{t('analyticsPage.savedFormulas')}</label>
+            <div className="space-y-1">
+              {customFormulas.map((formula) => (
+                <div key={formula.id} className="flex items-center justify-between px-3 py-2 border border-slate-200 rounded-lg">
+                  <label className="flex items-center gap-2 text-sm text-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={selectedCustomFormulaIds.includes(formula.id)}
+                      onChange={(e) => {
+                        setSelectedCustomFormulaIds((prev) => (
+                          e.target.checked ? Array.from(new Set([...prev, formula.id])) : prev.filter(id => id !== formula.id)
+                        ));
+                      }}
+                    />
+                    <span>{formula.name}</span>
+                  </label>
+                  <button
+                    onClick={() => handleDeleteCustomFormula(formula.id)}
+                    className="text-xs text-red-500 hover:text-red-700"
+                  >
+                    {t('common.delete')}
+                  </button>
+                </div>
+              ))}
+              {customFormulas.length === 0 && (
+                <p className="text-xs text-slate-400">{t('analyticsPage.noSavedFormulas')}</p>
+              )}
+            </div>
+          </div>
+        </div>
+      </Card>
 
       {/* Empty state — no results and not analyzing */}
       {!hasResults && !isAnalyzing && !loadingResults && (

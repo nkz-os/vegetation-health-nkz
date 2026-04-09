@@ -8,14 +8,14 @@ from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc
 from datetime import datetime, timedelta
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from pydantic import BaseModel, Field
 import logging
 import uuid as uuid_mod
 
 from app.database import get_db_with_tenant
 from app.middleware.auth import require_auth
-from app.models import VegetationScene, VegetationIndexCache, VegetationJob
+from app.models import VegetationScene, VegetationIndexCache, VegetationJob, VegetationCustomFormula
 from app.tasks import calculate_vegetation_index, download_sentinel2_scene
 
 router = APIRouter(prefix="/api/vegetation", tags=["scenes"])
@@ -94,6 +94,7 @@ class AnalyzeRequest(BaseModel):
     start_date: Optional[str] = None
     end_date: Optional[str] = None
     indices: Optional[list] = None  # defaults to all main indices
+    custom_formulas: Optional[List[str]] = None
 
 
 @router.post("/analyze")
@@ -122,6 +123,44 @@ async def analyze_parcel(
 
     # Default indices
     indices = request.indices or ["NDVI", "EVI", "SAVI", "GNDVI", "NDRE"]
+
+    # Resolve requested custom formulas (tenant-scoped)
+    custom_formula_ids = request.custom_formulas or []
+    custom_formula_specs: List[Dict[str, Any]] = []
+    if custom_formula_ids:
+        valid_ids = []
+        for formula_id in custom_formula_ids:
+            try:
+                valid_ids.append(uuid_mod.UUID(formula_id))
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=f"Invalid custom formula id: {formula_id}") from exc
+
+        formula_rows = (
+            db.query(VegetationCustomFormula)
+            .filter(
+                VegetationCustomFormula.tenant_id == tenant_id,
+                VegetationCustomFormula.id.in_(valid_ids),
+            )
+            .all()
+        )
+
+        found_ids = {str(row.id) for row in formula_rows}
+        missing = [formula_id for formula_id in custom_formula_ids if formula_id not in found_ids]
+        if missing:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Custom formulas not found for tenant: {', '.join(missing)}",
+            )
+
+        custom_formula_specs = [
+            {
+                "formula_id": str(row.id),
+                "formula_name": row.name,
+                "formula_expression": row.formula,
+                "index_key": f"custom:{str(row.id)}",
+            }
+            for row in formula_rows
+        ]
 
     # Get parcel geometry from Orion-LD
     geometry = None
@@ -210,6 +249,7 @@ async def analyze_parcel(
                 "entity_id": entity_id,
                 "cloud_coverage_threshold": 60,
                 "calculate_indices": indices,
+                "calculate_custom_formulas": custom_formula_specs,
             },
             created_by=current_user.get("user_id"),
         )
@@ -229,6 +269,7 @@ async def analyze_parcel(
         "job_ids": job_ids,
         "message": f"Analysis started: {len(windows)} date windows, {len(all_scenes)} scenes found",
         "indices": indices,
+        "custom_formulas": custom_formula_specs,
         "windows": len(windows),
         "scenes_found": len(all_scenes),
         "date_range": {"start": start_date, "end": end_date},
@@ -268,12 +309,17 @@ async def get_entity_results(
         if not job.result:
             continue
         index_type = job.result.get("index_type")
-        if not index_type or index_type in results:
+        index_key = job.result.get("index_key") or index_type
+        if not index_type or not index_key or index_key in results:
             continue  # already have a newer one
         stats = job.result.get("statistics", {})
-        results[index_type] = {
+        results[index_key] = {
             "job_id": str(job.id),
+            "index_key": index_key,
             "index_type": index_type,
+            "is_custom": bool(job.result.get("is_custom", False)),
+            "formula_id": job.result.get("formula_id"),
+            "formula_name": job.result.get("formula_name"),
             "statistics": {
                 "mean": stats.get("mean"),
                 "min": stats.get("min"),

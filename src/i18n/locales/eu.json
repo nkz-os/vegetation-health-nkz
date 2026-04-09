@@ -286,7 +286,19 @@
         "loadingPredictions": "Iragarpenak kargatzen...",
         "predictionModel": "Modeloa: {{model}} | Hurrengo 7 egunak",
         "noPredictions": "Ez dago iragarpenik lurzati honetarako",
-        "predictionsUnavailable": "Iragarpenak ez daude eskuragarri tenant honetarako"
+        "predictionsUnavailable": "Iragarpenak ez daude eskuragarri tenant honetarako",
+        "analysisResults": "Analisiaren emaitzak",
+        "index": "Indizea",
+        "viewMap": "Ikusi mapa",
+        "customIndex": "Indize pertsonalizatua",
+        "customName": "Izena",
+        "customFormula": "Formula",
+        "validateFormula": "Balioztatu",
+        "addToAnalysis": "Gehitu analisira",
+        "savedFormulas": "Gordetako formulak",
+        "noSavedFormulas": "Ez dago gordetako formularik",
+        "formulaValid": "Formula baliozkoa da",
+        "customTimeseriesNotAvailable": "Indize pertsonalizatuen denbora-seriea ez dago oraindik eskuragarri."
     },
     "errors": {
         "loadFailed": "Errorea datuak kargatzean",

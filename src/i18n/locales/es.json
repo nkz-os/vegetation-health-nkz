@@ -286,7 +286,19 @@
         "loadingPredictions": "Cargando predicciones...",
         "predictionModel": "Modelo: {{model}} | Próximos 7 días",
         "noPredictions": "No hay predicciones disponibles para esta parcela",
-        "predictionsUnavailable": "Predicciones no disponibles para este tenant"
+        "predictionsUnavailable": "Predicciones no disponibles para este tenant",
+        "analysisResults": "Resultados del análisis",
+        "index": "Índice",
+        "viewMap": "Ver mapa",
+        "customIndex": "Índice personalizado",
+        "customName": "Nombre",
+        "customFormula": "Fórmula",
+        "validateFormula": "Validar",
+        "addToAnalysis": "Añadir al análisis",
+        "savedFormulas": "Fórmulas guardadas",
+        "noSavedFormulas": "No hay fórmulas guardadas",
+        "formulaValid": "Fórmula válida",
+        "customTimeseriesNotAvailable": "La serie temporal para índices personalizados no está disponible todavía."
     },
     "errors": {
         "loadFailed": "Error al cargar datos",

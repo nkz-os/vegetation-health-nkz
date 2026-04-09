@@ -286,7 +286,19 @@
         "loadingPredictions": "Loading predictions...",
         "predictionModel": "Model: {{model}} | Next 7 days",
         "noPredictions": "No predictions available for this parcel",
-        "predictionsUnavailable": "Predictions unavailable for this tenant"
+        "predictionsUnavailable": "Predictions unavailable for this tenant",
+        "analysisResults": "Analysis results",
+        "index": "Index",
+        "viewMap": "View map",
+        "customIndex": "Custom index",
+        "customName": "Name",
+        "customFormula": "Formula",
+        "validateFormula": "Validate",
+        "addToAnalysis": "Add to analysis",
+        "savedFormulas": "Saved formulas",
+        "noSavedFormulas": "No saved formulas",
+        "formulaValid": "Formula is valid",
+        "customTimeseriesNotAvailable": "Timeseries for custom indices is not available yet."
     },
     "errors": {
         "loadFailed": "Failed to load data",

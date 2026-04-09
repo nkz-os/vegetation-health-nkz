@@ -275,6 +275,43 @@ export interface FormulaPreviewResponse {
   thumbnail_url?: string;
 }
 
+export interface CustomFormula {
+  id: string;
+  name: string;
+  description?: string | null;
+  formula: string;
+  is_validated: boolean;
+  validation_error?: string | null;
+  usage_count: number;
+  last_used_at?: string | null;
+  created_at?: string | null;
+}
+
+export interface CustomFormulaValidationResponse {
+  valid: boolean;
+  formula: string;
+  bands: string[];
+}
+
+export interface EntityIndexResult {
+  job_id: string;
+  index_key: string;
+  index_type: string;
+  is_custom: boolean;
+  formula_id?: string | null;
+  formula_name?: string | null;
+  statistics: {
+    mean: number | null;
+    min: number | null;
+    max: number | null;
+    std_dev: number | null;
+    pixel_count: number | null;
+  };
+  raster_path: string | null;
+  is_composite: boolean;
+  created_at: string | null;
+}
+
 /**
  * Prediction response (Intelligence module integration)
  */
