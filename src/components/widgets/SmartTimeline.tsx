@@ -17,7 +17,7 @@ import {
   ComposedChart,
 } from 'recharts';
 import { Calendar, TrendingUp, TrendingDown, CloudOff } from 'lucide-react';
-import { useTranslation } from 'react-i18next';
+import { useTranslation } from '@nekazari/sdk';
 
 interface SceneStats {
   scene_id: string;

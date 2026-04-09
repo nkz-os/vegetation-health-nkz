@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useVegetationApi } from '../../hooks/useVegetationApi';
 import { Loader2, AlertCircle } from 'lucide-react';
-import { useTranslation } from 'react-i18next';
+import { useTranslation } from '@nekazari/sdk';
 
 interface TimeseriesChartProps {
   entityId: string;

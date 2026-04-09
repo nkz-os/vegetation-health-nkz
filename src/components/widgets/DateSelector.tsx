@@ -1,6 +1,6 @@
 import React from 'react';
 import { Calendar, Cloud } from 'lucide-react';
-import { useTranslation } from 'react-i18next';
+import { useTranslation } from '@nekazari/sdk';
 import { VegetationScene } from '../../types';
 
 interface DateSelectorProps {

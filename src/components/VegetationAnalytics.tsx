@@ -14,7 +14,7 @@ import { useVegetationApi } from '../services/api';
 import TimeseriesChart from './widgets/TimeseriesChart';
 import { SetupWizard } from './pages/SetupWizard';
 import { useAuth } from '../hooks/useAuth';
-import { useTranslation } from 'react-i18next';
+import { useTranslation } from '@nekazari/sdk';
 import type { VegetationJob } from '../types';
 import {
   Loader2, Calculator, AlertCircle, CheckCircle,
