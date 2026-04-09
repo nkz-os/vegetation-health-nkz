@@ -9,7 +9,11 @@ interface DateRange {
 
 interface IndexResult {
   job_id: string;
+  index_key?: string;
   index_type: string;
+  is_custom?: boolean;
+  formula_id?: string | null;
+  formula_name?: string | null;
   statistics: {
     mean: number | null;
     min: number | null;

@@ -59,6 +59,15 @@ def _check_idempotency(tenant_id: str, parcel_id: str, index_type: str, sensing_
         return False
 
 
+def _extract_formula_bands(formula: str) -> List[str]:
+    """Extract Sentinel-2 bands used by a custom formula."""
+    import re
+    if not formula:
+        return []
+    found = sorted(set(re.findall(r"\bB(?:0[2-8]|8A|1[12])\b", formula.upper())))
+    return found
+
+
 def _legacy_patch_vegetation_status_to_orion(
     tenant_id: str,
     parcel_id: str,
@@ -243,6 +252,10 @@ def calculate_vegetation_index(
             formula = job.parameters.get('formula')
         if not scene_id:
             scene_id = job.parameters.get('scene_id')
+        formula_id = job.parameters.get('formula_id') if job.parameters else None
+        formula_name = job.parameters.get('formula_name') if job.parameters else None
+        result_index_key = job.parameters.get('result_index_key') if job.parameters else None
+        idempotency_key = result_index_key or (f"custom:{formula_id}" if index_type == "CUSTOM" and formula_id else index_type)
         if not start_date and job.start_date:
             start_date = job.start_date.isoformat()
         if not end_date and job.end_date:
@@ -320,7 +333,7 @@ def calculate_vegetation_index(
             if FIWARE_NATIVE_MODE in ("dual", "true"):
                 # Redis-based idempotency (fast)
                 sensing_str = scene.sensing_date.isoformat() if scene.sensing_date else "unknown"
-                if _check_idempotency(tenant_id, job.entity_id or "", index_type, sensing_str):
+                if _check_idempotency(tenant_id, job.entity_id or "", idempotency_key, sensing_str):
                     logger.info(
                         "Idempotency: %s for scene %s already calculated (Redis), skipping",
                         index_type, scene.id,
@@ -398,6 +411,8 @@ def calculate_vegetation_index(
                 'GNDVI': ['B03', 'B08'],
                 'NDRE': ['B8A', 'B08'],
             }.get(index_type, ['B04', 'B08'])
+            if index_type == 'CUSTOM':
+                required_bands = _extract_formula_bands(formula) or ['B04', 'B08']
 
             storage = create_storage_service(
                 storage_type=storage_type,
@@ -553,6 +568,10 @@ def calculate_vegetation_index(
         # Mark job as completed
         job_result = {
             'index_type': index_type,
+            'index_key': result_index_key or (f"custom:{formula_id}" if index_type == 'CUSTOM' and formula_id else index_type),
+            'is_custom': index_type == 'CUSTOM',
+            'formula_id': formula_id,
+            'formula_name': formula_name,
             'statistics': statistics,
             'raster_path': remote_raster_path,
             'source_image_count': source_image_count,

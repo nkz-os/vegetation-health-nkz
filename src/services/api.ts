@@ -15,6 +15,9 @@ import {
   FormulaPreviewParams,
   FormulaPreviewResponse,
   ModuleCapabilities,
+  CustomFormula,
+  CustomFormulaValidationResponse,
+  EntityIndexResult,
 } from '../types';
 
 /**
@@ -338,10 +341,17 @@ export class VegetationApiClient {
     start_date?: string;
     end_date?: string;
     indices?: string[];
+    custom_formulas?: string[];
   }): Promise<{
     job_id: string;
     message: string;
     indices: string[];
+    custom_formulas?: Array<{
+      formula_id: string;
+      formula_name: string;
+      formula_expression: string;
+      index_key: string;
+    }>;
     date_range: { start: string; end: string };
   }> {
     const response = await this.client.post('/analyze', params);
@@ -354,25 +364,36 @@ export class VegetationApiClient {
    */
   async getEntityResults(entityId: string): Promise<{
     entity_id: string;
-    indices: Record<string, {
-      job_id: string;
-      index_type: string;
-      statistics: {
-        mean: number | null;
-        min: number | null;
-        max: number | null;
-        std_dev: number | null;
-        pixel_count: number | null;
-      };
-      raster_path: string | null;
-      is_composite: boolean;
-      created_at: string | null;
-    }>;
+    indices: Record<string, EntityIndexResult>;
     active_jobs: number;
     has_results: boolean;
   }> {
     const response = await this.client.get(`/results/${encodeURIComponent(entityId)}`);
     return response as any;
+  }
+
+  async listCustomFormulas(): Promise<{ items: CustomFormula[]; total: number }> {
+    const response = await this.client.get('/custom-formulas');
+    return response as unknown as { items: CustomFormula[]; total: number };
+  }
+
+  async validateCustomFormula(formula: string): Promise<CustomFormulaValidationResponse> {
+    const response = await this.client.post('/custom-formulas/validate', { formula });
+    return response as unknown as CustomFormulaValidationResponse;
+  }
+
+  async createCustomFormula(params: {
+    name: string;
+    formula: string;
+    description?: string;
+  }): Promise<CustomFormula> {
+    const response = await this.client.post('/custom-formulas', params);
+    return response as unknown as CustomFormula;
+  }
+
+  async deleteCustomFormula(formulaId: string): Promise<{ deleted: boolean; id: string }> {
+    const response = await this.client.delete(`/custom-formulas/${encodeURIComponent(formulaId)}`);
+    return response as unknown as { deleted: boolean; id: string };
   }
 
   // ==========================================================================

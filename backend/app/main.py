@@ -23,6 +23,7 @@ from app.api.internal import router as internal_router
 from app.api.timeseries_adapter import router as timeseries_adapter_router
 from app.api.scenes import router as scenes_router
 from app.api.sync import router as sync_router
+from app.api.custom_formulas import router as custom_formulas_router
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -77,6 +78,7 @@ app.include_router(scenes_router)
 app.include_router(internal_router)
 app.include_router(timeseries_adapter_router)
 app.include_router(sync_router)
+app.include_router(custom_formulas_router)
 
 if __name__ == "__main__":
     import uvicorn

@@ -413,6 +413,7 @@ def download_sentinel2_scene(self, job_id: str, tenant_id: str, parameters: Dict
 
         # Check for chained calculation trigger
         calculate_indices = parameters.get('calculate_indices')
+        calculate_custom_formulas = parameters.get('calculate_custom_formulas')
         if calculate_indices and isinstance(calculate_indices, list):
             try:
                 from app.tasks.processing_tasks import calculate_vegetation_index
@@ -449,6 +450,62 @@ def download_sentinel2_scene(self, job_id: str, tenant_id: str, parameters: Dict
                     )
             except Exception as e:
                 logger.error(f"Failed to trigger automated calculation: {e}")
+
+        if calculate_custom_formulas and isinstance(calculate_custom_formulas, list):
+            try:
+                from app.tasks.processing_tasks import calculate_vegetation_index
+
+                for custom_formula in calculate_custom_formulas:
+                    if not isinstance(custom_formula, dict):
+                        continue
+
+                    formula_expression = custom_formula.get('formula_expression')
+                    formula_id = custom_formula.get('formula_id')
+                    formula_name = custom_formula.get('formula_name')
+                    index_key = custom_formula.get('index_key') or (
+                        f"custom:{formula_id}" if formula_id else None
+                    )
+                    if not formula_expression:
+                        continue
+
+                    calc_job_id = str(uuid.uuid4())
+                    calc_params = {
+                        'scene_id': scene_id,
+                        'index_type': 'CUSTOM',
+                        'formula': formula_expression,
+                        'formula_id': formula_id,
+                        'formula_name': formula_name,
+                        'result_index_key': index_key,
+                        'entity_id': parameters.get('entity_id'),
+                        'bbox': parameters.get('bbox'),
+                        'bounds': parameters.get('bounds'),
+                    }
+
+                    calc_job = VegetationJob(
+                        id=uuid.UUID(calc_job_id),
+                        tenant_id=tenant_id,
+                        entity_id=parameters.get('entity_id'),
+                        job_type='calculate_index',
+                        status='pending',
+                        parameters=calc_params
+                    )
+                    db.add(calc_job)
+                    db.commit()
+
+                    logger.info(
+                        "Auto-triggering custom formula calculation %s (Job %s)",
+                        formula_name or formula_id or "custom",
+                        calc_job_id,
+                    )
+                    calculate_vegetation_index.delay(
+                        job_id=calc_job_id,
+                        tenant_id=tenant_id,
+                        scene_id=str(scene.id),
+                        index_type='CUSTOM',
+                        formula=formula_expression,
+                    )
+            except Exception as e:
+                logger.error(f"Failed to trigger custom formula calculations: {e}")
         
         logger.info(f"Job {job_id} completed successfully - Scene {scene_id}")
         
