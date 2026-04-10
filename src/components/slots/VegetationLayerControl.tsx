@@ -2,14 +2,14 @@
  * Vegetation Layer Control - Slot component.
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Layers, Cloud } from 'lucide-react';
 import { useTranslation } from '@nekazari/sdk';
 import { useUIKit } from '../../hooks/useUIKit';
 import { useViewer } from '@nekazari/sdk';
 import { useVegetationContext } from '../../services/vegetationContext';
 import { useVegetationScenes } from '../../hooks/useVegetationScenes';
-import { VegetationIndexType } from '../../types';
+import type { VegetationIndexType } from '../../types';
 import { IndexPillSelector } from '../widgets/IndexPillSelector';
 import { ColorScaleLegend } from '../widgets/ColorScaleLegend';
 import DateSelector from '../widgets/DateSelector';
@@ -26,12 +26,28 @@ const VegetationLayerControl: React.FC = () => {
     selectedDate,
     selectedEntityId,
     selectedSceneId,
+    indexResults,
     layerOpacity,
     setSelectedIndex,
     setSelectedDate,
     setSelectedSceneId,
     setLayerOpacity,
   } = useVegetationContext();
+
+  const customIndexOptions = useMemo(
+    () =>
+      Object.keys(indexResults || {})
+        .filter((k) => k.startsWith('custom:'))
+        .map((k) => ({
+          key: k,
+          label: indexResults[k]?.formula_name || k.replace(/^custom:/, '').slice(0, 8),
+        })),
+    [indexResults],
+  );
+
+  const legendIndexType = (selectedIndex?.startsWith('custom:')
+    ? 'CUSTOM'
+    : selectedIndex || 'NDVI') as VegetationIndexType;
 
   // Load scenes for current entity
   const { scenes, loading: scenesLoading } = useVegetationScenes({ 
@@ -100,9 +116,10 @@ const VegetationLayerControl: React.FC = () => {
           {/* Index Selector */}
           <div className="space-y-2">
             <label className="text-xs font-medium text-slate-600 uppercase tracking-wider">{t('layerControl.spectralIndex', 'Índice Espectral')}</label>
-            <IndexPillSelector 
-              selectedIndex={(selectedIndex || 'NDVI') as VegetationIndexType} 
-              onIndexChange={(idx: any) => setSelectedIndex(idx)} 
+            <IndexPillSelector
+              selectedIndex={selectedIndex || 'NDVI'}
+              onIndexChange={(idx) => setSelectedIndex(idx)}
+              customIndexOptions={customIndexOptions}
             />
           </div>
 
@@ -191,7 +208,7 @@ const VegetationLayerControl: React.FC = () => {
       {/* Color Scale Legend - Floating */}
       {showLegend && (
         <ColorScaleLegend
-          indexType={(selectedIndex || 'NDVI') as VegetationIndexType}
+          indexType={legendIndexType}
           position="top-right"
           onClose={() => setShowLegend(false)}
           dynamic={legendDynamic}

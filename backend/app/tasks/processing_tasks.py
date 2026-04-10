@@ -340,6 +340,9 @@ def calculate_vegetation_index(
                     )
                     job.mark_completed({
                         "index_type": index_type,
+                        "index_key": idempotency_key,
+                        "scene_id": str(scene.id),
+                        "sensing_date": scene.sensing_date.isoformat() if scene.sensing_date else None,
                         "statistics": {},
                         "raster_path": None,
                         "source_image_count": 1,
@@ -372,6 +375,9 @@ def calculate_vegetation_index(
                     )
                     job.mark_completed({
                         "index_type": index_type,
+                        "index_key": idempotency_key,
+                        "scene_id": str(scene.id),
+                        "sensing_date": scene.sensing_date.isoformat() if scene.sensing_date else None,
                         "statistics": {
                             "mean": float(existing_cache.mean_value) if existing_cache.mean_value else None,
                             "min": float(existing_cache.min_value) if existing_cache.min_value else None,
@@ -576,6 +582,8 @@ def calculate_vegetation_index(
             'raster_path': remote_raster_path,
             'source_image_count': source_image_count,
             'is_composite': is_temporal_composite,
+            'scene_id': str(primary_scene.id),
+            'sensing_date': primary_scene.sensing_date.isoformat() if primary_scene.sensing_date else None,
         }
 
         if is_temporal_composite:

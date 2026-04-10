@@ -5,8 +5,14 @@
 
 import React, { useState } from 'react';
 import { Leaf, Droplet, Sun, Info } from 'lucide-react';
+import { useTranslation } from '@nekazari/sdk';
 import type { VegetationIndexType } from '../../types';
 import { IndexInfoModal } from './IndexInfoModal';
+
+export interface CustomIndexOption {
+  key: string;
+  label: string;
+}
 
 interface IndexGroup {
   category: string;
@@ -49,9 +55,12 @@ const INDEX_GROUPS: IndexGroup[] = [
 ];
 
 interface IndexPillSelectorProps {
-  selectedIndex: VegetationIndexType;
-  onIndexChange: (index: VegetationIndexType) => void;
+  /** Built-in index (NDVI, …) or custom:<uuid> */
+  selectedIndex: string;
+  onIndexChange: (index: string) => void;
   showCustom?: boolean;
+  /** Saved custom formulas present in current results */
+  customIndexOptions?: CustomIndexOption[];
   className?: string;
 }
 
@@ -59,8 +68,10 @@ export const IndexPillSelector: React.FC<IndexPillSelectorProps> = ({
   selectedIndex,
   onIndexChange,
   showCustom = false,
+  customIndexOptions = [],
   className = '',
 }) => {
+  const { t } = useTranslation();
   const [infoModalIndex, setInfoModalIndex] = useState<string | null>(null);
 
   return (
@@ -104,10 +115,37 @@ export const IndexPillSelector: React.FC<IndexPillSelectorProps> = ({
         </div>
       ))}
 
+      {customIndexOptions.length > 0 && (
+        <div>
+          <div className="flex items-center gap-2 mb-2">
+            <h4 className="text-sm font-semibold text-gray-700">{t('analyticsPage.customIndex')}</h4>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {customIndexOptions.map((opt) => (
+              <button
+                key={opt.key}
+                type="button"
+                onClick={() => onIndexChange(opt.key)}
+                className={`
+                  px-3 py-1.5 rounded-full text-sm font-medium transition-all max-w-[14rem] truncate
+                  ${selectedIndex === opt.key
+                    ? 'bg-purple-600 text-white shadow-md'
+                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                  }
+                `}
+                title={opt.label}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {showCustom && (
         <div>
           <div className="flex items-center gap-2 mb-2">
-            <h4 className="text-sm font-semibold text-gray-700">Personalizado</h4>
+            <h4 className="text-sm font-semibold text-gray-700">{t('analyticsPage.customIndex')}</h4>
           </div>
           <button
             onClick={() => onIndexChange('CUSTOM')}

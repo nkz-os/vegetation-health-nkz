@@ -310,6 +310,9 @@ export interface EntityIndexResult {
   raster_path: string | null;
   is_composite: boolean;
   created_at: string | null;
+  /** vegetation_scenes.id when job stored it (map + date selector alignment). */
+  scene_id?: string | null;
+  sensing_date?: string | null;
 }
 
 /**

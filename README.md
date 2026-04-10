@@ -65,6 +65,19 @@ cd backend
 docker-compose up -d
 ```
 
+### Publishing the module frontend (MinIO)
+
+The host loads the IIFE from MinIO. After `npm run build`, upload **`dist/nkz-module.js`** to the path configured in `manifest.json` → `build_config.remote_entry_url` (default: **`/modules/vegetation-prime/nkz-module.js`** on the static modules bucket).
+
+Example with MinIO Client (`mc` already configured for the cluster bucket):
+
+```bash
+npm run build
+mc cp dist/nkz-module.js <your-alias>/<modules-bucket>/vegetation-prime/nkz-module.js
+```
+
+Then hard-refresh the browser (or bump cache headers) so clients fetch the new bundle. CI may automate this step; until it runs, production keeps serving the previous file—**that is why UI changes are not visible until this upload completes**.
+
 ---
 
 ## 📡 API Reference

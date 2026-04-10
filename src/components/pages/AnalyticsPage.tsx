@@ -1,9 +1,8 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useViewer } from '@nekazari/sdk';
 import { useUIKit } from '../../hooks/useUIKit';
 import { useVegetationContext } from '../../services/vegetationContext';
 import { useVegetationApi } from '../../services/api';
-import { VegetationIndexType } from '../../types';
 import TimeseriesChart from '../widgets/TimeseriesChart';
 import DistributionHistogram from '../widgets/DistributionHistogram';
 import { IndexPillSelector } from '../widgets/IndexPillSelector'; 
@@ -16,8 +15,20 @@ const AnalyticsPage: React.FC = () => {
     const { 
         selectedEntityId, 
         selectedIndex, 
-        setSelectedIndex
+        setSelectedIndex,
+        indexResults,
     } = useVegetationContext();
+
+    const customIndexOptions = useMemo(
+        () =>
+            Object.keys(indexResults || {})
+                .filter((k) => k.startsWith('custom:'))
+                .map((k) => ({
+                    key: k,
+                    label: indexResults[k]?.formula_name || k.replace(/^custom:/, '').slice(0, 8),
+                })),
+        [indexResults],
+    );
     const api = useVegetationApi();
 
     // Local State
@@ -95,8 +106,9 @@ const AnalyticsPage: React.FC = () => {
                         <h2 className="text-xl font-semibold text-gray-900">Evolución Temporal</h2>
                         <div className="flex items-center space-x-2">
                           <IndexPillSelector 
-                            selectedIndex={(selectedIndex || 'NDVI') as VegetationIndexType} 
-                            onIndexChange={(idx: any) => setSelectedIndex(idx)} 
+                            selectedIndex={selectedIndex || 'NDVI'} 
+                            onIndexChange={(idx) => setSelectedIndex(idx)} 
+                            customIndexOptions={customIndexOptions}
                           />
                         </div>
                       </div>

@@ -31,7 +31,12 @@ export const VegetationAnalytics: React.FC = () => {
   const {
     selectedIndex, setSelectedIndex,
     selectedEntityId, setSelectedEntityId,
-    setActiveJobId, indexResults, setIndexResults,
+    selectedSceneId,
+    setActiveJobId,
+    setActiveRasterPath,
+    setSelectedSceneId,
+    setSelectedDate,
+    indexResults, setIndexResults,
   } = useVegetationContext();
   const { isAuthenticated } = useAuth();
   const api = useVegetationApi();
@@ -59,6 +64,7 @@ export const VegetationAnalytics: React.FC = () => {
   const [loadingSub, setLoadingSub] = useState(false);
   const [togglingMonitoring, setTogglingMonitoring] = useState(false);
   const [showSetupWizard, setShowSetupWizard] = useState(false);
+  const [showCustomCreator, setShowCustomCreator] = useState(false);
 
   // Date range for analysis
   const [startDate, setStartDate] = useState(() => {
@@ -75,16 +81,20 @@ export const VegetationAnalytics: React.FC = () => {
     if (!selectedEntityId || !isAuthenticated) return;
     setLoadingResults(true);
     try {
-      const data = await api.getEntityResults(selectedEntityId);
+      const data = await api.getEntityResults(
+        selectedEntityId,
+        selectedSceneId ? { sceneId: selectedSceneId } : undefined,
+      );
       if (data.indices) {
         setIndexResults(data.indices);
-        // Auto-select first available index
         const availableIndices = Object.keys(data.indices);
         if (availableIndices.length > 0) {
           const idx = availableIndices.includes(effectiveIndex)
             ? effectiveIndex
             : availableIndices[0];
-          setSelectedIndex(idx as any);
+          if (idx !== selectedIndex) {
+            setSelectedIndex(idx);
+          }
           const result = data.indices[idx];
           if (result) {
             setActiveJobId(result.job_id);
@@ -96,7 +106,7 @@ export const VegetationAnalytics: React.FC = () => {
     } finally {
       setLoadingResults(false);
     }
-  }, [selectedEntityId, isAuthenticated]);
+  }, [selectedEntityId, selectedSceneId, isAuthenticated, effectiveIndex, selectedIndex]);
 
   useEffect(() => {
     loadResults();
@@ -458,6 +468,138 @@ export const VegetationAnalytics: React.FC = () => {
             </div>
           </div>
 
+          {/* Custom indices: visible before running analysis (simple flow) */}
+          <div className="rounded-xl border border-emerald-100 bg-gradient-to-br from-emerald-50/90 to-slate-50/80 p-4 space-y-3">
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <Beaker className="w-5 h-5 text-emerald-600 shrink-0" />
+                <div>
+                  <p className="text-sm font-semibold text-slate-800">{t('analyticsPage.customIndex')}</p>
+                  <p className="text-xs text-slate-600 mt-0.5 leading-relaxed">{t('analyticsPage.customIndicesHint')}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowCustomCreator((v) => !v)}
+                className="text-xs font-semibold text-emerald-700 hover:text-emerald-900 whitespace-nowrap shrink-0"
+              >
+                {showCustomCreator ? t('common.close') : t('analyticsPage.createNewFormula')}
+              </button>
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-medium text-slate-600">{t('analyticsPage.savedFormulas')}</span>
+                {selectedCustomFormulaIds.length > 0 && (
+                  <span className="text-xs text-emerald-700 font-medium">
+                    {t('analyticsPage.customSelectedCount', { count: selectedCustomFormulaIds.length })}
+                  </span>
+                )}
+              </div>
+              {customFormulas.length === 0 ? (
+                <p className="text-xs text-slate-500">{t('analyticsPage.noSavedFormulas')}</p>
+              ) : (
+                <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
+                  {customFormulas.map((formula) => (
+                    <label
+                      key={formula.id}
+                      className="flex items-center gap-3 px-3 py-2 rounded-lg bg-white border border-slate-200/80 cursor-pointer hover:border-emerald-200"
+                    >
+                      <input
+                        type="checkbox"
+                        className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                        checked={selectedCustomFormulaIds.includes(formula.id)}
+                        onChange={(e) => {
+                          setSelectedCustomFormulaIds((prev) =>
+                            e.target.checked
+                              ? Array.from(new Set([...prev, formula.id]))
+                              : prev.filter((id) => id !== formula.id),
+                          );
+                        }}
+                      />
+                      <span className="text-sm text-slate-800 flex-1 truncate" title={formula.formula}>
+                        {formula.name}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          handleDeleteCustomFormula(formula.id);
+                        }}
+                        className="text-xs text-red-500 hover:text-red-700 shrink-0"
+                      >
+                        {t('common.delete')}
+                      </button>
+                    </label>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {showCustomCreator && (
+              <div className="space-y-3 pt-3 border-t border-emerald-100">
+                <p className="text-xs text-slate-600">{t('analyticsPage.customFormulaHelp')}</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs text-slate-500">{t('analyticsPage.customName')}</label>
+                    <input
+                      type="text"
+                      value={customName}
+                      onChange={(e) => setCustomName(e.target.value)}
+                      className="mt-1 w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:ring-emerald-500 focus:border-emerald-500 bg-white"
+                      placeholder="NDMI"
+                    />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className="text-xs text-slate-500">{t('analyticsPage.customFormula')}</label>
+                    <input
+                      type="text"
+                      value={customFormula}
+                      onChange={(e) => setCustomFormula(e.target.value)}
+                      className="mt-1 w-full text-sm border border-slate-200 rounded-lg px-3 py-2 font-mono focus:ring-emerald-500 focus:border-emerald-500 bg-white"
+                      placeholder="(B08-B11)/(B08+B11)"
+                    />
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {AVAILABLE_BANDS.map((band) => (
+                    <button
+                      key={band}
+                      type="button"
+                      onClick={() => setCustomFormula((prev) => (prev ? `${prev}${band}` : band))}
+                      className="px-2 py-0.5 text-xs bg-white border border-slate-200 rounded-md text-slate-600 hover:border-emerald-300 hover:text-emerald-800"
+                    >
+                      {band}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={handleValidateCustomFormula}
+                    disabled={customBusy || !customFormula.trim()}
+                    className="px-3 py-1.5 rounded-lg border border-slate-200 text-sm hover:bg-white disabled:opacity-50"
+                  >
+                    {t('analyticsPage.validateFormula')}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleCreateAndAttachFormula}
+                    disabled={customBusy || !customFormula.trim() || !customName.trim() || !selectedEntityId}
+                    className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-sm hover:bg-emerald-700 disabled:opacity-50"
+                  >
+                    {t('analyticsPage.saveAndRunAnalysis')}
+                  </button>
+                </div>
+                {customValidationMsg && <p className="text-xs text-emerald-600">{customValidationMsg}</p>}
+                {customError && <p className="text-xs text-red-600">{customError}</p>}
+              </div>
+            )}
+            {customError && !showCustomCreator && (
+              <p className="text-xs text-red-600">{customError}</p>
+            )}
+          </div>
+
           {/* Analyze button */}
           <div className="flex items-center gap-3">
             <button
@@ -539,8 +681,16 @@ export const VegetationAnalytics: React.FC = () => {
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
-                              setSelectedIndex((result.index_type || key) as any);
+                              const mapKey = result.index_key || key;
+                              setSelectedIndex(mapKey);
                               setActiveJobId(result.job_id);
+                              setActiveRasterPath(result.raster_path ?? null);
+                              if (result.scene_id) {
+                                setSelectedSceneId(result.scene_id);
+                                if (result.sensing_date) {
+                                  setSelectedDate(new Date(result.sensing_date));
+                                }
+                              }
                             }}
                             className="inline-flex items-center gap-1 px-2 py-1 rounded border border-slate-200 text-slate-600 hover:bg-slate-100"
                           >
@@ -579,91 +729,6 @@ export const VegetationAnalytics: React.FC = () => {
           </div>
         </Card>
       )}
-
-      {/* Custom index section */}
-      <Card padding="md">
-        <div className="space-y-3">
-          <div className="flex items-center gap-2">
-            <Beaker className="w-4 h-4 text-emerald-600" />
-            <h3 className="text-sm font-semibold text-slate-800">{t('analyticsPage.customIndex')}</h3>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs text-slate-500">{t('analyticsPage.customName')}</label>
-              <input
-                type="text"
-                value={customName}
-                onChange={(e) => setCustomName(e.target.value)}
-                className="mt-1 w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:ring-emerald-500 focus:border-emerald-500"
-                placeholder="NDMI"
-              />
-            </div>
-            <div>
-              <label className="text-xs text-slate-500">{t('analyticsPage.customFormula')}</label>
-              <input
-                type="text"
-                value={customFormula}
-                onChange={(e) => setCustomFormula(e.target.value)}
-                className="mt-1 w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:ring-emerald-500 focus:border-emerald-500"
-                placeholder="(B08-B11)/(B08+B11)"
-              />
-            </div>
-          </div>
-          <div className="flex flex-wrap gap-2 text-xs text-slate-500">
-            {AVAILABLE_BANDS.map(band => (
-              <span key={band} className="px-2 py-1 bg-slate-100 rounded-md">{band}</span>
-            ))}
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={handleValidateCustomFormula}
-              disabled={customBusy || !customFormula.trim()}
-              className="px-3 py-1.5 rounded-lg border border-slate-200 text-sm hover:bg-slate-50 disabled:opacity-50"
-            >
-              {t('analyticsPage.validateFormula')}
-            </button>
-            <button
-              onClick={handleCreateAndAttachFormula}
-              disabled={customBusy || !customFormula.trim() || !customName.trim() || !selectedEntityId}
-              className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-sm hover:bg-emerald-700 disabled:opacity-50"
-            >
-              {t('analyticsPage.addToAnalysis')}
-            </button>
-          </div>
-          {customValidationMsg && <p className="text-xs text-emerald-600">{customValidationMsg}</p>}
-          {customError && <p className="text-xs text-red-600">{customError}</p>}
-          <div className="space-y-2">
-            <label className="text-xs text-slate-500">{t('analyticsPage.savedFormulas')}</label>
-            <div className="space-y-1">
-              {customFormulas.map((formula) => (
-                <div key={formula.id} className="flex items-center justify-between px-3 py-2 border border-slate-200 rounded-lg">
-                  <label className="flex items-center gap-2 text-sm text-slate-700">
-                    <input
-                      type="checkbox"
-                      checked={selectedCustomFormulaIds.includes(formula.id)}
-                      onChange={(e) => {
-                        setSelectedCustomFormulaIds((prev) => (
-                          e.target.checked ? Array.from(new Set([...prev, formula.id])) : prev.filter(id => id !== formula.id)
-                        ));
-                      }}
-                    />
-                    <span>{formula.name}</span>
-                  </label>
-                  <button
-                    onClick={() => handleDeleteCustomFormula(formula.id)}
-                    className="text-xs text-red-500 hover:text-red-700"
-                  >
-                    {t('common.delete')}
-                  </button>
-                </div>
-              ))}
-              {customFormulas.length === 0 && (
-                <p className="text-xs text-slate-400">{t('analyticsPage.noSavedFormulas')}</p>
-              )}
-            </div>
-          </div>
-        </div>
-      </Card>
 
       {/* Empty state — no results and not analyzing */}
       {!hasResults && !isAnalyzing && !loadingResults && (

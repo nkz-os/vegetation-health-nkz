@@ -2,7 +2,7 @@
   "id": "vegetation-prime",
   "name": "vegetation-prime",
   "display_name": "Vegetation Prime",
-  "version": "1.49.0",
+  "version": "1.51.0",
   "description": "High-performance vegetation intelligence suite with advanced spectral index calculation, Sentinel-2 integration, and AI-powered predictions for agricultural monitoring.",
   "short_description": "Advanced vegetation health monitoring and analysis",
   "author": {
