@@ -362,13 +362,23 @@ export class VegetationApiClient {
    * Get latest completed results per index type for an entity.
    * Returns a map of index_type -> { job_id, statistics, raster_path }.
    */
-  async getEntityResults(entityId: string): Promise<{
+  async getEntityResults(
+    entityId: string,
+    options?: { sceneId?: string | null }
+  ): Promise<{
     entity_id: string;
+    scene_id?: string | null;
     indices: Record<string, EntityIndexResult>;
     active_jobs: number;
     has_results: boolean;
   }> {
-    const response = await this.client.get(`/results/${encodeURIComponent(entityId)}`);
+    const params = new URLSearchParams();
+    if (options?.sceneId) {
+      params.set('scene_id', options.sceneId);
+    }
+    const q = params.toString();
+    const path = `/results/${encodeURIComponent(entityId)}${q ? `?${q}` : ''}`;
+    const response = await this.client.get(path);
     return response as any;
   }
 
@@ -608,6 +618,9 @@ export class VegetationApiClient {
     frequency?: string;
     index_types?: string[];
     status?: string;
+    start_date?: string;
+    /** Clears last_run_at so scheduler rescans from start_date */
+    reset_monitoring_cursor?: boolean;
   }): Promise<any> {
     const response = await this.client.patch(`/subscriptions/${subId}`, updates);
     return response;

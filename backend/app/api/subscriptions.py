@@ -63,6 +63,14 @@ class SubscriptionUpdate(BaseModel):
     frequency: Optional[str] = None
     is_active: Optional[bool] = None
     status: Optional[str] = None
+    start_date: Optional[date] = None
+    reset_monitoring_cursor: Optional[bool] = Field(
+        default=None,
+        description=(
+            "If true, clears last_run_at so the next scheduler cycle rescans from start_date "
+            "(use after changing start_date to backfill)."
+        ),
+    )
 
 class SubscriptionResponse(SubscriptionBase):
     id: UUID
@@ -190,9 +198,13 @@ async def update_subscription(
     if not sub:
         raise HTTPException(status_code=404, detail="Subscription not found")
         
-    for key, value in updates.dict(exclude_unset=True).items():
+    payload = updates.model_dump(exclude_unset=True)
+    reset_cursor = payload.pop("reset_monitoring_cursor", None)
+    for key, value in payload.items():
         setattr(sub, key, value)
-        
+    if reset_cursor:
+        sub.last_run_at = None
+
     db.commit()
     db.refresh(sub)
     return sub

@@ -1,7 +1,5 @@
 import React, { createContext, useContext, useState, ReactNode, useCallback, useEffect, useRef, useSyncExternalStore } from 'react';
 import { useViewerOptional } from '@nekazari/sdk';
-import type { VegetationIndexType } from '../types';
-
 interface DateRange {
   startDate: Date | null;
   endDate: Date | null;
@@ -24,6 +22,8 @@ interface IndexResult {
   raster_path: string | null;
   is_composite: boolean;
   created_at: string | null;
+  scene_id?: string | null;
+  sensing_date?: string | null;
 }
 
 // =============================================================================
@@ -33,7 +33,8 @@ interface IndexResult {
 // VegetationProvider instance. This store synchronizes shared state between them.
 
 interface SharedState {
-  selectedIndex: VegetationIndexType | null;
+  /** Spectral index or custom key e.g. custom:<uuid> */
+  selectedIndex: string | null;
   activeJobId: string | null;
   activeRasterPath: string | null;
   indexResults: Record<string, IndexResult>;
@@ -95,7 +96,7 @@ function getStoreSnapshot(): SharedState {
 interface VegetationContextType {
   selectedEntityId: string | null;
   selectedSceneId: string | null;
-  selectedIndex: VegetationIndexType | null;
+  selectedIndex: string | null;
   selectedDate: Date | null;
   dateRange: DateRange;
   selectedGeometry?: any | null;
@@ -106,7 +107,7 @@ interface VegetationContextType {
   layerVisible: boolean;
   setSelectedEntityId: (id: string | null) => void;
   setSelectedSceneId: (id: string | null) => void;
-  setSelectedIndex: (index: VegetationIndexType | null) => void;
+  setSelectedIndex: (index: string | null) => void;
   setSelectedDate: (date: Date | null) => void;
   setDateRange: (range: DateRange) => void;
   setActiveJobId: (id: string | null) => void;
@@ -132,7 +133,7 @@ export const VegetationProvider: React.FC<{ children: ReactNode }> = ({ children
   });
 
   // Shared state setters — update the global store so all instances sync
-  const setSelectedIndex = useCallback((index: VegetationIndexType | null) => {
+  const setSelectedIndex = useCallback((index: string | null) => {
     updateStore({ selectedIndex: index });
   }, []);
 

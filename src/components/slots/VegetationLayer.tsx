@@ -26,42 +26,77 @@ export const VegetationLayer: React.FC<VegetationLayerProps> = ({ viewer }) => {
   const {
     selectedIndex, setSelectedIndex,
     activeJobId, setActiveJobId,
-    activeRasterPath,
-    selectedEntityId, indexResults, setIndexResults,
-    selectedDate,
+    activeRasterPath, setActiveRasterPath,
+    selectedEntityId, selectedSceneId,
+    indexResults, setIndexResults,
+    selectedDate, setSelectedSceneId, setSelectedDate,
     layerOpacity,
     layerVisible,
   } = useVegetationContext();
   const api = useVegetationApi();
   const layerRef = useRef<any>(null);
   const dataSourceRef = useRef<any>(null);
-  const fetchedRef = useRef<string | null>(null);
   const [tileBounds, setTileBounds] = useState<Record<string, TileBounds>>({});
 
-  // Auto-fetch index results when entity is selected but no results loaded.
+  // Resolve rasters per selected scene (DateSelector). If no scene yet, infer default from NDVI job metadata.
   useEffect(() => {
     if (!selectedEntityId) return;
-    if (selectedEntityId === fetchedRef.current) return;
-    if (Object.keys(indexResults).length > 0) return;
+    let cancelled = false;
 
-    fetchedRef.current = selectedEntityId;
+    (async () => {
+      try {
+        let sceneToUse = selectedSceneId;
+        let data = await api.getEntityResults(
+          selectedEntityId,
+          sceneToUse ? { sceneId: sceneToUse } : undefined,
+        );
+        if (cancelled) return;
 
-    api.getEntityResults(selectedEntityId).then(data => {
-      if (data.indices && Object.keys(data.indices).length > 0) {
-        setIndexResults(data.indices);
-        const firstIdx = Object.keys(data.indices)[0];
-        if (firstIdx && !selectedIndex) {
-          setSelectedIndex(firstIdx as any);
+        let keys = Object.keys(data.indices || {});
+
+        if (!sceneToUse && keys.length > 0) {
+          const pivotKey = keys.includes('NDVI') ? 'NDVI' : keys[0];
+          const pivot = data.indices![pivotKey];
+          if (pivot?.scene_id && pivot.sensing_date) {
+            sceneToUse = pivot.scene_id;
+            setSelectedSceneId(pivot.scene_id);
+            setSelectedDate(new Date(pivot.sensing_date));
+            data = await api.getEntityResults(selectedEntityId, { sceneId: sceneToUse });
+            if (cancelled) return;
+            keys = Object.keys(data.indices || {});
+          }
         }
-        const idx = selectedIndex || firstIdx;
-        if (idx && data.indices[idx]) {
-          setActiveJobId(data.indices[idx].job_id);
+
+        setIndexResults(data.indices || {});
+        if (keys.length === 0) {
+          setActiveJobId(null);
+          setActiveRasterPath(null);
+          return;
         }
+
+        const idx =
+          selectedIndex && data.indices![selectedIndex] ? selectedIndex : keys[0];
+        if (!selectedIndex || !data.indices![selectedIndex]) {
+          setSelectedIndex(idx);
+        }
+        setActiveJobId(data.indices![idx].job_id);
+        setActiveRasterPath(data.indices![idx].raster_path ?? null);
+      } catch {
+        /* parcel may have no analysis yet */
       }
-    }).catch(() => {
-      // No results yet — entity may not have been analyzed
-    });
-  }, [selectedEntityId]); // eslint-disable-line react-hooks/exhaustive-deps
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedEntityId, selectedSceneId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Switch raster when user picks another index (same scene scope)
+  useEffect(() => {
+    if (!selectedIndex || !indexResults[selectedIndex]) return;
+    setActiveJobId(indexResults[selectedIndex].job_id);
+    setActiveRasterPath(indexResults[selectedIndex].raster_path ?? null);
+  }, [selectedIndex, indexResults, setActiveJobId, setActiveRasterPath]);
 
   // Cesium layer management
   useEffect(() => {

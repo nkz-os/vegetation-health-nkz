@@ -22,6 +22,16 @@ router = APIRouter(prefix="/api/vegetation", tags=["scenes"])
 logger = logging.getLogger(__name__)
 
 
+def _job_result_matches_scene(job: VegetationJob, scene_uuid: str) -> bool:
+    """Match completed calculate_index jobs to a vegetation_scenes.id (legacy rows lack scene_id in JSON)."""
+    r = job.result if isinstance(job.result, dict) else {}
+    if r.get("scene_id") == scene_uuid:
+        return True
+    rp = r.get("raster_path") or ""
+    needle = f"/scenes/{scene_uuid}/"
+    return needle in rp
+
+
 class CalculateRequest(BaseModel):
     scene_id: Optional[str] = None
     index_type: str = "NDVI"
@@ -279,6 +289,10 @@ async def analyze_parcel(
 @router.get("/results/{entity_id}")
 async def get_entity_results(
     entity_id: str,
+    scene_id: Optional[str] = Query(
+        None,
+        description="If set, only jobs tied to this vegetation_scenes.id (UUID) are considered.",
+    ),
     current_user: dict = Depends(require_auth),
     db: Session = Depends(get_db_with_tenant),
 ):
@@ -286,8 +300,15 @@ async def get_entity_results(
 
     Returns a map of index_type -> { job_id, statistics, raster_path, date }.
     Frontend uses this to populate stats and enable map layer switching.
+    Optional scene_id scopes results to one acquisition so the map matches the date selector.
     """
     tenant_id = current_user["tenant_id"]
+
+    if scene_id:
+        try:
+            uuid_mod.UUID(scene_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="Invalid scene_id (expected UUID)") from exc
 
     # Get ALL completed calculation jobs for this entity, newest first
     jobs = (
@@ -299,9 +320,12 @@ async def get_entity_results(
             VegetationJob.status == "completed",
         )
         .order_by(desc(VegetationJob.created_at))
-        .limit(50)
+        .limit(200 if scene_id else 50)
         .all()
     )
+
+    if scene_id:
+        jobs = [j for j in jobs if _job_result_matches_scene(j, scene_id)]
 
     # Build a map: only keep the latest job per index type
     results = {}
@@ -312,6 +336,8 @@ async def get_entity_results(
         index_key = job.result.get("index_key") or index_type
         if not index_type or not index_key or index_key in results:
             continue  # already have a newer one
+        if job.result.get("skipped"):
+            continue
         stats = job.result.get("statistics", {})
         results[index_key] = {
             "job_id": str(job.id),
@@ -330,6 +356,8 @@ async def get_entity_results(
             "raster_path": job.result.get("raster_path"),
             "is_composite": job.result.get("is_composite", False),
             "created_at": job.created_at.isoformat() if job.created_at else None,
+            "scene_id": job.result.get("scene_id"),
+            "sensing_date": job.result.get("sensing_date"),
         }
 
     # Also check for pending/running jobs
@@ -345,6 +373,7 @@ async def get_entity_results(
 
     return {
         "entity_id": entity_id,
+        "scene_id": scene_id,
         "indices": results,
         "active_jobs": active_jobs,
         "has_results": len(results) > 0,
@@ -410,15 +439,35 @@ async def list_scenes(
     )
 
     if entity_id:
-        scene_ids = (
+        # Scenes with at least one cached index for this parcel
+        rows_cache = (
             db.query(VegetationIndexCache.scene_id)
             .filter(
                 VegetationIndexCache.tenant_id == tenant_id,
                 VegetationIndexCache.entity_id == entity_id,
             )
             .distinct()
+            .all()
         )
-        query = query.filter(VegetationScene.id.in_(scene_ids))
+        # Scenes from completed download jobs (indices may still be queued on single worker)
+        rows_dl = (
+            db.query(VegetationScene.id)
+            .join(VegetationJob, VegetationScene.job_id == VegetationJob.id)
+            .filter(
+                VegetationJob.tenant_id == tenant_id,
+                VegetationJob.entity_id == entity_id,
+                VegetationJob.job_type == "download",
+                VegetationJob.status == "completed",
+                VegetationScene.tenant_id == tenant_id,
+                VegetationScene.is_valid == True,
+            )
+            .distinct()
+            .all()
+        )
+        combined_ids = {r[0] for r in rows_cache} | {r[0] for r in rows_dl}
+        if not combined_ids:
+            return {"scenes": [], "total": 0}
+        query = query.filter(VegetationScene.id.in_(combined_ids))
 
     if start_date:
         query = query.filter(VegetationScene.sensing_date >= start_date)

@@ -36,6 +36,7 @@ spec:
         - name: worker
           image: ghcr.io/nkz-os/vegetation-health-nkz/vegetation-prime-api:latest
           imagePullPolicy: Always
+          # concurrency=2: overlap index work with downloads (watch memory limits)
           command:
             [
               "celery",
@@ -43,7 +44,7 @@ spec:
               "app.celery_app",
               "worker",
               "--loglevel=info",
-              "--concurrency=1",
+              "--concurrency=2",
             ]
           env:
             - name: DATABASE_URL
