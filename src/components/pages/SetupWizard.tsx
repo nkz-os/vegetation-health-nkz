@@ -149,8 +149,6 @@ export const SetupWizard: React.FC<SetupWizardProps> = ({
             is_active: true
         };
 
-        console.log('[SetupWizard] Creating subscription with payload:', payload);
-
         try {
             await api.createSubscription(payload);
             onComplete();

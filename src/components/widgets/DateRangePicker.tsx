@@ -1,4 +1,5 @@
 import React from 'react';
+import { useTranslation } from '@nekazari/sdk';
 
 interface DateRange {
     startDate: Date | null;
@@ -20,6 +21,7 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
     onChange,
     presets = true,
 }) => {
+    const { t } = useTranslation();
     const formatDate = (date: Date | null): string => {
         if (!date) return '';
         return date.toISOString().split('T')[0];
@@ -55,7 +57,7 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
             {/* Date inputs */}
             <div className="grid grid-cols-2 gap-2">
                 <div>
-                    <label className="block text-xs text-slate-500 mb-1">Desde</label>
+                    <label className="block text-xs text-slate-500 mb-1">{t('dateRange.from')}</label>
                     <input
                         type="date"
                         value={formatDate(dateRange.startDate)}
@@ -64,7 +66,7 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
                     />
                 </div>
                 <div>
-                    <label className="block text-xs text-slate-500 mb-1">Hasta</label>
+                    <label className="block text-xs text-slate-500 mb-1">{t('dateRange.to')}</label>
                     <input
                         type="date"
                         value={formatDate(dateRange.endDate)}
@@ -82,21 +84,21 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
                         onClick={() => setPreset(30)}
                         className="px-2 py-1 text-xs bg-slate-100 hover:bg-slate-200 rounded-md transition-colors"
                     >
-                        30 días
+                        {t('dateRange.days30')}
                     </button>
                     <button
                         type="button"
                         onClick={() => setPreset(90)}
                         className="px-2 py-1 text-xs bg-slate-100 hover:bg-slate-200 rounded-md transition-colors"
                     >
-                        3 meses
+                        {t('dateRange.months3')}
                     </button>
                     <button
                         type="button"
                         onClick={() => setPreset(365)}
                         className="px-2 py-1 text-xs bg-slate-100 hover:bg-slate-200 rounded-md transition-colors"
                     >
-                        12 meses
+                        {t('dateRange.months12')}
                     </button>
                     <button
                         type="button"
@@ -118,7 +120,7 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
             {/* Show selected range summary */}
             {dateRange.startDate && dateRange.endDate && (
                 <p className="text-xs text-slate-500">
-                    {Math.ceil((dateRange.endDate.getTime() - dateRange.startDate.getTime()) / (1000 * 60 * 60 * 24))} días seleccionados
+                    {Math.ceil((dateRange.endDate.getTime() - dateRange.startDate.getTime()) / (1000 * 60 * 60 * 24))} {t('dateRange.daysSelected')}
                 </p>
             )}
         </div>

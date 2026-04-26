@@ -19,7 +19,7 @@ import type { VegetationJob, CustomFormula } from '../types';
 import {
   Loader2, Calculator, AlertCircle, CheckCircle,
   RefreshCw, BarChart3, Satellite, Leaf,
-  Trash2, Clock, Play, XCircle, Activity, Power, Map, ChevronDown, Beaker,
+  Trash2, Clock, Play, XCircle, Activity, Power, Map, ChevronDown, Beaker, FileDown,
 } from 'lucide-react';
 
 // Main indices the user can browse after analysis
@@ -57,6 +57,7 @@ export const VegetationAnalytics: React.FC = () => {
   const [customFormula, setCustomFormula] = useState('');
   const [customValidationMsg, setCustomValidationMsg] = useState<string | null>(null);
   const [customError, setCustomError] = useState<string | null>(null);
+  const [exportingFormat, setExportingFormat] = useState<string | null>(null);
   const [customBusy, setCustomBusy] = useState(false);
 
   // Monitoring subscription state
@@ -341,6 +342,38 @@ export const VegetationAnalytics: React.FC = () => {
       await api.deleteJob(jobId);
       setJobs(prev => prev.filter(j => j.id !== jobId));
     } catch { /* ignore */ }
+  };
+
+  const handleExportResult = async (format: 'geojson' | 'shapefile' | 'csv') => {
+    if (!selectedEntityId) return;
+    setExportingFormat(format);
+    try {
+      let blob: Blob;
+      let filename: string;
+      switch (format) {
+        case 'geojson':
+          blob = await api.exportPrescriptionGeojson(selectedEntityId);
+          filename = `prescription_${selectedEntityId}.geojson`;
+          break;
+        case 'shapefile':
+          blob = await api.exportPrescriptionShapefile(selectedEntityId);
+          filename = `prescription_${selectedEntityId}.zip`;
+          break;
+        case 'csv':
+          blob = await api.exportPrescriptionCsv(selectedEntityId);
+          filename = `prescription_${selectedEntityId}.csv`;
+          break;
+      }
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch { /* ignore */ }
+    finally { setExportingFormat(null); }
   };
 
   // Auth guard
@@ -660,6 +693,7 @@ export const VegetationAnalytics: React.FC = () => {
                     <th className="px-3 py-2 text-right">{t('analytics.max')}</th>
                     <th className="px-3 py-2 text-right">{t('analytics.stdDev')}</th>
                     <th className="px-3 py-2 text-center">{t('analyticsPage.viewMap')}</th>
+                    <th className="px-3 py-2 text-center">{t('common.export')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -698,10 +732,23 @@ export const VegetationAnalytics: React.FC = () => {
                             {t('analyticsPage.viewMap')}
                           </button>
                         </td>
+                        <td className="px-3 py-2 text-center">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleExportResult('geojson');
+                            }}
+                            disabled={exportingFormat !== null}
+                            className="inline-flex items-center gap-1 px-2 py-1 rounded border border-slate-200 text-slate-500 hover:bg-slate-100 disabled:opacity-50 text-xs"
+                            title="GeoJSON"
+                          >
+                            <FileDown className="w-3 h-3" />
+                          </button>
+                        </td>
                       </tr>
                       {expandedIndexKey === key && selectedEntityId && (
                         <tr className="border-t border-slate-100 bg-slate-50">
-                          <td className="px-3 py-3" colSpan={6}>
+                          <td className="px-3 py-3" colSpan={7}>
                             <div className="flex items-center gap-2 mb-2 text-slate-600">
                               <ChevronDown className="w-4 h-4" />
                               <span className="text-xs">{t('analyticsPage.historicEvolution')}</span>

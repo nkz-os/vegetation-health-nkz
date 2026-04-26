@@ -26,6 +26,7 @@ import {
  */
 export class VegetationApiClient {
   private client: AxiosInstance;
+  private orionClient: AxiosInstance;
   private getTenantId: () => string | undefined;
 
   constructor(
@@ -42,25 +43,35 @@ export class VegetationApiClient {
       },
     });
 
-    // Request interceptor — auth is handled by httpOnly cookie (withCredentials: true).
-    // We only inject X-Tenant-ID for backend routing.
-    this.client.interceptors.request.use((config) => {
-      const tenantId = this.getTenantId();
+    // Separate client for Orion-LD queries (different base URL)
+    this.orionClient = axios.create({
+      baseURL: '/',
+      withCredentials: true,
+      headers: {
+        'Accept': 'application/json',
+      },
+    });
 
+    // Shared interceptor: inject X-Tenant-ID on both clients.
+    // Auth is handled by httpOnly cookie (withCredentials: true).
+    const addTenantId = (config: any) => {
+      const tenantId = this.getTenantId();
       if (tenantId) {
         config.headers['X-Tenant-ID'] = tenantId;
       }
-
       return config;
-    });
+    };
 
-    // Response interceptor for error logger
+    this.client.interceptors.request.use(addTenantId);
+    this.orionClient.interceptors.request.use(addTenantId);
+
+    // Response interceptor: unwrap data for vegetation API client
     this.client.interceptors.response.use(
       (response) => response.data,
-      (error) => {
-        return Promise.reject(error);
-      }
+      (error) => Promise.reject(error)
     );
+
+    // Orion client returns full response (caller handles .data)
   }
 
   // --- Endpoints ---
@@ -307,17 +318,10 @@ export class VegetationApiClient {
     const headers: Record<string, string> = {};
     if (tenantId) headers['X-Tenant-ID'] = tenantId;
 
-    const response = await fetch(`/api/vegetation/jobs/${jobId}/download?format=${format}`, {
-      method: 'GET',
-      headers,
-      credentials: 'include',
+    const response = await this.client.get(`/jobs/${jobId}/download?format=${format}`, {
+      responseType: 'blob',
     });
-
-    if (!response.ok) {
-      throw new Error(`Download failed: ${response.status}`);
-    }
-
-    return response.blob();
+    return response as unknown as Blob;
   }
 
   /**
@@ -411,69 +415,6 @@ export class VegetationApiClient {
   // ==========================================================================
 
   /**
-   * Get prediction for an entity (N8N/Intelligence Module ready)
-   */
-  async getPrediction(
-    entityId: string,
-    indexType: string = 'NDVI',
-    daysAhead: number = 7
-  ): Promise<{
-    entity_id: string;
-    index_type: string;
-    model_type: string;
-    predictions: Array<{ date: string; predicted_value: number; confidence_lower: number; confidence_upper: number }>;
-    webhook_metadata: Record<string, any>;
-  } | null> {
-    try {
-      const params = new URLSearchParams();
-      params.append('index_type', indexType);
-      params.append('days_ahead', daysAhead.toString());
-
-      const response = await this.client.get(`/prediction/${encodeURIComponent(entityId)}?${params.toString()}`);
-      return response as any;
-    } catch (error) {
-      console.warn('[API] Prediction not available:', error);
-      return null;
-    }
-  }
-
-  /**
-   * Trigger zoning job (VRA Management Zones)
-   * Supports N8N callback and Intelligence Module delegation
-   */
-  async triggerZoning(
-    parcelId: string,
-    options?: {
-      n_zones?: number;
-      delegate_to_intelligence?: boolean;
-      n8n_callback_url?: string;
-    }
-  ): Promise<{
-    message: string;
-    task_id: string;
-    parcel_id: string;
-    webhook_metadata: Record<string, any>;
-  }> {
-    const response = await this.client.post(`/jobs/zoning/${encodeURIComponent(parcelId)}`, options || {});
-    return response as any;
-  }
-
-  /**
-   * Get zoning results as GeoJSON
-   */
-  async getZoningGeoJson(parcelId: string): Promise<{
-    type: 'FeatureCollection';
-    features: Array<{
-      type: 'Feature';
-      properties: Record<string, any>;
-      geometry: Record<string, any>;
-    }>;
-  }> {
-    const response = await this.client.get(`/jobs/zoning/${encodeURIComponent(parcelId)}/geojson`);
-    return response as any;
-  }
-
-  /**
    * Get crop recommendation based on species (Crop Intelligence)
    */
   async getCropRecommendation(cropSpecies: string): Promise<{
@@ -483,24 +424,6 @@ export class VegetationApiClient {
     const response = await this.client.get(`/logic/recommendation/${encodeURIComponent(cropSpecies)}`);
     return response as any;
   }
-  /**
-   * Save a geometry as a permanent Management Zone (AgriParcel)
-   */
-  async saveManagementZone(
-    name: string,
-    geometry: any,
-    parentId?: string,
-    attributes?: Record<string, any>
-  ): Promise<{ id: string; message: string }> {
-    const response = await this.client.post('/entities/roi', {
-      name,
-      geometry,
-      parent_id: parentId,
-      attributes
-    });
-    return response as any;
-  }
-
   /**
    * List all AgriParcel entities for the current tenant
    * Uses the main Nekazari API (NGSI-LD broker via gateway)
@@ -513,30 +436,10 @@ export class VegetationApiClient {
    */
   async listTenantParcels(): Promise<any[]> {
     try {
-      // Use relative URL — same origin as frontend, auth via httpOnly cookie
-      const url = `/ngsi-ld/v1/entities?type=AgriParcel`;
-
-      const hostAuth = (window as any).__nekazariAuthContext;
-      const tenantId = hostAuth?.tenantId;
-
-      const headers: Record<string, string> = {
-        'Accept': 'application/json',
-      };
-      if (tenantId) headers['X-Tenant-ID'] = tenantId;
-
-      const response = await fetch(url, {
-        method: 'GET',
-        headers,
-        credentials: 'include',
+      const response = await this.orionClient.get('/ngsi-ld/v1/entities', {
+        params: { type: 'AgriParcel' },
       });
-
-      if (!response.ok) {
-        console.error('[VegetationApi] Failed to fetch parcels:', response.status);
-        return [];
-      }
-
-      const data = await response.json();
-      return Array.isArray(data) ? data : [];
+      return Array.isArray(response.data) ? response.data : [];
     } catch (error) {
       console.error('[VegetationApi] Error fetching tenant parcels:', error);
       return [];
@@ -548,31 +451,8 @@ export class VegetationApiClient {
    */
   async getEntity(entityId: string): Promise<any> {
     try {
-      // Use relative URL — same origin as frontend, auth via httpOnly cookie
-      const url = `/ngsi-ld/v1/entities/${entityId}`;
-
-      const hostAuth = (window as any).__nekazariAuthContext;
-      const tenantId = hostAuth?.tenantId;
-
-      const headers: Record<string, string> = {
-        'Accept': 'application/json',
-      };
-      if (tenantId) headers['X-Tenant-ID'] = tenantId;
-
-      const response = await fetch(url, {
-        method: 'GET',
-        headers,
-        credentials: 'include',
-      });
-
-      if (!response.ok) {
-        try {
-          const errText = await response.text();
-          console.error(`[VegetationApi] Fetch entity failed ${response.status}:`, errText.substring(0, 200));
-        } catch (e) { }
-        throw new Error(`Failed to fetch entity: ${response.status}`);
-      }
-      return response.json();
+      const response = await this.orionClient.get(`/ngsi-ld/v1/entities/${entityId}`);
+      return response.data;
     } catch (error) {
       console.error('[VegetationApi] Error fetching entity:', error);
       throw error;
@@ -642,66 +522,30 @@ export class VegetationApiClient {
    * Export prescription map as GeoJSON
    */
   async exportPrescriptionGeojson(parcelId: string): Promise<Blob> {
-    const tenantId = this.getTenantId();
-
-    const headers: Record<string, string> = {};
-    if (tenantId) headers['X-Tenant-ID'] = tenantId;
-
-    const response = await fetch(`/api/vegetation/export/${encodeURIComponent(parcelId)}/geojson`, {
-      method: 'GET',
-      headers,
-      credentials: 'include',
+    const response = await this.client.get(`/export/${encodeURIComponent(parcelId)}/geojson`, {
+      responseType: 'blob',
     });
-
-    if (!response.ok) {
-      throw new Error(`Export GeoJSON failed: ${response.status}`);
-    }
-
-    return response.blob();
+    return response as unknown as Blob;
   }
 
   /**
    * Export prescription map as Shapefile (zip)
    */
   async exportPrescriptionShapefile(parcelId: string): Promise<Blob> {
-    const tenantId = this.getTenantId();
-
-    const headers: Record<string, string> = {};
-    if (tenantId) headers['X-Tenant-ID'] = tenantId;
-
-    const response = await fetch(`/api/vegetation/export/${encodeURIComponent(parcelId)}/shapefile`, {
-      method: 'GET',
-      headers,
-      credentials: 'include',
+    const response = await this.client.get(`/export/${encodeURIComponent(parcelId)}/shapefile`, {
+      responseType: 'blob',
     });
-
-    if (!response.ok) {
-      throw new Error(`Export Shapefile failed: ${response.status}`);
-    }
-
-    return response.blob();
+    return response as unknown as Blob;
   }
 
   /**
    * Export prescription map as CSV
    */
   async exportPrescriptionCsv(parcelId: string): Promise<Blob> {
-    const tenantId = this.getTenantId();
-
-    const headers: Record<string, string> = {};
-    if (tenantId) headers['X-Tenant-ID'] = tenantId;
-
-    const response = await fetch(`/api/vegetation/export/${encodeURIComponent(parcelId)}/csv`, {
-      method: 'GET',
-      headers,
-      credentials: 'include',
+    const response = await this.client.get(`/export/${encodeURIComponent(parcelId)}/csv`, {
+      responseType: 'blob',
     });
-
-    if (!response.ok) {
-      throw new Error(`Export CSV failed: ${response.status}`);
-    }
-
-    return response.blob();
+    return response as unknown as Blob;
   }
 
   // ==========================================================================

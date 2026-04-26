@@ -335,5 +335,108 @@
     },
     "dateSelector": {
         "placeholder": "Hautatu data bat..."
+    },
+    "calculationButton": {
+        "calculating": "Kalkulatzen...",
+        "label": "Indizea Kalkulatu",
+        "success": "Indizea ongi kalkulatuta"
+    },
+    "dateRange": {
+        "from": "Hasiera",
+        "to": "Amaiera",
+        "days30": "30 egun",
+        "months3": "3 hilabete",
+        "months12": "12 hilabete",
+        "daysSelected": "egun hautatuta"
+    },
+    "layerToggle": {
+        "label": "Landaredia",
+        "show": "Geruza erakutsi",
+        "hide": "Geruza ezkutatu",
+        "noData": "Daturik ez"
+    },
+    "cloudCover": {
+        "highWarning": "Hodei estaldura altua - zehaztasunari eragin diezaioke"
+    },
+    "indices": {
+        "ndvi": "NDVI - Landaredi Indize Normalizatua",
+        "evi": "EVI - Landaredi Indize Hobetua",
+        "savi": "SAVI - Lurzorura Egokitutako Landaredi Indizea",
+        "gndvi": "GNDVI - Landaredi Indize Normalizatu Berdea",
+        "ndre": "NDRE - Ertz Gorriaren Indize Normalizatua",
+        "ndmi": "NDMI - Hezetasun Indize Normalizatua",
+        "sami": "SAMI - Lurzoruaren Hezetasun Indizea (Sentinel-1 SAR)",
+        "vra": "VRA - Aplikazio Aldakorreko Zonak",
+        "custom": "Indize Pertsonalizatua",
+        "categoryGeneral": "Osasun Orokorra",
+        "categoryGeneralDesc": "Landarediaren monitorizazio orokorrerako indizeak",
+        "categoryNutrition": "Nutrizioa/Klorofila",
+        "categoryNutritionDesc": "Nutrizio eta klorofila analisirako indizeak",
+        "categorySoil": "Lurzorua/Ura",
+        "categorySoilDesc": "Hasierako etapatarako eta lurzoruaren analisirako indizeak",
+        "infoTooltip": "Indizearen informazioa ikusi"
+    },
+    "calculationCard": {
+        "dateUnavailable": "Data ez erabilgarri",
+        "completed": "Osatuta",
+        "customZone": "Zona pertsonalizatua",
+        "distribution": "Balioen banaketa",
+        "media": "Batezbestekoa",
+        "min": "Min",
+        "max": "Max",
+        "viewOnMap": "Ikusi mapan",
+        "deleteConfirm": "Kalkulu hau historialetik ezabatu?",
+        "deleteTitle": "Kalkulua ezabatu",
+        "download": "Deskargatu",
+        "geotiff": "GeoTIFF (Rasterra)",
+        "png": "PNG Irudia",
+        "csvStats": "CSV Estatistikak"
+    },
+    "timelineWidget": {
+        "loadError": "Errorea denbora-lerroaren datuak kargatzean",
+        "selectParcel": "Hautatu partzela bat historia ikusteko",
+        "retry": "Berriro saiatu",
+        "chart": "Grafikoa",
+        "previousYear": "Aurreko urtea",
+        "scenesAvailable": "{{count}} eszena erabilgarri",
+        "loadingHistory": "Historia kargatzen...",
+        "noDataAvailable": "Ez dago datu erabilgarririk",
+        "evolution": "{{index}} Bilakaera",
+        "loadingData": "Datuak kargatzen..."
+    },
+    "legend": {
+        "noVegetation": "Landaredirik gabe",
+        "low": "Baxua",
+        "moderate": "Moderatua",
+        "good": "Ona",
+        "high": "Altua",
+        "veryHigh": "Oso Altua",
+        "autoStretch": "Auto-zabalkuntza",
+        "dynamicRange": "Tarte dinamikoa: {{min}} - {{max}}",
+        "ndviDesc": "Landaredi Indize Normalizatua",
+        "eviDesc": "Landaredi Indize Hobetua",
+        "saviDesc": "Lurzorura Egokitutako Landaredi Indizea",
+        "gndviDesc": "Landaredi Indize Normalizatu Berdea",
+        "ndreDesc": "Ertz Gorriaren Indize Normalizatua",
+        "ndmiDesc": "Hezetasun Indize Normalizatua",
+        "samiDesc": "Sentinel-1 Lurzoruaren Hezetasuna",
+        "vraDesc": "Aplikazio Aldakorreko Zonak",
+        "customDesc": "Indize Pertsonalizatua"
+    },
+    "indexInfo": {
+        "unavailable": "Informazioa ez dago erabilgarri indize honetarako.",
+        "close": "Itxi",
+        "formula": "Formula",
+        "interpretation": "Balioen Interpretazioa",
+        "bestFor": "Onena Honetarako",
+        "limitations": "Mugak",
+        "ndvi": {
+            "fullName": "Landaredi Indize Normalizatua",
+            "description": "Landarediaren berdetasuna eta osasuna neurtzeko indizerik erabiliena. Argi gorri ikusgaia eta infragorri hurbila alderatzen ditu."
+        },
+        "evi": {
+            "fullName": "Landaredi Indize Hobetua",
+            "description": "Eragin atmosferiko eta lurzorukoa murrizteko optimizatua, banda urdina erabiliz zuzenketarako."
+        }
     }
 }

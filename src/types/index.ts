@@ -316,53 +316,6 @@ export interface EntityIndexResult {
 }
 
 /**
- * Prediction response (Intelligence module integration)
- */
-export interface PredictionResponse {
-  entity_id: string;
-  index_type: string;
-  model_type: string;
-  predictions: Array<{
-    date: string;
-    predicted_value: number;
-    confidence_lower: number;
-    confidence_upper: number;
-  }>;
-  webhook_metadata: Record<string, any>;
-}
-
-/**
- * Zoning trigger response
- */
-export interface ZoningTriggerResponse {
-  message: string;
-  task_id: string;
-  parcel_id: string;
-  webhook_metadata: Record<string, any>;
-}
-
-/**
- * Zoning GeoJSON response
- */
-export interface ZoningGeoJsonResponse {
-  type: 'FeatureCollection';
-  features: Array<{
-    type: 'Feature';
-    properties: {
-      zone_id: number;
-      zone_class: string;
-      mean_value: number;
-      area_ha: number;
-      prescription_rate?: number;
-    };
-    geometry: {
-      type: 'Polygon' | 'MultiPolygon';
-      coordinates: number[][][] | number[][][][];
-    };
-  }>;
-}
-
-/**
  * Module capabilities for graceful degradation
  */
 export interface ModuleCapabilities {

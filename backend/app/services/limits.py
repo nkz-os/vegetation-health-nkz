@@ -166,8 +166,7 @@ class LimitsValidator:
             
         except Exception as e:
             logger.error(f"Error checking volume limit: {str(e)}", exc_info=True)
-            # Fail open for now (could be made configurable)
-            return (True, None, ha_to_process or Decimal('0.0'))
+            return (False, "Limit check system error — try again later", ha_to_process or Decimal('0.0'))
     
     def check_frequency_limit(self, job_type: str) -> Tuple[bool, Optional[str], int]:
         """Check if frequency limit (jobs/day) would be exceeded.

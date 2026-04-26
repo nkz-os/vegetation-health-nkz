@@ -1,10 +1,9 @@
 """
 Celery tasks for processing vegetation indices.
 
-FIWARE_NATIVE_MODE env var controls the persistence strategy:
-- "false" (default): Legacy — PostgreSQL cache is primary, Orion-LD best-effort
-- "dual":  Transition — writes to BOTH PostgreSQL and Orion-LD, logs comparison
-- "true":  Native — Orion-LD is primary, TimescaleDB via subscription, no local cache
+Orion-LD is the source of truth. Results are persisted as VegetationIndex
+entities via upsert_vegetation_index_entity(). TimescaleDB is populated
+automatically by the telemetry-worker subscription on Orion-LD.
 """
 
 import logging
@@ -17,16 +16,13 @@ from pathlib import Path
 import numpy as np
 
 from app.celery_app import celery_app
-from app.models import VegetationJob, VegetationScene, VegetationIndexCache
+from app.models import VegetationJob, VegetationScene
 from app.services.processor import VegetationIndexProcessor
 from app.services.storage import create_storage_service, generate_tenant_bucket_name
 from app.database import get_db_session
 from app.services.fiware_integration import upsert_vegetation_index_entity
 
 logger = logging.getLogger(__name__)
-
-# Feature flag: "false" | "dual" | "true"
-FIWARE_NATIVE_MODE = os.getenv("FIWARE_NATIVE_MODE", "false").lower().strip()
 
 # Redis client for idempotency (reuses Celery broker connection)
 _redis_client = None
@@ -46,12 +42,9 @@ def _check_idempotency(tenant_id: str, parcel_id: str, index_type: str, sensing_
 
     Returns True if already calculated (should skip), False if new.
     """
-    if FIWARE_NATIVE_MODE == "false":
-        return False  # Legacy mode uses DB check
     try:
         key = f"vegetation:calc:{tenant_id}:{parcel_id}:{index_type}:{sensing_date_str}"
         r = _get_redis()
-        # SETNX returns True if the key was set (new), False if already exists
         was_set = r.set(key, "1", nx=True, ex=86400)  # 24h TTL
         return not was_set  # If not set → already exists → skip
     except Exception as e:
@@ -68,54 +61,7 @@ def _extract_formula_bands(formula: str) -> List[str]:
     return found
 
 
-def _legacy_patch_vegetation_status_to_orion(
-    tenant_id: str,
-    parcel_id: str,
-    index_type: str,
-    mean_value: float,
-    sensing_date: date,
-    custom_attr_name: Optional[str] = None,
-) -> None:
-    """Legacy: PATCH the latest vegetation index as a flat property on AgriParcel.
-
-    Only used when FIWARE_NATIVE_MODE=false.
-    """
-    from app.services.fiware_integration import FIWAREClient
-
-    try:
-        url = os.getenv("FIWARE_CONTEXT_BROKER_URL", "http://orion-ld-service:1026")
-        client = FIWAREClient(url, tenant_id=tenant_id)
-
-        attr_name = f"{custom_attr_name}Mean" if custom_attr_name else f"{index_type.lower()}Mean"
-        observed_at = (
-            datetime(sensing_date.year, sensing_date.month, sensing_date.day,
-                     tzinfo=timezone.utc)
-            .isoformat()
-            .replace("+00:00", "Z")
-        )
-
-        client.update_entity({
-            "id": parcel_id,
-            attr_name: {
-                "type": "Property",
-                "value": round(float(mean_value), 6),
-                "observedAt": observed_at,
-                "source": {
-                    "type": "Property",
-                    "value": "vegetation_health",
-                },
-            },
-        })
-        logger.info("Legacy Orion-LD PATCH: %s=%s on %s", attr_name, mean_value, parcel_id)
-    except Exception as exc:
-        logger.warning(
-            "Non-critical: could not PATCH Orion-LD for parcel %s (%s): %s",
-            parcel_id, index_type, exc,
-        )
-
-
 def _persist_results(
-    db,
     tenant_id: str,
     job: VegetationJob,
     index_type: str,
@@ -123,94 +69,35 @@ def _persist_results(
     statistics: Dict[str, Any],
     remote_raster_path: str,
     primary_scene: VegetationScene,
-    vector_geojson: Optional[Dict],
-    is_temporal_composite: bool,
-    scenes_to_process: List[VegetationScene],
 ) -> None:
-    """Persist analysis results based on FIWARE_NATIVE_MODE.
+    """Persist analysis results to Orion-LD as VegetationIndex entity.
 
-    - false:  Write to PostgreSQL cache + best-effort PATCH to Orion-LD (legacy)
-    - dual:   Write to PostgreSQL cache AND upsert VegetationIndex entity in Orion-LD
-    - true:   Upsert VegetationIndex entity in Orion-LD only (no PostgreSQL cache)
+    Orion-LD is the source of truth. TimescaleDB is populated automatically
+    via the NGSI-LD subscription from Orion-LD to telemetry-worker.
     """
     custom_attr_name = None
     if index_type == 'CUSTOM' and formula:
         formula_hash = hashlib.md5(formula.encode()).hexdigest()[:8]
         custom_attr_name = f"custom_{formula_hash}"
 
-    # --- PostgreSQL cache (legacy + dual) ---
-    if FIWARE_NATIVE_MODE in ("false", "dual"):
-        cache_entry = VegetationIndexCache(
-            tenant_id=tenant_id,
-            scene_id=primary_scene.id,
-            entity_id=job.entity_id,
-            index_type=index_type,
-            formula=formula,
-            mean_value=statistics['mean'],
-            min_value=statistics['min'],
-            max_value=statistics['max'],
-            std_dev=statistics['std'],
-            pixel_count=statistics['pixel_count'],
-            statistics_geojson=vector_geojson,
-            result_raster_path=remote_raster_path,
-            calculated_at=datetime.utcnow().isoformat(),
-            calculation_time_ms=None,
-        )
-        db.add(cache_entry)
+    if not job.entity_id:
+        logger.warning("No entity_id on job %s — cannot upsert VegetationIndex", job.id)
+        return
 
-    # --- Legacy direct TimescaleDB write (only in false mode) ---
-    if FIWARE_NATIVE_MODE == "false":
-        if primary_scene.sensing_date and job.entity_id:
-            if primary_scene.acquisition_datetime is not None:
-                observed_at = primary_scene.acquisition_datetime
-            else:
-                observed_at = datetime(
-                    primary_scene.sensing_date.year,
-                    primary_scene.sensing_date.month,
-                    primary_scene.sensing_date.day,
-                    10, 50, 0, tzinfo=timezone.utc,
-                )
-            try:
-                from app.services.vegetation_timeseries import write_index_timeseries_point
-                write_index_timeseries_point(
-                    tenant_id=tenant_id,
-                    entity_id=job.entity_id,
-                    index_type=index_type,
-                    observed_at=observed_at,
-                    value=float(statistics['mean']),
-                    device_id="vegetation_prime",
-                    unit="index",
-                )
-            except Exception as ts_exc:
-                logger.warning("Non-critical: TimescaleDB write failed: %s", ts_exc)
-
-    # --- Orion-LD VegetationIndex entity (dual + true) ---
-    if FIWARE_NATIVE_MODE in ("dual", "true") and job.entity_id:
-        raster_url = f"s3://{os.getenv('VEGETATION_COG_BUCKET', 'vegetation-prime')}/{remote_raster_path}"
-        result = upsert_vegetation_index_entity(
-            tenant_id=tenant_id,
-            parcel_id=job.entity_id,
-            index_type=index_type,
-            statistics=statistics,
-            raster_url=raster_url,
-            sensing_date=primary_scene.sensing_date,
-            custom_attr_name=custom_attr_name,
-        )
-        if result:
-            logger.info("VegetationIndex entity upserted: %s (mode=%s)", result, FIWARE_NATIVE_MODE)
-        else:
-            logger.error("Failed to upsert VegetationIndex entity (mode=%s)", FIWARE_NATIVE_MODE)
-
-    # --- Legacy best-effort PATCH on AgriParcel (only in false mode) ---
-    if FIWARE_NATIVE_MODE == "false" and job.entity_id:
-        _legacy_patch_vegetation_status_to_orion(
-            tenant_id=tenant_id,
-            parcel_id=job.entity_id,
-            index_type=index_type,
-            mean_value=float(statistics['mean']),
-            sensing_date=scenes_to_process[0].sensing_date,
-            custom_attr_name=custom_attr_name,
-        )
+    raster_url = f"s3://{os.getenv('VEGETATION_COG_BUCKET', 'vegetation-prime')}/{remote_raster_path}"
+    result = upsert_vegetation_index_entity(
+        tenant_id=tenant_id,
+        parcel_id=job.entity_id,
+        index_type=index_type,
+        statistics=statistics,
+        raster_url=raster_url,
+        sensing_date=primary_scene.sensing_date,
+        custom_attr_name=custom_attr_name,
+    )
+    if result:
+        logger.info("VegetationIndex entity upserted: %s", result)
+    else:
+        logger.error("Failed to upsert VegetationIndex entity")
 
 
 @celery_app.task(bind=True, name='vegetation.calculate_vegetation_index')
@@ -329,68 +216,26 @@ def calculate_vegetation_index(
             if not scene:
                 raise ValueError(f"Scene {scene_id} not found")
 
-            # Idempotency check
-            if FIWARE_NATIVE_MODE in ("dual", "true"):
-                # Redis-based idempotency (fast)
-                sensing_str = scene.sensing_date.isoformat() if scene.sensing_date else "unknown"
-                if _check_idempotency(tenant_id, job.entity_id or "", idempotency_key, sensing_str):
-                    logger.info(
-                        "Idempotency: %s for scene %s already calculated (Redis), skipping",
-                        index_type, scene.id,
-                    )
-                    job.mark_completed({
-                        "index_type": index_type,
-                        "index_key": idempotency_key,
-                        "scene_id": str(scene.id),
-                        "sensing_date": scene.sensing_date.isoformat() if scene.sensing_date else None,
-                        "statistics": {},
-                        "raster_path": None,
-                        "source_image_count": 1,
-                        "is_composite": False,
-                        "skipped": True,
-                    })
-                    db.commit()
-                    return
-            else:
-                # Legacy: check PostgreSQL cache
-                existing_cache = (
-                    db.query(VegetationIndexCache)
-                    .filter(
-                        VegetationIndexCache.tenant_id == tenant_id,
-                        VegetationIndexCache.scene_id == scene.id,
-                        VegetationIndexCache.index_type == index_type,
-                        *(
-                            [VegetationIndexCache.entity_id == job.entity_id]
-                            if job.entity_id
-                            else []
-                        ),
-                    )
-                    .first()
+            # Idempotency check via Redis (always)
+            sensing_str = scene.sensing_date.isoformat() if scene.sensing_date else "unknown"
+            if _check_idempotency(tenant_id, job.entity_id or "", idempotency_key, sensing_str):
+                logger.info(
+                    "Idempotency: %s for scene %s already calculated, skipping",
+                    index_type, scene.id,
                 )
-
-                if existing_cache:
-                    logger.info(
-                        "Index %s for scene %s already exists in cache, skipping.",
-                        index_type, scene.id,
-                    )
-                    job.mark_completed({
-                        "index_type": index_type,
-                        "index_key": idempotency_key,
-                        "scene_id": str(scene.id),
-                        "sensing_date": scene.sensing_date.isoformat() if scene.sensing_date else None,
-                        "statistics": {
-                            "mean": float(existing_cache.mean_value) if existing_cache.mean_value else None,
-                            "min": float(existing_cache.min_value) if existing_cache.min_value else None,
-                            "max": float(existing_cache.max_value) if existing_cache.max_value else None,
-                            "std": float(existing_cache.std_dev) if existing_cache.std_dev else None,
-                            "pixel_count": existing_cache.pixel_count,
-                        },
-                        "raster_path": existing_cache.result_raster_path,
-                        "source_image_count": 1,
-                        "is_composite": False,
-                    })
-                    db.commit()
-                    return
+                job.mark_completed({
+                    "index_type": index_type,
+                    "index_key": idempotency_key,
+                    "scene_id": str(scene.id),
+                    "sensing_date": scene.sensing_date.isoformat() if scene.sensing_date else None,
+                    "statistics": {},
+                    "raster_path": None,
+                    "source_image_count": 1,
+                    "is_composite": False,
+                    "skipped": True,
+                })
+                db.commit()
+                return
 
             scenes_to_process = [scene]
 
@@ -556,9 +401,8 @@ def calculate_vegetation_index(
         # Upload to MinIO/S3
         storage.upload_file(upload_path, remote_raster_path, bucket_name)
 
-        # Persist results based on FIWARE_NATIVE_MODE
+        # Persist results to Orion-LD
         _persist_results(
-            db=db,
             tenant_id=tenant_id,
             job=job,
             index_type=index_type,
@@ -566,9 +410,6 @@ def calculate_vegetation_index(
             statistics=statistics,
             remote_raster_path=remote_raster_path,
             primary_scene=primary_scene,
-            vector_geojson=vector_geojson,
-            is_temporal_composite=is_temporal_composite,
-            scenes_to_process=scenes_to_process,
         )
 
         # Mark job as completed
@@ -592,14 +433,10 @@ def calculate_vegetation_index(
         job.mark_completed(job_result)
         db.commit()
 
-        # Update usage stats
-        from app.services.usage_tracker import UsageTracker
-        UsageTracker.update_job_status(db, tenant_id, str(job.id), 'completed')
-
         mode_str = "temporal composite" if is_temporal_composite else "single scene"
         logger.info(
-            "Index %s calculated successfully (%s, %d scenes, mode=%s)",
-            index_type, mode_str, source_image_count, FIWARE_NATIVE_MODE,
+            "Index %s calculated successfully (%s, %d scenes)",
+            index_type, mode_str, source_image_count,
         )
 
     except Exception as e:
@@ -607,8 +444,6 @@ def calculate_vegetation_index(
         if job:
             job.mark_failed(str(e), str(e.__traceback__))
             db.commit()
-            from app.services.usage_tracker import UsageTracker
-            UsageTracker.update_job_status(db, tenant_id, str(job.id), 'failed')
         raise
     finally:
         # Clean up temporary files

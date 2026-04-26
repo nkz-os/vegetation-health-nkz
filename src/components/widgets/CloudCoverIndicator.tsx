@@ -5,6 +5,7 @@
 
 import React from 'react';
 import { Cloud, CloudOff, AlertTriangle } from 'lucide-react';
+import { useTranslation } from '@nekazari/sdk';
 
 interface CloudCoverIndicatorProps {
   cloudCoverage?: number | null;
@@ -21,6 +22,7 @@ export const CloudCoverIndicator: React.FC<CloudCoverIndicatorProps> = ({
   size = 'md',
   className = '',
 }) => {
+  const { t } = useTranslation();
   if (cloudCoverage === undefined || cloudCoverage === null) {
     return (
       <div className={`flex items-center gap-1 text-gray-400 ${className}`}>
@@ -58,7 +60,7 @@ export const CloudCoverIndicator: React.FC<CloudCoverIndicatorProps> = ({
         {cloudCoverage.toFixed(1)}%
       </span>
       {isHigh && showWarning && (
-        <span className={`${sizeClasses[size].text} ml-1`} title="Alta cobertura de nubes - puede afectar la precisión">
+        <span className={`${sizeClasses[size].text} ml-1`} title={t('cloudCover.highWarning')}>
           ⚠️
         </span>
       )}

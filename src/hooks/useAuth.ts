@@ -45,9 +45,8 @@ export function useAuth(): AuthContext {
     };
 
     checkAuth();
-    const interval = setInterval(checkAuth, 1000);
-    return () => clearInterval(interval);
-  }, [auth.token]);
+    // Auth context is set once by the host on page load; no polling needed.
+  }, []);
 
   // SDK-compatible methods
   const getToken = useCallback(() => auth.token, [auth.token]);
