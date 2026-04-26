@@ -335,5 +335,178 @@
     },
     "dateSelector": {
         "placeholder": "Select a date..."
+    },
+    "calculationButton": {
+        "calculating": "Calculating...",
+        "label": "Calculate Index",
+        "success": "Index calculated successfully"
+    },
+    "dateRange": {
+        "from": "From",
+        "to": "To",
+        "days30": "30 days",
+        "months3": "3 months",
+        "months12": "12 months",
+        "daysSelected": "days selected"
+    },
+    "layerToggle": {
+        "label": "Vegetation",
+        "show": "Show layer",
+        "hide": "Hide layer",
+        "noData": "No data"
+    },
+    "cloudCover": {
+        "highWarning": "High cloud cover - may affect accuracy"
+    },
+    "indices": {
+        "ndvi": "NDVI - Normalized Difference Vegetation Index",
+        "evi": "EVI - Enhanced Vegetation Index",
+        "savi": "SAVI - Soil-Adjusted Vegetation Index",
+        "gndvi": "GNDVI - Green Normalized Difference Vegetation Index",
+        "ndre": "NDRE - Normalized Difference Red Edge",
+        "ndmi": "NDMI - Normalized Difference Moisture Index",
+        "sami": "SAMI - Soil Moisture Activity Index (Sentinel-1 SAR)",
+        "vra": "VRA - Variable Rate Application Zones",
+        "custom": "Custom Index",
+        "categoryGeneral": "General Health",
+        "categoryGeneralDesc": "Indices for general vegetation monitoring",
+        "categoryNutrition": "Nutrition/Chlorophyll",
+        "categoryNutritionDesc": "Indices for nutrition and chlorophyll analysis",
+        "categorySoil": "Soil/Water",
+        "categorySoilDesc": "Indices for early stages and soil analysis",
+        "infoTooltip": "View index information"
+    },
+    "calculationCard": {
+        "dateUnavailable": "Date unavailable",
+        "completed": "Completed",
+        "customZone": "Custom zone",
+        "distribution": "Value distribution",
+        "media": "Mean",
+        "min": "Min",
+        "max": "Max",
+        "viewOnMap": "View on map",
+        "deleteConfirm": "Delete this calculation from history?",
+        "deleteTitle": "Delete calculation",
+        "download": "Download",
+        "geotiff": "GeoTIFF (Raster)",
+        "png": "PNG Image",
+        "csvStats": "CSV Statistics"
+    },
+    "timelineWidget": {
+        "loadError": "Failed to load timeline data",
+        "selectParcel": "Select a parcel to view history",
+        "retry": "Retry",
+        "chart": "Chart",
+        "previousYear": "Previous year",
+        "scenesAvailable": "{{count}} scenes available",
+        "loadingHistory": "Loading history...",
+        "noDataAvailable": "No data available",
+        "evolution": "{{index}} Evolution",
+        "loadingData": "Loading data..."
+    },
+    "legend": {
+        "noVegetation": "No Vegetation",
+        "low": "Low",
+        "moderate": "Moderate",
+        "good": "Good",
+        "high": "High",
+        "veryHigh": "Very High",
+        "autoStretch": "Auto-stretch",
+        "dynamicRange": "Dynamic range: {{min}} - {{max}}",
+        "ndviDesc": "Normalized Difference Vegetation Index - Measures vegetation health and density",
+        "eviDesc": "Enhanced Vegetation Index - Reduces atmospheric and soil effects",
+        "saviDesc": "Soil-Adjusted Vegetation Index - Best for areas with exposed soil",
+        "gndviDesc": "Green Normalized Difference Vegetation Index - Sensitive to chlorophyll content",
+        "ndreDesc": "Normalized Difference Red Edge - Sensitive to crop stress and nitrogen",
+        "ndmiDesc": "Normalized Difference Moisture Index - Measures vegetation water content",
+        "samiDesc": "Sentinel-1 Soil Moisture Activity - Radar-based soil moisture proxy",
+        "vraDesc": "Variable Rate Application Zones - AI-clustered management zones",
+        "customDesc": "Custom Index - User-defined formula"
+    },
+    "indexInfo": {
+        "unavailable": "Information not available for this index.",
+        "close": "Close",
+        "formula": "Formula",
+        "interpretation": "Value Interpretation",
+        "bestFor": "Best For",
+        "limitations": "Limitations",
+        "ndvi": {
+            "fullName": "Normalized Difference Vegetation Index",
+            "description": "The most widely used index for measuring vegetation greenness and health. Compares reflected light in visible red and near-infrared.",
+            "interpretation": {
+                "veryLow": "Water, snow, clouds, or bare soil",
+                "low": "Sparse or stressed vegetation",
+                "medium": "Moderate vegetation, grasslands, or shrubs",
+                "high": "Dense, healthy vegetation",
+                "veryHigh": "Dense tropical forest or high-biomass crops"
+            },
+            "bestFor": ["General crop monitoring", "Water stress detection", "Land cover classification", "Seasonal change detection"],
+            "limitations": ["Saturates in dense vegetation (LAI > 3)", "Affected by soil brightness in arid areas", "Does not distinguish well between crop types"]
+        },
+        "evi": {
+            "fullName": "Enhanced Vegetation Index",
+            "description": "Optimized to reduce atmospheric and soil influence, using the blue band for correction.",
+            "interpretation": {
+                "veryLow": "Water or urban infrastructure",
+                "low": "Very sparse vegetation or bare soils",
+                "medium": "Early-stage crops or pastures",
+                "high": "Dense, active vegetation cover",
+                "veryHigh": "Dense forests and high-yield plantations"
+            },
+            "bestFor": ["High-biomass areas (rainforests, plantations)", "Regions with atmospheric influence (humidity, aerosols)", "Monitoring in high soil reflectance areas"],
+            "limitations": ["Requires precise atmospheric correction", "More computationally complex", "Less sensitive in areas with low vegetation cover"]
+        },
+        "ndmi": {
+            "fullName": "Normalized Difference Moisture Index",
+            "description": "Detects changes in vegetation water content using infrared bands.",
+            "interpretation": {
+                "veryLow": "Severe drought or dead vegetation",
+                "low": "Moderate water stress",
+                "medium": "Normal moisture conditions",
+                "high": "Good vegetation hydration",
+                "veryHigh": "Water saturation, possible flooding"
+            },
+            "bestFor": ["Crop water stress detection", "Drought monitoring", "Fire risk assessment", "Irrigation management"],
+            "limitations": ["Lower spatial resolution (20m, SWIR band)", "Affected by dense clouds and shadows", "Does not discriminate between soil and vegetation water"]
+        },
+        "savi": {
+            "fullName": "Soil-Adjusted Vegetation Index",
+            "description": "NDVI variant that minimizes soil brightness influence, ideal for young crops.",
+            "interpretation": {
+                "veryLow": "Bare soil or stubble",
+                "low": "Germinating crops (< 15% cover)",
+                "medium": "Early vegetative development (15-50% cover)",
+                "high": "Medium-high vegetation cover (50-80%)",
+                "veryHigh": "Full, dense cover (> 80%)"
+            },
+            "bestFor": ["Early-stage crops", "Arid and semi-arid areas", "Where soil is visible between plants", "Vineyards and olive groves with wide spacing"],
+            "limitations": ["Requires adjusting L factor by cover", "Less sensitive than NDVI in dense covers", "L=0.5 value is a compromise"]
+        },
+        "gndvi": {
+            "fullName": "Green Normalized Difference Vegetation Index",
+            "description": "Uses the green band instead of red, offering higher sensitivity to chlorophyll.",
+            "interpretation": {
+                "veryLow": "Bare soil or water",
+                "low": "Chlorotic vegetation (nitrogen deficiency)",
+                "medium": "Crops with normal chlorophyll levels",
+                "high": "High chlorophyll concentration, good health",
+                "veryHigh": "Maximum photosynthetic activity"
+            },
+            "bestFor": ["Chlorophyll content assessment", "Nitrogen deficiency detection", "Crop senescence monitoring", "Plant species differentiation"],
+            "limitations": ["Smaller dynamic range than NDVI", "More sensitive to lighting conditions", "Green band (B03) has lower signal-to-noise ratio"]
+        },
+        "ndre": {
+            "fullName": "Normalized Difference Red Edge",
+            "description": "Uses the Red Edge band, highly sensitive to subtle changes in vegetation health.",
+            "interpretation": {
+                "veryLow": "Dead or severely stressed vegetation",
+                "low": "Nutritional stress or early chlorosis",
+                "medium": "Crops with adequate nutrition",
+                "high": "High photosynthetic efficiency",
+                "veryHigh": "Optimal health and chlorophyll density"
+            },
+            "bestFor": ["Precision agriculture (variable N rate)", "Early crop stress detection", "Crop variety classification", "Foliar senescence monitoring"],
+            "limitations": ["Requires Red Edge band (B05, B06, B7, or B8A)", "Lower availability on non-Sentinel-2 satellites", "Can be affected by canopy structure"]
+        }
     }
 }

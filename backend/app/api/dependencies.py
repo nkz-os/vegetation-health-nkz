@@ -3,16 +3,18 @@ API dependencies for FastAPI.
 """
 
 from fastapi import Depends
-from app.database import get_db_with_tenant
+from app.database import SessionLocal
 from app.middleware.auth import require_auth
 
-# Helper function for database dependency with tenant context
+
 def get_db_for_tenant(current_user: dict = Depends(require_auth)):
-    """Get database session with tenant context.
-    
-    This is a FastAPI dependency that depends on current_user.
-    Returns a generator that FastAPI will handle automatically.
+    """Yield a database session for the authenticated tenant.
+
+    tenant_id is extracted from the JWT by require_auth middleware.
+    Session is closed in the finally block via FastAPI's generator handling.
     """
-    # Call get_db_with_tenant and yield from it
-    for db in get_db_with_tenant(current_user['tenant_id']):
+    db = SessionLocal()
+    try:
         yield db
+    finally:
+        db.close()

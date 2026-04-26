@@ -335,5 +335,178 @@
     },
     "dateSelector": {
         "placeholder": "Selecciona una fecha..."
+    },
+    "calculationButton": {
+        "calculating": "Calculando...",
+        "label": "Calcular Índice",
+        "success": "Índice calculado correctamente"
+    },
+    "dateRange": {
+        "from": "Desde",
+        "to": "Hasta",
+        "days30": "30 días",
+        "months3": "3 meses",
+        "months12": "12 meses",
+        "daysSelected": "días seleccionados"
+    },
+    "layerToggle": {
+        "label": "Vegetación",
+        "show": "Mostrar capa",
+        "hide": "Ocultar capa",
+        "noData": "Sin datos"
+    },
+    "cloudCover": {
+        "highWarning": "Alta cobertura de nubes - puede afectar la precisión"
+    },
+    "indices": {
+        "ndvi": "NDVI - Índice de Vegetación de Diferencia Normalizada",
+        "evi": "EVI - Índice de Vegetación Mejorado",
+        "savi": "SAVI - Índice de Vegetación Ajustado al Suelo",
+        "gndvi": "GNDVI - Índice de Vegetación de Diferencia Normalizada Verde",
+        "ndre": "NDRE - Índice de Diferencia Normalizada de Borde Rojo",
+        "ndmi": "NDMI - Índice de Humedad de Diferencia Normalizada",
+        "sami": "SAMI - Índice de Humedad del Suelo (Sentinel-1 SAR)",
+        "vra": "VRA - Zonas de Aplicación Variable",
+        "custom": "Índice Personalizado",
+        "categoryGeneral": "Salud General",
+        "categoryGeneralDesc": "Índices para monitorización general de vegetación",
+        "categoryNutrition": "Nutrición/Clorofila",
+        "categoryNutritionDesc": "Índices para análisis de nutrición y clorofila",
+        "categorySoil": "Suelo/Agua",
+        "categorySoilDesc": "Índices para etapas tempranas y análisis de suelo",
+        "infoTooltip": "Ver información del índice"
+    },
+    "calculationCard": {
+        "dateUnavailable": "Fecha no disponible",
+        "completed": "Completado",
+        "customZone": "Zona personalizada",
+        "distribution": "Distribución de valores",
+        "media": "Media",
+        "min": "Mín",
+        "max": "Máx",
+        "viewOnMap": "Ver en mapa",
+        "deleteConfirm": "¿Eliminar este cálculo del historial?",
+        "deleteTitle": "Eliminar cálculo",
+        "download": "Descargar",
+        "geotiff": "GeoTIFF (Raster)",
+        "png": "Imagen PNG",
+        "csvStats": "Estadísticas CSV"
+    },
+    "timelineWidget": {
+        "loadError": "Error al cargar datos de la línea temporal",
+        "selectParcel": "Selecciona una parcela para ver el historial",
+        "retry": "Reintentar",
+        "chart": "Gráfica",
+        "previousYear": "Año anterior",
+        "scenesAvailable": "{{count}} escenas disponibles",
+        "loadingHistory": "Cargando historial...",
+        "noDataAvailable": "No hay datos disponibles",
+        "evolution": "Evolución {{index}}",
+        "loadingData": "Cargando datos..."
+    },
+    "legend": {
+        "noVegetation": "Sin vegetación",
+        "low": "Bajo",
+        "moderate": "Moderado",
+        "good": "Bueno",
+        "high": "Alto",
+        "veryHigh": "Muy alto",
+        "autoStretch": "Auto-stretch",
+        "dynamicRange": "Rango dinámico: {{min}} - {{max}}",
+        "ndviDesc": "Índice de Vegetación de Diferencia Normalizada - Mide la salud y densidad de la vegetación",
+        "eviDesc": "Índice de Vegetación Mejorado - Reduce efectos atmosféricos y del suelo",
+        "saviDesc": "Índice de Vegetación Ajustado al Suelo - Ideal para áreas con suelo expuesto",
+        "gndviDesc": "Índice de Vegetación de Diferencia Normalizada Verde - Sensible al contenido de clorofila",
+        "ndreDesc": "Índice de Diferencia Normalizada de Borde Rojo - Sensible al estrés del cultivo y nitrógeno",
+        "ndmiDesc": "Índice de Humedad de Diferencia Normalizada - Mide el contenido de agua en la vegetación",
+        "samiDesc": "Índice de Humedad del Suelo Sentinel-1 - Proxy de humedad basado en radar",
+        "vraDesc": "Zonas de Aplicación Variable - Zonas de manejo agrupadas por IA",
+        "customDesc": "Índice Personalizado - Fórmula definida por el usuario"
+    },
+    "indexInfo": {
+        "unavailable": "Información no disponible para este índice.",
+        "close": "Cerrar",
+        "formula": "Fórmula",
+        "interpretation": "Interpretación de Valores",
+        "bestFor": "Mejor Para",
+        "limitations": "Limitaciones",
+        "ndvi": {
+            "fullName": "Índice de Vegetación de Diferencia Normalizada",
+            "description": "El índice más utilizado para medir el verdor y la salud de la vegetación. Compara la luz reflejada en el rojo visible y el infrarrojo cercano.",
+            "interpretation": {
+                "veryLow": "Agua, nieve, nubes o suelo desnudo",
+                "low": "Vegetación escasa o estresada",
+                "medium": "Vegetación moderada, praderas o arbustos",
+                "high": "Vegetación densa y saludable",
+                "veryHigh": "Bosque tropical denso o cultivos de alta biomasa"
+            },
+            "bestFor": ["Monitorización general de cultivos", "Detección de estrés hídrico", "Clasificación de cobertura del suelo", "Detección de cambios estacionales"],
+            "limitations": ["Se satura en vegetación densa (LAI > 3)", "Afectado por el brillo del suelo en zonas áridas", "No distingue bien entre tipos de cultivos"]
+        },
+        "evi": {
+            "fullName": "Índice de Vegetación Mejorado",
+            "description": "Optimizado para reducir la influencia atmosférica y del suelo, utilizando la banda azul para corrección.",
+            "interpretation": {
+                "veryLow": "Agua o infraestructura urbana",
+                "low": "Vegetación muy escasa o suelos desnudos",
+                "medium": "Cultivos en fase temprana o pastizales",
+                "high": "Cobertura vegetal densa y activa",
+                "veryHigh": "Bosques densos y plantaciones de alto rendimiento"
+            },
+            "bestFor": ["Áreas con alta biomasa (selvas, plantaciones)", "Regiones con influencia atmosférica (humedad, aerosoles)", "Monitoreo en zonas de alta reflectancia del suelo"],
+            "limitations": ["Requiere corrección atmosférica precisa", "Más complejo computacionalmente", "Menos sensible en zonas con baja cobertura vegetal"]
+        },
+        "ndmi": {
+            "fullName": "Índice de Humedad de Diferencia Normalizada",
+            "description": "Detecta cambios en el contenido de agua de la vegetación usando bandas infrarrojas.",
+            "interpretation": {
+                "veryLow": "Sequía severa o vegetación muerta",
+                "low": "Estrés hídrico moderado",
+                "medium": "Condiciones normales de humedad",
+                "high": "Buena hidratación de la vegetación",
+                "veryHigh": "Saturación de agua, posible inundación"
+            },
+            "bestFor": ["Detección de estrés hídrico en cultivos", "Monitoreo de sequías", "Evaluación de riesgo de incendios", "Gestión de riego"],
+            "limitations": ["Menor resolución espacial (20m, banda SWIR)", "Afectado por nubes y sombras densas", "No discrimina entre agua del suelo y agua en la vegetación"]
+        },
+        "savi": {
+            "fullName": "Índice de Vegetación Ajustado al Suelo",
+            "description": "Variante del NDVI que minimiza la influencia del brillo del suelo, ideal para cultivos jóvenes.",
+            "interpretation": {
+                "veryLow": "Suelo desnudo o rastrojos",
+                "low": "Cultivos en germinación (< 15% cobertura)",
+                "medium": "Desarrollo vegetativo temprano (15-50% cobertura)",
+                "high": "Cobertura vegetal media-alta (50-80%)",
+                "veryHigh": "Cobertura completa y densa (> 80%)"
+            },
+            "bestFor": ["Cultivos en etapas tempranas", "Zonas áridas y semiáridas", "Donde el suelo es visible entre las plantas", "Viñedos y olivares con marco amplio"],
+            "limitations": ["Requiere ajustar el factor L según cobertura", "Menos sensible que el NDVI en coberturas densas", "El valor de L=0.5 es un compromiso"]
+        },
+        "gndvi": {
+            "fullName": "Índice de Vegetación de Diferencia Normalizada Verde",
+            "description": "Usa la banda verde en lugar de la roja, ofreciendo mayor sensibilidad a la clorofila.",
+            "interpretation": {
+                "veryLow": "Suelo desnudo o agua",
+                "low": "Vegetación clorótica (deficiencia de nitrógeno)",
+                "medium": "Cultivos con niveles normales de clorofila",
+                "high": "Alta concentración de clorofila, buena salud",
+                "veryHigh": "Máxima actividad fotosintética"
+            },
+            "bestFor": ["Evaluación de contenido de clorofila", "Detección de deficiencia de nitrógeno", "Monitoreo de la senescencia en cultivos", "Diferenciación de especies vegetales"],
+            "limitations": ["Menor rango dinámico que el NDVI", "Más sensible a las condiciones de iluminación", "La banda verde (B03) tiene menor relación señal-ruido"]
+        },
+        "ndre": {
+            "fullName": "Índice de Diferencia Normalizada de Borde Rojo",
+            "description": "Aprovecha la banda de borde rojo (Red Edge), muy sensible a cambios sutiles en la salud de la vegetación.",
+            "interpretation": {
+                "veryLow": "Vegetación muerta o severamente estresada",
+                "low": "Estrés nutricional o clorosis temprana",
+                "medium": "Cultivos con nutrición adecuada",
+                "high": "Alta eficiencia fotosintética",
+                "veryHigh": "Óptima salud y densidad de clorofila"
+            },
+            "bestFor": ["Agricultura de precisión (dosis variable de N)", "Detección temprana de estrés en cultivos", "Clasificación de variedades de cultivos", "Monitoreo de la senescencia foliar"],
+            "limitations": ["Requiere banda Red Edge (B05, B06, B7 o B8A)", "Menor disponibilidad en satélites no-Sentinel-2", "Puede verse afectado por la estructura del dosel"]
+        }
     }
 }

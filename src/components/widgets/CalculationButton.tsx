@@ -2,6 +2,7 @@ import React from 'react';
 import { Calculator, Loader2, AlertCircle, CheckCircle } from 'lucide-react';
 import { useVegetationContext } from '../../services/vegetationContext';
 import { useIndexCalculation } from '../../hooks/useIndexCalculation';
+import { useTranslation } from '@nekazari/sdk';
 
 interface CalculationButtonProps {
   sceneId?: string;
@@ -30,6 +31,7 @@ export const CalculationButton: React.FC<CalculationButtonProps> = ({
   singleDate,
   formula,
 }) => {
+  const { t } = useTranslation();
   const { selectedIndex, selectedSceneId, selectedEntityId, setSelectedIndex } = useVegetationContext();
   const { calculateIndex, isCalculating, error, success, resetState } = useIndexCalculation();
 
@@ -56,7 +58,6 @@ export const CalculationButton: React.FC<CalculationButtonProps> = ({
     });
 
     if (jobId && setSelectedIndex) {
-      console.log('[CalculationButton] Calculation success, refreshing map layer:', effectiveIndexType);
       setSelectedIndex(effectiveIndexType);
     }
   };
@@ -80,12 +81,12 @@ export const CalculationButton: React.FC<CalculationButtonProps> = ({
         {isCalculating ? (
           <>
             <Loader2 className="w-4 h-4 animate-spin" />
-            <span>Calculando...</span>
+            <span>{t('calculationButton.calculating')}</span>
           </>
         ) : (
           <>
             <Calculator className="w-4 h-4" />
-            <span>Calcular Índice</span>
+            <span>{t('calculationButton.label')}</span>
           </>
         )}
       </button>
@@ -100,7 +101,7 @@ export const CalculationButton: React.FC<CalculationButtonProps> = ({
       {success && (
         <div className="flex items-center gap-2 text-xs text-green-600 bg-green-50 p-2 rounded">
           <CheckCircle className="w-4 h-4" />
-          <span>Índice calculado correctamente</span>
+          <span>{t('calculationButton.success')}</span>
         </div>
       )}
     </div>

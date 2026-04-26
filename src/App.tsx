@@ -1,4 +1,4 @@
-import React, { useState, useEffect, lazy, Suspense } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Card } from '@nekazari/ui-kit';
 import { VegetationProvider, useVegetationContext } from './services/vegetationContext';
 
@@ -8,8 +8,7 @@ import { useTranslation } from '@nekazari/sdk';
 export { viewerSlots } from './slots/index';
 import { VegetationAnalytics } from './components/VegetationAnalytics';
 import { useVegetationApi } from './services/api';
-import { Layers, Leaf, ChevronRight, FileDown, MapPin } from 'lucide-react';
-import { SkeletonCard } from './components/widgets/SkeletonCard';
+import { Leaf, ChevronRight } from 'lucide-react';
 
 /**
  * Compute area in hectares from a GeoJSON Polygon/MultiPolygon geometry.
@@ -40,25 +39,8 @@ function computeAreaHa(geometry: any): number | null {
   }
 }
 
-// Lazy load tabs for code splitting
-const ExportTab = lazy(() => import('./components/pages/ExportTab'));
-const ZoningTab = lazy(() => import('./components/pages/ZoningTab'));
-
-// Simplified tabs: Analysis, Export, Zoning (consolidated from 6)
-type TabType = 'dashboard' | 'analysis' | 'export' | 'zoning';
-
-// Loading fallback for lazy loaded tabs
-const TabLoadingFallback: React.FC = () => {
-  return (
-    <div className="space-y-4 p-4">
-      <SkeletonCard variant="chart" />
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <SkeletonCard variant="stats" />
-        <SkeletonCard variant="table" rows={3} />
-      </div>
-    </div>
-  );
-};
+// Single view: Dashboard → Analysis (no tabs needed)
+type TabType = 'dashboard' | 'analysis';
 
 /**
  * Read URL search params for deep linking
@@ -75,7 +57,7 @@ function useDeepLinkParams(): { entityId: string | null; tab: TabType | null } {
     const entityId = searchParams.get('entityId');
     const tab = searchParams.get('tab') as TabType | null;
 
-    const validTabs: TabType[] = ['dashboard', 'analysis', 'export', 'zoning'];
+    const validTabs: TabType[] = ['dashboard', 'analysis'];
     const validatedTab = tab && validTabs.includes(tab) ? tab : null;
 
     setParams({ entityId, tab: validatedTab });
@@ -112,11 +94,9 @@ const DashboardContent: React.FC = () => {
       if (!hostAuth || !hostAuth.isAuthenticated) {
         if (retryCount < maxRetries) {
           retryCount++;
-          console.log(`[Vegetation] Waiting for auth context... (${retryCount}/${maxRetries})`);
           setTimeout(fetchParcels, 500);
           return;
         }
-        console.warn('[Vegetation] Auth context not available after retries');
       }
 
       if (cancelled) return;
@@ -125,7 +105,6 @@ const DashboardContent: React.FC = () => {
         const data = await api.listTenantParcels();
         if (!cancelled) {
           setParcels(data);
-          console.log(`[Vegetation] Loaded ${data.length} parcels`);
         }
       } catch (error) {
         console.error('[Vegetation] Error fetching parcels:', error);
@@ -294,62 +273,13 @@ const DashboardContent: React.FC = () => {
         </div>
       </div>
 
-      {/* Tab Bar — 3 consolidated tabs */}
-      <div className="bg-white border-b border-gray-200 px-6">
-        <div className="flex overflow-x-auto scrollbar-hide -mb-px">
-          <TabButton
-            active={activeTab === 'analysis'}
-            onClick={() => setActiveTab('analysis')}
-            icon={<Layers className="w-4 h-4" />}
-            label={t('tabs.analysis')}
-          />
-          <TabButton
-            active={activeTab === 'export'}
-            onClick={() => setActiveTab('export')}
-            icon={<FileDown className="w-4 h-4" />}
-            label={t('tabs.export')}
-          />
-          <TabButton
-            active={activeTab === 'zoning'}
-            onClick={() => setActiveTab('zoning')}
-            icon={<MapPin className="w-4 h-4" />}
-            label={t('tabs.zoning')}
-          />
-        </div>
-      </div>
-
-      {/* Content Area */}
+      {/* Content Area — single view */}
       <div className="flex-1 overflow-auto bg-slate-50">
-        <Suspense fallback={<TabLoadingFallback />}>
-          {activeTab === 'analysis' && <VegetationAnalytics />}
-          {activeTab === 'export' && <ExportTab />}
-          {activeTab === 'zoning' && <ZoningTab />}
-        </Suspense>
+        <VegetationAnalytics />
       </div>
     </div>
   );
 };
-
-/**
- * Tab Button Component for consistent styling
- */
-const TabButton: React.FC<{
-  active: boolean;
-  onClick: () => void;
-  icon: React.ReactNode;
-  label: string;
-}> = ({ active, onClick, icon, label }) => (
-  <button
-    onClick={onClick}
-    className={`flex items-center gap-2 px-4 py-3 text-sm font-medium whitespace-nowrap border-b-2 transition-colors ${active
-      ? 'border-emerald-600 text-emerald-700'
-      : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
-      }`}
-  >
-    {icon}
-    <span>{label}</span>
-  </button>
-);
 
 // Main App Entry Point
 const App: React.FC = () => {
