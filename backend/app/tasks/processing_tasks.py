@@ -37,6 +37,41 @@ def _get_redis():
     return _redis_client
 
 
+def _decrement_and_cleanup_bands(scene_product_id: str) -> bool:
+    """Decrement Redis counter and cleanup tenant band files if this is the last calculation.
+
+    Returns True if bands were cleaned up, False otherwise.
+    """
+    try:
+        key = f"vegetation:bandclean:{scene_product_id}"
+        r = _get_redis()
+        remaining = r.decr(key)
+        if remaining is not None and remaining <= 0:
+            meta = r.hgetall(key + ":meta")
+            tenant_bucket = meta.get("bucket") if meta else None
+            storage_prefix = meta.get("prefix", "").rstrip("/") if meta else ""
+            if tenant_bucket and storage_prefix:
+                band_prefix = f"{storage_prefix}scenes/{scene_product_id}/"
+                storage = create_storage_service(
+                    storage_type=os.getenv('STORAGE_TYPE', 's3'),
+                    default_bucket=tenant_bucket,
+                )
+                deleted = storage.delete_prefix(band_prefix, tenant_bucket)
+                logger.info(
+                    "Band cleanup: deleted %d band files from tenant bucket %s/%s",
+                    deleted, tenant_bucket, band_prefix,
+                )
+            r.delete(key, key + ":meta")
+            return True
+        elif remaining is None:
+            logger.debug("Band cleanup counter not found for scene %s (may have expired)", scene_product_id)
+        else:
+            logger.debug("Band cleanup deferred for scene %s: %d calculations remaining", scene_product_id, remaining)
+    except Exception as e:
+        logger.warning("Band cleanup check failed for scene %s: %s", scene_product_id, e)
+    return False
+
+
 def _check_idempotency(tenant_id: str, parcel_id: str, index_type: str, sensing_date_str: str) -> bool:
     """Check if this calculation was already done recently (Redis SETNX, TTL 24h).
 
@@ -235,6 +270,7 @@ def calculate_vegetation_index(
                     "skipped": True,
                 })
                 db.commit()
+                _decrement_and_cleanup_bands(scene.scene_id)
                 return
 
             scenes_to_process = [scene]
@@ -432,6 +468,10 @@ def calculate_vegetation_index(
 
         job.mark_completed(job_result)
         db.commit()
+
+        # Band cleanup: delete raw bands from tenant bucket after last index calc
+        if not is_temporal_composite and primary_scene:
+            _decrement_and_cleanup_bands(primary_scene.scene_id)
 
         mode_str = "temporal composite" if is_temporal_composite else "single scene"
         logger.info(
