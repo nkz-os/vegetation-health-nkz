@@ -20,6 +20,36 @@ from app.database import get_db_session
 logger = logging.getLogger(__name__)
 
 
+def _set_band_cleanup_counter(scene_product_id: str, tenant_id: str, tenant_bucket: str, storage_prefix: str, total: int) -> None:
+    """Set Redis counter for band cleanup after all index calculations complete.
+
+    Each calculate_vegetation_index job decrements the counter after success.
+    The last job (counter=0) deletes raw band files from the tenant bucket.
+    Global cache retains the bands for reuse.
+    """
+    if total <= 0:
+        return
+
+    try:
+        import redis
+        redis_url = os.getenv('CELERY_BROKER_URL', 'redis://localhost:6379/0')
+        r = redis.from_url(redis_url, decode_responses=True)
+        key = f"vegetation:bandclean:{scene_product_id}"
+        pipeline = r.pipeline()
+        pipeline.set(key, total)
+        pipeline.expire(key, 86400)  # 24h TTL — auto-cleanup if calc jobs never complete
+        pipeline.hset(key + ":meta", mapping={
+            "tenant_id": tenant_id,
+            "bucket": tenant_bucket,
+            "prefix": storage_prefix,
+        })
+        pipeline.expire(key + ":meta", 86400)
+        pipeline.execute()
+        logger.info("Band cleanup counter set for scene %s: %d expected calculations", scene_product_id, total)
+    except Exception as e:
+        logger.warning("Failed to set band cleanup counter for scene %s: %s", scene_product_id, e)
+
+
 @celery_app.task(bind=True, name='vegetation.download_sentinel2_scene')
 def download_sentinel2_scene(self, job_id: str, tenant_id: str, parameters: Dict[str, Any]):
     """Download Sentinel-2 scene from Copernicus Data Space Ecosystem.
@@ -414,6 +444,12 @@ def download_sentinel2_scene(self, job_id: str, tenant_id: str, parameters: Dict
         # Check for chained calculation trigger
         calculate_indices = parameters.get('calculate_indices')
         calculate_custom_formulas = parameters.get('calculate_custom_formulas')
+        total_calc_jobs = (len(calculate_indices) if isinstance(calculate_indices, list) else 0) + \
+                          (len(calculate_custom_formulas) if isinstance(calculate_custom_formulas, list) else 0)
+
+        if total_calc_jobs > 0:
+            _set_band_cleanup_counter(scene_id, tenant_id, tenant_bucket_name, storage_path, total_calc_jobs)
+
         if calculate_indices and isinstance(calculate_indices, list):
             try:
                 from app.tasks.processing_tasks import calculate_vegetation_index
