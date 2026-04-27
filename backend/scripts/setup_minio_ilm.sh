@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # setup_minio_ilm.sh — Apply MinIO ILM lifecycle rules for COG retention.
 #
-# Tenant COGs older than 30 days are automatically expired by MinIO ILM.
+# Tenant COGs older than 60 days are automatically expired by MinIO ILM.
 # This avoids custom Celery cleanup code for tenant buckets.
 #
 # Usage:
@@ -13,7 +13,7 @@
 set -euo pipefail
 
 MC_ALIAS="${MC_ALIAS:-minio}"
-EXPIRE_DAYS="${EXPIRE_DAYS:-30}"
+EXPIRE_DAYS="${EXPIRE_DAYS:-60}"
 
 echo "=== MinIO ILM Setup for Vegetation Prime ==="
 echo "Alias: ${MC_ALIAS}, Expiration: ${EXPIRE_DAYS} days"
