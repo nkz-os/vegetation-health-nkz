@@ -28,8 +28,15 @@ if (!window.__NKZ__) {
   }
   const LazyApp = React.lazy(() => import('./App'));
 
-  const MainWrapper = () =>
-    React.createElement(
+  // Preload mobile auth hook (no-op if not in WebView)
+  let useMobileAuth: (() => void) | undefined;
+  import('./hooks/useMobileAuth').then(m => { useMobileAuth = m.useMobileAuth; }).catch(() => {});
+
+  const MainWrapper = () => {
+    if (useMobileAuth) {
+      try { useMobileAuth(); } catch (_) { /* optional */ }
+    }
+    return React.createElement(
       React.Suspense,
       {
         fallback: React.createElement('div', {
@@ -39,6 +46,7 @@ if (!window.__NKZ__) {
       },
       React.createElement(LazyApp)
     );
+  };
 
   window.__NKZ__.register({
     id: MODULE_ID,

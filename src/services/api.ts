@@ -52,12 +52,17 @@ export class VegetationApiClient {
       },
     });
 
-    // Shared interceptor: inject X-Tenant-ID on both clients.
+    // Shared interceptor: inject X-Tenant-ID and mobile Bearer token.
     // Auth is handled by httpOnly cookie (withCredentials: true).
     const addTenantId = (config: any) => {
       const tenantId = this.getTenantId();
       if (tenantId) {
         config.headers['X-Tenant-ID'] = tenantId;
+      }
+      // If mobile token exists (WebView context), add Bearer fallback
+      const mobileToken = (window as any).__nekazariMobileToken;
+      if (mobileToken && !config.headers['Authorization']) {
+        config.headers['Authorization'] = `Bearer ${mobileToken}`;
       }
       return config;
     };
