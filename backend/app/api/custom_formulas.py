@@ -91,7 +91,7 @@ def _serialize_formula(item: VegetationCustomFormula) -> Dict[str, Any]:
         "name": item.name,
         "description": item.description,
         "formula": item.formula,
-        "is_validated": str(item.is_validated).lower() == "true",
+        "is_validated": bool(item.is_validated),
         "validation_error": item.validation_error,
         "usage_count": item.usage_count,
         "last_used_at": item.last_used_at,
@@ -142,7 +142,7 @@ async def create_custom_formula(
         name=normalized_name,
         description=request.description.strip() if request.description else None,
         formula=validated["formula"],
-        is_validated="true",
+        is_validated=True,
         validation_error=None,
         created_by=current_user.get("user_id"),
     )

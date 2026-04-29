@@ -7,7 +7,7 @@ from typing import Optional, Dict, Any
 from decimal import Decimal
 
 from geoalchemy2 import Geometry
-from sqlalchemy import Boolean, Column, Date, DateTime, ForeignKey, String, Text, BigInteger
+from sqlalchemy import Boolean, Column, Date, DateTime, ForeignKey, Numeric, String, Text, BigInteger
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 
 from .base import BaseModel, TenantMixin
@@ -33,7 +33,7 @@ class VegetationScene(BaseModel, TenantMixin):
     centroid = Column(Geometry('POINT', srid=4326), nullable=True)
     
     # Cloud information
-    cloud_coverage = Column(Text, nullable=True)  # Stored as Decimal in DB, but Text in model for flexibility
+    cloud_coverage = Column(Numeric(5, 2), nullable=True)
     snow_coverage = Column(Text, nullable=True)
     
     # Storage information
