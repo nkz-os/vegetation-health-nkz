@@ -135,3 +135,4 @@ nekazari-module-template/
 # Force rebuild markers (debugging)
 # =============================================================================
 .force_rebuild*
+.worktrees/

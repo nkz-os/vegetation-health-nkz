@@ -45,6 +45,12 @@ class FormulaCreateRequest(BaseModel):
     description: Optional[str] = Field(default=None, max_length=500)
 
 
+class FormulaUpdateRequest(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=MAX_NAME_LENGTH)
+    formula: Optional[str] = Field(default=None, min_length=1, max_length=MAX_FORMULA_LENGTH)
+    description: Optional[str] = Field(default=None, max_length=500)
+
+
 class FormulaValidateRequest(BaseModel):
     formula: str = Field(..., min_length=1, max_length=MAX_FORMULA_LENGTH)
 
@@ -91,7 +97,7 @@ def _serialize_formula(item: VegetationCustomFormula) -> Dict[str, Any]:
         "name": item.name,
         "description": item.description,
         "formula": item.formula,
-        "is_validated": str(item.is_validated).lower() == "true",
+        "is_validated": bool(item.is_validated),
         "validation_error": item.validation_error,
         "usage_count": item.usage_count,
         "last_used_at": item.last_used_at,
@@ -142,7 +148,7 @@ async def create_custom_formula(
         name=normalized_name,
         description=request.description.strip() if request.description else None,
         formula=validated["formula"],
-        is_validated="true",
+        is_validated=True,
         validation_error=None,
         created_by=current_user.get("user_id"),
     )
@@ -167,6 +173,70 @@ async def validate_custom_formula(
         "formula": validated["formula"],
         "bands": validated["bands"],
     }
+
+
+@router.patch("/{formula_id}")
+async def update_custom_formula(
+    formula_id: str,
+    request: FormulaUpdateRequest,
+    current_user: dict = Depends(require_auth),
+    db: Session = Depends(get_db_with_tenant),
+):
+    """Update an existing custom formula (partial update)."""
+    tenant_id = current_user["tenant_id"]
+    try:
+        formula_uuid = uuid_mod.UUID(formula_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="Invalid formula id") from exc
+
+    row = (
+        db.query(VegetationCustomFormula)
+        .filter(
+            VegetationCustomFormula.id == formula_uuid,
+            VegetationCustomFormula.tenant_id == tenant_id,
+        )
+        .first()
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Custom formula not found")
+
+    changes_made = False
+
+    if request.name is not None:
+        # Check name uniqueness (exclude current formula)
+        existing = (
+            db.query(VegetationCustomFormula)
+            .filter(
+                VegetationCustomFormula.tenant_id == tenant_id,
+                VegetationCustomFormula.name.ilike(request.name.strip()),
+                VegetationCustomFormula.id != formula_uuid,
+            )
+            .first()
+        )
+        if existing:
+            raise HTTPException(status_code=409, detail="A formula with this name already exists")
+        row.name = request.name.strip()
+        changes_made = True
+
+    if request.formula is not None:
+        validated = _validate_formula(request.formula)
+        row.formula = validated["formula"]
+        # Re-validate
+        row.is_validated = True
+        row.validation_error = None
+        changes_made = True
+
+    if request.description is not None:
+        row.description = request.description.strip() if request.description else None
+        changes_made = True
+
+    if not changes_made:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    db.commit()
+    db.refresh(row)
+    logger.info("Custom formula %s updated by tenant %s", formula_id, tenant_id)
+    return _serialize_formula(row)
 
 
 @router.delete("/{formula_id}")

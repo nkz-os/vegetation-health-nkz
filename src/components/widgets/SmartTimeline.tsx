@@ -1,137 +1,186 @@
 /**
- * Smart Timeline Component
- * Combines a date slider with a line chart showing index trends over time.
- * Allows visual navigation through historical vegetation data.
+ * SmartTimeline - Sparse timeline from availability API.
+ *
+ * Fetches scene availability from GET /entities/{entity_id}/scenes/available
+ * and renders colored tick marks for dates with actual data.
+ *
+ * Supports both self-fetching (via entityId + indexType) and pre-fed (via stats).
  */
 
-import React, { useMemo } from 'react';
-import {
-  Line,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  ReferenceLine,
-  Area,
-  ComposedChart,
-} from 'recharts';
-import { Calendar, TrendingUp, TrendingDown, CloudOff } from 'lucide-react';
+import React, { useEffect, useState, useMemo, useCallback, useRef } from 'react';
+import { Calendar, CloudOff, AlertCircle } from 'lucide-react';
 import { useTranslation } from '@nekazari/sdk';
+import { useVegetationApi } from '../../services/api';
 
-interface SceneStats {
+/** Flexible tick data — accepts both SceneStats (sensing_date) and API timeline (date) */
+interface TickData {
   scene_id: string;
-  sensing_date: string;
+  date?: string;
+  sensing_date?: string;
   mean_value: number | null;
-  min_value: number | null;
-  max_value: number | null;
-  std_dev: number | null;
-  cloud_coverage: number | null;
+  cloud_coverage?: number | null;
 }
 
 interface SmartTimelineProps {
-  stats: SceneStats[];
-  selectedDate: string | null;
-  onDateSelect: (date: string, sceneId: string) => void;
-  indexType: string;
-  previousYearStats?: SceneStats[];
-  showComparison?: boolean;
+  /** Entity ID for self-fetching (when stats not pre-fed) */
+  entityId?: string;
+  /** Pre-fed stats (from TimelineWidget slot) */
+  stats?: TickData[];
+  /** Currently selected date string (YYYY-MM-DD) */
+  selectedDate?: string | null;
+  /** Called when user clicks a tick mark */
+  onDateSelect?: (date: string, sceneId: string) => void;
+  /** Index type for fetch and viewer URL */
+  indexType?: string;
+  /** External loading indicator */
   isLoading?: boolean;
+  // Backward-compat props (kept for TimelineWidget slot; unused in sparse rendering)
+  previousYearStats?: any[];
+  showComparison?: boolean;
 }
 
-// Color maps for different indices
-const INDEX_COLORS: Record<string, { primary: string; secondary: string; gradient: string[] }> = {
-  NDVI: { primary: '#22c55e', secondary: '#86efac', gradient: ['#dcfce7', '#22c55e'] },
-  NDMI: { primary: '#3b82f6', secondary: '#93c5fd', gradient: ['#dbeafe', '#3b82f6'] },
-  SAVI: { primary: '#84cc16', secondary: '#bef264', gradient: ['#ecfccb', '#84cc16'] },
-  NDRE: { primary: '#f97316', secondary: '#fdba74', gradient: ['#ffedd5', '#f97316'] },
-  GNDVI: { primary: '#10b981', secondary: '#6ee7b7', gradient: ['#d1fae5', '#10b981'] },
+/** Get the date string from a tick, handling both date and sensing_date fields */
+function tickDate(tick: TickData | null | undefined): string {
+  if (!tick) return '';
+  const d = tick.date || tick.sensing_date;
+  return d || '';
+}
+
+function getTickColor(meanValue: number | null): string {
+  if (meanValue == null) return '#cbd5e1'; // gray for no data
+  if (meanValue >= 0.6) return '#22c55e';  // green
+  if (meanValue >= 0.3) return '#eab308';  // yellow
+  return '#ef4444';                          // red
+}
+
+const formatDateShort = (dateStr: string): string => {
+  const d = new Date(dateStr);
+  return d.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' });
 };
 
-const formatDate = (dateStr: string): string => {
-  const date = new Date(dateStr);
-  return date.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' });
-};
-
-const formatMonth = (dateStr: string): string => {
-  const date = new Date(dateStr);
-  return date.toLocaleDateString('es-ES', { month: 'short', year: '2-digit' });
+const formatDateFull = (dateStr: string): string => {
+  const d = new Date(dateStr);
+  return d.toLocaleDateString('es-ES', { day: 'numeric', month: 'long', year: 'numeric' });
 };
 
 export const SmartTimeline: React.FC<SmartTimelineProps> = ({
-  stats,
+  entityId,
+  stats: externalStats,
   selectedDate,
   onDateSelect,
-  indexType,
-  previousYearStats,
-  showComparison = false,
-  isLoading = false,
+  indexType = 'NDVI',
+  isLoading: externalLoading = false,
 }) => {
   const { t } = useTranslation();
-  const colors = INDEX_COLORS[indexType] || INDEX_COLORS.NDVI;
+  const api = useVegetationApi();
 
-  // Prepare chart data — oldest on the left, newest on the right
-  const chartData = useMemo(() => {
-    // Filter out entries without mean_value for cleaner chart
-    const validStats = stats.filter(s => s.mean_value !== null);
+  // Internal fetch state (when entityId is provided and stats are not)
+  const [internalStats, setInternalStats] = useState<TickData[]>([]);
+  const [internalLoading, setInternalLoading] = useState(false);
+  const [internalError, setInternalError] = useState<string | null>(null);
 
-    return validStats.map((stat) => {
-      const prevYearStat = previousYearStats?.find(p => {
-        // Match by month/day for comparison
-        const currDate = new Date(stat.sensing_date);
-        const prevDate = new Date(p.sensing_date);
-        return currDate.getMonth() === prevDate.getMonth() &&
-          Math.abs(currDate.getDate() - prevDate.getDate()) <= 7;
+  // Tooltip state
+  const [tooltipItem, setTooltipItem] = useState<TickData | null>(null);
+  const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null);
+
+  // Viewer URL loading
+  const [loadingSceneId, setLoadingSceneId] = useState<string | null>(null);
+
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Decide which stats to use
+  const stats = useMemo(() => {
+    if (externalStats && externalStats.length > 0) return externalStats;
+    return internalStats;
+  }, [externalStats, internalStats]);
+
+  const isLoading = externalLoading || internalLoading;
+  const hasError = internalError && !externalLoading;
+
+  // Sort stats chronologically
+  const sortedStats = useMemo(() => {
+    return [...stats].sort((a, b) => tickDate(a).localeCompare(tickDate(b)));
+  }, [stats]);
+
+  // Fetch internally when entityId + indexType provided and no external stats
+  useEffect(() => {
+    if (externalStats && externalStats.length > 0) {
+      // External data provided — don't fetch
+      setInternalLoading(false);
+      setInternalError(null);
+      return;
+    }
+
+    if (!entityId) {
+      setInternalStats([]);
+      return;
+    }
+
+    let cancelled = false;
+    setInternalLoading(true);
+    setInternalError(null);
+
+    api.getScenesAvailable(entityId, indexType)
+      .then(response => {
+        if (cancelled) return;
+        const timeline = response?.timeline || [];
+        const mapped: TickData[] = timeline.map((item: any) => ({
+          scene_id: item.scene_id || item.id,
+          date: item.date,
+          mean_value: item.mean_value != null ? Number(item.mean_value) : null,
+          cloud_coverage: item.local_cloud_pct != null ? Number(item.local_cloud_pct) : null,
+        }));
+        mapped.sort((a, b) => tickDate(a).localeCompare(tickDate(b)));
+        setInternalStats(mapped);
+      })
+      .catch(err => {
+        if (cancelled) return;
+        console.error('[SmartTimeline] fetch error:', err);
+        setInternalError(err instanceof Error ? err.message : t('timeline.errorLoadingData'));
+        setInternalStats([]);
+      })
+      .finally(() => {
+        if (!cancelled) setInternalLoading(false);
       });
 
-      return {
-        date: stat.sensing_date,
-        displayDate: formatDate(stat.sensing_date),
-        month: formatMonth(stat.sensing_date),
-        value: stat.mean_value,
-        min: stat.min_value,
-        max: stat.max_value,
-        stdDev: stat.std_dev,
-        cloud: stat.cloud_coverage,
-        sceneId: stat.scene_id,
-        prevYearValue: prevYearStat?.mean_value ?? null,
-        isSelected: stat.sensing_date === selectedDate,
-      };
-    });
-  }, [stats, previousYearStats, selectedDate]);
+    return () => { cancelled = true; };
+  }, [entityId, indexType, api, externalStats, t]);
 
-  // Calculate trend
-  const trend = useMemo(() => {
-    if (chartData.length < 2) return null;
-    const recent = chartData.slice(-3).filter(d => d.value !== null);
-    if (recent.length < 2) return null;
-    const diff = (recent[recent.length - 1].value || 0) - (recent[0].value || 0);
-    return diff > 0.02 ? 'up' : diff < -0.02 ? 'down' : 'stable';
-  }, [chartData]);
+  // Click handler: calls onDateSelect and loads viewer URL
+  const handleTickClick = useCallback(async (tick: TickData) => {
+    if (!onDateSelect) return;
+    onDateSelect(tickDate(tick), tick.scene_id);
 
-  // Stats summary
-  const summary = useMemo(() => {
-    const values = chartData.filter(d => d.value !== null).map(d => d.value as number);
-    if (values.length === 0) return null;
-    return {
-      current: values[values.length - 1],
-      avg: values.reduce((a, b) => a + b, 0) / values.length,
-      min: Math.min(...values),
-      max: Math.max(...values),
-    };
-  }, [chartData]);
-
-  const handleChartClick = (data: any) => {
-    if (data && data.activePayload && data.activePayload[0]) {
-      const point = data.activePayload[0].payload;
-      onDateSelect(point.date, point.sceneId);
+    // Load viewer URL for the map layer
+    setLoadingSceneId(tick.scene_id);
+    try {
+      await api.getViewerUrl(tick.scene_id, indexType);
+      // The response tileUrlTemplate would be used by the map layer.
+      // The context handles updating the active raster path.
+    } catch (err) {
+      console.error('[SmartTimeline] viewer URL error:', err);
+    } finally {
+      setLoadingSceneId(null);
     }
-  };
+  }, [api, indexType, onDateSelect]);
 
-  if (isLoading) {
+  // Tooltip handlers
+  const handleMouseEnter = useCallback((tick: TickData, e: React.MouseEvent) => {
+    setTooltipItem(tick);
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    setTooltipPos({ x: rect.left + rect.width / 2, y: rect.top - 8 });
+  }, []);
+
+  const handleMouseLeave = useCallback(() => {
+    setTooltipItem(null);
+    setTooltipPos(null);
+  }, []);
+
+  // Loading state
+  if (isLoading && sortedStats.length === 0) {
     return (
-      <div className="bg-white/95 backdrop-blur-sm rounded-xl border border-slate-200/50 p-4">
-        <div className="flex items-center justify-center h-40">
+      <div className="bg-white/95 backdrop-blur-sm rounded-xl border border-slate-200/50 p-6">
+        <div className="flex items-center justify-center h-20">
           <div className="animate-pulse flex items-center gap-2 text-slate-500">
             <Calendar className="w-5 h-5" />
             <span>{t('timeline.loadingHistory')}</span>
@@ -141,10 +190,23 @@ export const SmartTimeline: React.FC<SmartTimelineProps> = ({
     );
   }
 
-  if (chartData.length === 0) {
+  // Error state
+  if (hasError && sortedStats.length === 0) {
     return (
-      <div className="bg-white/95 backdrop-blur-sm rounded-xl border border-slate-200/50 p-4">
-        <div className="flex items-center justify-center h-40 text-slate-500">
+      <div className="bg-white/95 backdrop-blur-sm rounded-xl border border-slate-200/50 p-6">
+        <div className="flex items-center justify-center h-20 text-red-500">
+          <AlertCircle className="w-5 h-5 mr-2" />
+          <span className="text-sm">{internalError}</span>
+        </div>
+      </div>
+    );
+  }
+
+  // Empty state
+  if (sortedStats.length === 0) {
+    return (
+      <div className="bg-white/95 backdrop-blur-sm rounded-xl border border-slate-200/50 p-6">
+        <div className="flex items-center justify-center h-20 text-slate-500">
           <CloudOff className="w-5 h-5 mr-2" />
           <span>{t('timeline.noDataAvailable')}</span>
         </div>
@@ -155,186 +217,117 @@ export const SmartTimeline: React.FC<SmartTimelineProps> = ({
   return (
     <div className="bg-white/95 backdrop-blur-sm rounded-xl border border-slate-200/50 shadow-lg overflow-hidden">
       {/* Header */}
-      <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div
-            className="w-3 h-3 rounded-full"
-            style={{ backgroundColor: colors.primary }}
-          />
-          <h3 className="font-semibold text-slate-800">
-            {t('timeline.evolution', { index: indexType })}
-          </h3>
-          {trend && (
-            <span className={`flex items-center gap-1 text-sm px-2 py-0.5 rounded-full ${trend === 'up' ? 'bg-green-100 text-green-700' :
-                trend === 'down' ? 'bg-red-100 text-red-700' :
-                  'bg-slate-100 text-slate-600'
-              }`}>
-              {trend === 'up' ? <TrendingUp className="w-3 h-3" /> :
-                trend === 'down' ? <TrendingDown className="w-3 h-3" /> : null}
-              {trend === 'up' ? t('timeline.improving') : trend === 'down' ? t('timeline.declining') : t('timeline.stable')}
-            </span>
-          )}
-        </div>
-
-        {summary && (
-          <div className="flex items-center gap-4 text-xs text-slate-500">
-            <span>{t('timeline.current')}: <strong className="text-slate-700">{summary.current?.toFixed(3)}</strong></span>
-            <span>{t('timeline.mean')}: <strong>{summary.avg?.toFixed(3)}</strong></span>
-            <span>{t('timeline.range')}: {summary.min?.toFixed(2)} - {summary.max?.toFixed(2)}</span>
+      <div className="px-4 py-2.5 border-b border-slate-100">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Calendar className="w-4 h-4 text-slate-500" />
+            <h3 className="text-sm font-semibold text-slate-700">
+              {t('timeline.evolution', { index: indexType })}
+            </h3>
           </div>
-        )}
+          <span className="text-xs text-slate-400">
+            {t('timelineWidget.scenesAvailable', { count: sortedStats.length })}
+          </span>
+        </div>
       </div>
 
-      {/* Chart */}
-      <div className="px-2 py-2" style={{ height: 160, minWidth: 100 }}>
-        <ResponsiveContainer width="100%" height="100%" minWidth={80}>
-          <ComposedChart
-            data={chartData}
-            onClick={handleChartClick}
-            margin={{ top: 10, right: 20, left: 0, bottom: 5 }}
-          >
-            <defs>
-              <linearGradient id={`gradient-${indexType}`} x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor={colors.primary} stopOpacity={0.3} />
-                <stop offset="95%" stopColor={colors.primary} stopOpacity={0} />
-              </linearGradient>
-            </defs>
+      {/* Sparse timeline */}
+      <div
+        ref={containerRef}
+        className="relative px-4 py-6"
+      >
+        {/* Baseline */}
+        <div className="absolute left-4 right-4 top-1/2 h-0.5 bg-slate-200 -translate-y-1/2" />
 
-            <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
+        {/* Tick marks */}
+        <div className="flex items-center justify-between relative">
+          {sortedStats.map((tick) => {
+            const isSelected = tickDate(tick) === selectedDate;
+            const color = getTickColor(tick.mean_value);
+            const isLoadingTick = loadingSceneId === tick.scene_id;
 
-            <XAxis
-              dataKey="displayDate"
-              tick={{ fontSize: 10, fill: '#64748b' }}
-              tickLine={false}
-              axisLine={{ stroke: '#e2e8f0' }}
-              interval="preserveStartEnd"
-            />
+            return (
+              <div
+                key={tick.scene_id}
+                className="relative flex flex-col items-center"
+                style={{ flex: '0 0 auto' }}
+              >
+                <button
+                  type="button"
+                  onClick={() => handleTickClick(tick)}
+                  onMouseEnter={(e) => handleMouseEnter(tick, e)}
+                  onMouseLeave={handleMouseLeave}
+                  className={`
+                    relative z-10 w-4 h-4 rounded-full transition-all cursor-pointer
+                    hover:scale-150 focus:outline-none focus:ring-2 focus:ring-emerald-400
+                    ${isSelected ? 'ring-2 ring-white scale-150 shadow-md' : ''}
+                    ${isLoadingTick ? 'animate-pulse' : ''}
+                  `}
+                  style={{
+                    backgroundColor: color,
+                    boxShadow: isSelected ? `0 0 0 3px ${color}` : 'none',
+                  }}
+                  title={`${formatDateShort(tickDate(tick))}: ${tick.mean_value?.toFixed(3) ?? '-'}`}
+                />
 
-            <YAxis
-              tick={{ fontSize: 10, fill: '#64748b' }}
-              tickLine={false}
-              axisLine={false}
-              domain={[-0.2, 1]}
-              tickFormatter={(v) => v.toFixed(1)}
-              width={35}
-            />
-
-            <Tooltip
-              content={({ active, payload }) => {
-                if (!active || !payload || !payload[0]) return null;
-                const data = payload[0].payload;
-                return (
-                  <div className="bg-white shadow-lg rounded-lg border border-slate-200 p-3 text-sm">
-                    <p className="font-semibold text-slate-800 mb-1">{data.date}</p>
-                    <div className="space-y-1 text-slate-600">
-                      <p><span className="font-medium">{indexType}:</span> {data.value?.toFixed(4)}</p>
-                      {data.cloud !== null && (
-                        <p><span className="font-medium">{t('timeline.clouds')}:</span> {data.cloud?.toFixed(1)}%</p>
-                      )}
-                      {data.prevYearValue !== null && showComparison && (
-                        <p className="text-slate-400">
-                          {t('timeline.previousYear')}: {data.prevYearValue?.toFixed(4)}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                );
-              }}
-            />
-
-            {/* Filled area under line */}
-            <Area
-              type="monotone"
-              dataKey="value"
-              stroke="none"
-              fill={`url(#gradient-${indexType})`}
-            />
-
-            {/* Previous year comparison line */}
-            {showComparison && previousYearStats && (
-              <Line
-                type="monotone"
-                dataKey="prevYearValue"
-                stroke={colors.secondary}
-                strokeDasharray="5 5"
-                strokeWidth={1.5}
-                dot={false}
-                name={t('timeline.previousYear')}
-              />
-            )}
-
-            {/* Main data line */}
-            <Line
-              type="monotone"
-              dataKey="value"
-              stroke={colors.primary}
-              strokeWidth={2.5}
-              dot={(props) => {
-                const { cx, cy, payload } = props;
-                const isSelected = payload.date === selectedDate;
-                if (isSelected) {
-                  return (
-                    <circle
-                      key={`dot-${payload.date}`}
-                      cx={cx}
-                      cy={cy}
-                      r={6}
-                      fill="white"
-                      stroke={colors.primary}
-                      strokeWidth={3}
-                    />
-                  );
-                }
-                return (
-                  <circle
-                    key={`dot-${payload.date}`}
-                    cx={cx}
-                    cy={cy}
-                    r={3}
-                    fill={colors.primary}
-                    style={{ cursor: 'pointer' }}
-                  />
-                );
-              }}
-              activeDot={{
-                r: 5,
-                fill: colors.primary,
-                stroke: 'white',
-                strokeWidth: 2,
-              }}
-            />
-
-            {/* Reference line for selected date */}
-            {selectedDate && (
-              <ReferenceLine
-                x={formatDate(selectedDate)}
-                stroke={colors.primary}
-                strokeDasharray="3 3"
-                strokeOpacity={0.5}
-              />
-            )}
-          </ComposedChart>
-        </ResponsiveContainer>
+                {/* Date label below tick */}
+                <span
+                  className={`
+                    mt-2 text-[10px] whitespace-nowrap transition-colors
+                    ${isSelected ? 'text-slate-800 font-semibold' : 'text-slate-400'}
+                  `}
+                >
+                  {formatDateShort(tickDate(tick))}
+                </span>
+              </div>
+            );
+          })}
+        </div>
       </div>
 
-      {/* Date slider / scene buttons */}
-      <div className="px-4 py-2 border-t border-slate-100 bg-slate-50/50">
-        <div className="flex gap-1 overflow-x-auto pb-1 scrollbar-thin">
-          {chartData.map((point) => (
-            <button
-              key={point.sceneId}
-              onClick={() => onDateSelect(point.date, point.sceneId)}
-              className={`
-                flex-shrink-0 px-2 py-1 rounded-md text-xs transition-all
-                ${point.isSelected
-                  ? 'bg-slate-800 text-white shadow-sm'
-                  : 'bg-white hover:bg-slate-100 text-slate-600 border border-slate-200'
-                }
-              `}
-            >
-              {point.displayDate}
-            </button>
-          ))}
+      {/* Tooltip */}
+      {tooltipItem && tooltipPos && (
+        <div
+          className="absolute z-50 bg-white shadow-lg rounded-lg border border-slate-200 p-3 text-sm pointer-events-none"
+          style={{
+            left: Math.min(tooltipPos.x, (containerRef.current?.offsetWidth ?? 400) - 180),
+            top: tooltipPos.y - 10,
+            transform: 'translate(-50%, -100%)',
+            minWidth: 160,
+          }}
+        >
+          <p className="font-semibold text-slate-800 mb-1">
+            {formatDateFull(tickDate(tooltipItem)!)}
+          </p>
+          <div className="space-y-0.5 text-xs text-slate-600">
+            <p>
+              <span className="font-medium">{indexType}:</span>{' '}
+              {tooltipItem.mean_value != null ? tooltipItem.mean_value.toFixed(4) : '-'}
+            </p>
+            <p>
+              <span className="font-medium">{t('timeline.clouds')}:</span>{' '}
+              {tooltipItem.cloud_coverage != null ? `${tooltipItem.cloud_coverage.toFixed(1)}%` : '-'}
+            </p>
+            <p className="text-[10px] text-slate-400 truncate max-w-[200px]">
+              ID: {tooltipItem.scene_id}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Legend */}
+      <div className="px-4 py-2 border-t border-slate-100 bg-slate-50/50 flex items-center gap-4 text-[10px] text-slate-500">
+        <div className="flex items-center gap-1">
+          <span className="w-2.5 h-2.5 rounded-full bg-green-500" />
+          <span>{t('legend.high')} (&ge;0.6)</span>
+        </div>
+        <div className="flex items-center gap-1">
+          <span className="w-2.5 h-2.5 rounded-full bg-yellow-500" />
+          <span>{t('legend.moderate')} (0.3-0.6)</span>
+        </div>
+        <div className="flex items-center gap-1">
+          <span className="w-2.5 h-2.5 rounded-full bg-red-500" />
+          <span>{t('legend.low')} (&lt;0.3)</span>
         </div>
       </div>
     </div>

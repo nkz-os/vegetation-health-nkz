@@ -19,8 +19,6 @@ from app.models.config import VegetationConfig
 from app.services.storage import create_storage_service, generate_tenant_bucket_name
 from app.services.fiware_integration import FIWAREClient
 
-from app.services.fiware_integration import FIWAREClient
-
 logger = logging.getLogger(__name__)
 
 
@@ -75,8 +73,8 @@ class ZoningAlgorithm:
         mask = label_img_int != -1
         
         results = (
-            {'properties': {'zone_id': int(v)}, 'geometry': s}
-            for i, (s, v) 
+            {'properties': {'cluster_id': int(v)}, 'geometry': s}
+            for i, (s, v)
             in enumerate(shapes(label_img_int, mask=mask, transform=transform))
         )
         return list(results)
@@ -149,7 +147,8 @@ class ZoningAlgorithm:
 
         # 4. Upload to Orion
         for zone in vectors:
-            zone_id = f"urn:ngsi-ld:AgriManagementZone:{parcel_id.split(':')[-1]}:Z{zone['properties']['zone_id']}"
+            cluster_val = zone['properties']['cluster_id']
+            zone_id = f"urn:ngsi-ld:AgriManagementZone:{parcel_id.split(':')[-1]}:Z{cluster_val}"
             entity = {
                 "id": zone_id,
                 "type": "AgriManagementZone",
@@ -163,7 +162,7 @@ class ZoningAlgorithm:
                 },
                 "zoneName": {
                     "type": "Property",
-                    "value": f"Zone {zone['properties']['zone_id'] + 1}"
+                    "value": f"Zone {cluster_val + 1}"
                 },
                 "variableAttribute": {
                     "type": "Property",
@@ -178,12 +177,17 @@ class ZoningAlgorithm:
                 logger.warning(f"Failed to update zone {zone_id}: {e}")
 
         logger.info(f"Successfully generated {len(vectors)} zones for {parcel_id}")
-        
-        # Return N8N-friendly response
+
+        # Return N8N-friendly response with GeoJSON for API retrieval
+        geojson = {
+            "type": "FeatureCollection",
+            "features": vectors,
+        }
         return {
             "status": "success",
             "parcel_id": parcel_id,
             "zones_created": len(vectors),
+            "geojson": geojson,
             "webhook_metadata": {
                 "intelligence_module_compatible": True,
                 "n8n_ready": True,

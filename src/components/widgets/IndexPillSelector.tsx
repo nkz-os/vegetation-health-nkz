@@ -4,7 +4,7 @@
  */
 
 import React, { useState } from 'react';
-import { Leaf, Droplet, Sun, Info } from 'lucide-react';
+import { Leaf, Droplet, Sun, Layers, Info } from 'lucide-react';
 import { useTranslation } from '@nekazari/sdk';
 import type { VegetationIndexType } from '../../types';
 import { IndexInfoModal } from './IndexInfoModal';
@@ -50,6 +50,14 @@ const INDEX_GROUPS: IndexGroup[] = [
     description: 'Índices para etapas tempranas y análisis de suelo',
     indices: [
       { value: 'SAVI', label: 'SAVI - Soil-Adjusted Vegetation Index', shortLabel: 'SAVI' },
+    ],
+  },
+  {
+    category: 'Manejo',
+    icon: <Layers className="w-4 h-4" />,
+    description: 'Zonificación para agricultura de precisión',
+    indices: [
+      { value: 'VRA_ZONES', label: 'VRA - Zonas de Aplicación Variable', shortLabel: 'VRA' },
     ],
   },
 ];

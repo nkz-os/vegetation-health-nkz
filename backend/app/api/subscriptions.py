@@ -2,6 +2,7 @@
 API endpoints for vegetation subscriptions (automated monitoring).
 """
 
+import logging
 from typing import List, Optional
 from datetime import date, datetime
 import json
@@ -17,6 +18,8 @@ from geoalchemy2.shape import to_shape
 from app.models import VegetationSubscription
 from app.middleware.auth import require_auth
 from app.api.dependencies import get_db_for_tenant
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -38,7 +41,7 @@ class SubscriptionBase(BaseModel):
                  s = to_shape(v)
                  return mapping(s)
              except Exception as e:
-                 print(f"Error converting geometry: {e}")
+                 logger.warning("Error converting geometry: %s", e)
                  return {}
         
         # Handle JSON String
@@ -92,7 +95,7 @@ class SubscriptionResponse(SubscriptionBase):
                  s = to_shape(v)
                  return mapping(s)
              except Exception as e:
-                 print(f"Error converting geometry: {e}")
+                 logger.warning("Error converting geometry: %s", e)
                  return {}
         
         # Handle JSON String

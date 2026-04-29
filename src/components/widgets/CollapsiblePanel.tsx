@@ -5,6 +5,7 @@
 
 import React, { useState } from 'react';
 import { ChevronLeft, ChevronRight, Leaf } from 'lucide-react';
+import { useTranslation } from '@nekazari/sdk';
 
 interface CollapsiblePanelProps {
     title: string;
@@ -22,6 +23,7 @@ export const CollapsiblePanel: React.FC<CollapsiblePanelProps> = ({
     className = '',
 }) => {
     const [isCollapsed, setIsCollapsed] = useState(defaultCollapsed);
+    const { t } = useTranslation();
 
     const ChevronIcon = side === 'right'
         ? (isCollapsed ? ChevronLeft : ChevronRight)
@@ -44,7 +46,7 @@ export const CollapsiblePanel: React.FC<CollapsiblePanelProps> = ({
           hover:bg-slate-50 transition-colors
           ${side === 'right' ? '-left-3' : '-right-3'}
         `}
-                title={isCollapsed ? 'Expandir panel' : 'Contraer panel'}
+                title={isCollapsed ? t('common.expand') : t('common.collapse')}
             >
                 <ChevronIcon className="w-4 h-4 text-slate-600" />
             </button>

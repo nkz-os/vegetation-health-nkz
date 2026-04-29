@@ -6,7 +6,8 @@ from datetime import datetime
 from typing import Optional
 from decimal import Decimal
 
-from sqlalchemy import CheckConstraint, Column, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import Boolean, CheckConstraint, Column, DateTime, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy.sql import func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 
 from .base import BaseModel, TenantMixin
@@ -43,7 +44,7 @@ class VegetationIndexCache(BaseModel, TenantMixin):
     result_tiles_path = Column(Text, nullable=True)
     
     # Processing metadata
-    calculated_at = Column(Text, nullable=False)  # Stored as TIMESTAMPTZ in DB
+    calculated_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     calculation_time_ms = Column(Integer, nullable=True)
     
     __table_args__ = (
@@ -65,12 +66,12 @@ class VegetationCustomFormula(BaseModel, TenantMixin):
     formula = Column(Text, nullable=False)  # Safe mathematical expression
     
     # Validation
-    is_validated = Column(Text, nullable=False, default='false')  # Boolean in DB
+    is_validated = Column(Boolean, nullable=False, default=False)
     validation_error = Column(Text, nullable=True)
     
     # Usage tracking
     usage_count = Column(Integer, default=0, nullable=False)
-    last_used_at = Column(Text, nullable=True)  # TIMESTAMPTZ in DB
+    last_used_at = Column(DateTime(timezone=True), nullable=True)
     
     # Metadata
     created_by = Column(Text, nullable=True)

@@ -98,7 +98,7 @@ const VegetationLayerControl: React.FC = () => {
 
   return (
     <>
-      <Card padding="md" className="bg-white/90 backdrop-blur-md border border-slate-200/50 rounded-xl w-80 shadow-lg pointer-events-auto">
+      <Card padding="md" className="bg-white/90 backdrop-blur-md border border-slate-200/50 rounded-xl w-full max-w-[320px] shadow-lg pointer-events-auto">
         <div className="space-y-4">
           {/* Header */}
           <div className="flex items-center justify-between border-b border-slate-100 pb-2">
@@ -170,12 +170,15 @@ const VegetationLayerControl: React.FC = () => {
                    <span>{t('layerControl.cloudMask', 'Máscara de Nubes')}</span>
                    <span className="text-xs text-slate-400">{t('layerControl.cloudMaskDesc', 'Ocultar áreas nubladas')}</span>
                 </label>
-                <input 
-                   type="checkbox" 
-                   checked={showCloudMask} 
-                   onChange={(e) => setShowCloudMask(e.target.checked)}
-                   className="toggle toggle-sm toggle-success"
-                />
+                <label className="relative inline-flex items-center cursor-pointer">
+                   <input
+                     type="checkbox"
+                     checked={showCloudMask}
+                     onChange={(e) => setShowCloudMask(e.target.checked)}
+                     className="sr-only peer"
+                   />
+                   <div className="w-9 h-5 bg-gray-300 rounded-full peer-checked:bg-green-500 peer-focus:ring-2 peer-focus:ring-green-300 after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-full" />
+                </label>
              </div>
             
              <div className="flex items-center justify-between mt-2">
@@ -183,12 +186,15 @@ const VegetationLayerControl: React.FC = () => {
                    <span>{t('layerControl.dynamicRange', 'Rango Dinámico')}</span>
                    <span className="text-xs text-slate-400">{t('layerControl.dynamicRangeDesc', 'Ajustar color a min/max')}</span>
                 </label>
-                <input 
-                   type="checkbox" 
-                   checked={legendDynamic} 
-                   onChange={(e) => setLegendDynamic(e.target.checked)}
-                   className="toggle toggle-sm toggle-success"
-                />
+                <label className="relative inline-flex items-center cursor-pointer">
+                   <input
+                     type="checkbox"
+                     checked={legendDynamic}
+                     onChange={(e) => setLegendDynamic(e.target.checked)}
+                     className="sr-only peer"
+                   />
+                   <div className="w-9 h-5 bg-gray-300 rounded-full peer-checked:bg-green-500 peer-focus:ring-2 peer-focus:ring-green-300 after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-full" />
+                </label>
              </div>
           </div>
 

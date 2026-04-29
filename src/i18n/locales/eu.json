@@ -14,7 +14,9 @@
         "download": "Deskargatu",
         "close": "Itxi",
         "noData": "Ez dago daturik eskuragarri",
-        "retry": "Saiatu berriro"
+        "retry": "Saiatu berriro",
+        "expand": "Zabaldu panela",
+        "collapse": "Tolestu panela"
     },
     "dashboard": {
         "title": "Laborantza Kudeaketa (Vegetation Prime)",
@@ -154,18 +156,6 @@
         "activeAlerts": "Alerta Aktiboak",
         "noAlerts": "Ez dago alertarik konfiguratuta"
     },
-    "weather": {
-        "title": "Eguraldi Datuak",
-        "currentConditions": "Uneko Baldintzak",
-        "temperature": "Tenperatura",
-        "humidity": "Hezetasuna",
-        "precipitation": "Prezipitazioa",
-        "wind": "Haizea",
-        "sensors": "Sentsore Eskuragarriak",
-        "noSensors": "Ez dago eguraldi sentsorerik lotuta",
-        "interpretation": "Interpretazioa",
-        "impactOnCrops": "Laborantzarekiko Eragina"
-    },
     "zoning": {
         "title": "Lurzati Zonifikazioa",
         "managementZones": "Kudeaketa Zonaldeak",
@@ -303,7 +293,9 @@
         "savedFormulas": "Gordetako formulak",
         "noSavedFormulas": "Ez dago gordetako formularik",
         "formulaValid": "Formula baliozkoa da",
-        "customTimeseriesNotAvailable": "Indize pertsonalizatuen denbora-seriea ez dago oraindik eskuragarri."
+        "customTimeseriesNotAvailable": "Indize pertsonalizatuen denbora-seriea ez dago oraindik eskuragarri.",
+        "date": "Data",
+        "status": "Egoera"
     },
     "errors": {
         "loadFailed": "Errorea datuak kargatzean",
@@ -365,7 +357,6 @@
         "gndvi": "GNDVI - Landaredi Indize Normalizatu Berdea",
         "ndre": "NDRE - Ertz Gorriaren Indize Normalizatua",
         "ndmi": "NDMI - Hezetasun Indize Normalizatua",
-        "sami": "SAMI - Lurzoruaren Hezetasun Indizea (Sentinel-1 SAR)",
         "vra": "VRA - Aplikazio Aldakorreko Zonak",
         "custom": "Indize Pertsonalizatua",
         "categoryGeneral": "Osasun Orokorra",
@@ -375,6 +366,31 @@
         "categorySoil": "Lurzorua/Ura",
         "categorySoilDesc": "Hasierako etapatarako eta lurzoruaren analisirako indizeak",
         "infoTooltip": "Indizearen informazioa ikusi"
+    },
+    "cropSeason": {
+        "title": "Labora Denboraldia Konfiguratu",
+        "cropType": "Labore mota",
+        "cropPlaceholder": "Aukeratu labore mota",
+        "wheat": "Garia",
+        "corn": "Artoa",
+        "barley": "Garagardoa",
+        "vineyard": "Mahastia",
+        "olive": "Olibondoa",
+        "almond": "Almendrondoa",
+        "vegetables": "Barazkiak",
+        "other": "Beste bat",
+        "startDate": "Hasiera data",
+        "endDate": "Amaiera data (aukerakoa)",
+        "monitoringToggle": "Monitorizatu lurzati hau",
+        "monitoringDesc": "Deskargatu eta prozesatu satelite irudiak automatikoki STAC bidez",
+        "save": "Gorde denboraldia",
+        "saving": "Gordetzen...",
+        "success": "Denboraldia gordeta",
+        "error": "Errorea denboraldia gordetzean",
+        "endDateHelp": "Utzi hutsik unean dauden denboraldietarako",
+        "selectSeason": "Hautatu denboraldia",
+        "newSeason": "Denboraldi berria",
+        "allSeasons": "Denboraldi guztiak"
     },
     "calculationCard": {
         "dateUnavailable": "Data ez erabilgarri",
@@ -419,7 +435,6 @@
         "gndviDesc": "Landaredi Indize Normalizatu Berdea",
         "ndreDesc": "Ertz Gorriaren Indize Normalizatua",
         "ndmiDesc": "Hezetasun Indize Normalizatua",
-        "samiDesc": "Sentinel-1 Lurzoruaren Hezetasuna",
         "vraDesc": "Aplikazio Aldakorreko Zonak",
         "customDesc": "Indize Pertsonalizatua"
     },

@@ -1,6 +1,7 @@
 """
 Periodic tasks for scheduling vegetation updates.
 """
+import logging
 from datetime import datetime, timedelta
 from sqlalchemy import or_
 
@@ -9,6 +10,8 @@ from app.database import get_db_session
 from app.models import VegetationSubscription
 from app.tasks.download_tasks import download_sentinel2_scene
 from app.tasks.processing_tasks import calculate_vegetation_index
+
+logger = logging.getLogger(__name__)
 # Note: CopernicusDataSpaceClient imported inside check_and_process_entity
 
 # We might need a task to find new scenes first, then download them.
@@ -39,7 +42,7 @@ def process_subscriptions():
             )
         ).all()
         
-        print(f"INFO: Processing {len(subscriptions)} due subscriptions.")
+        logger.info("Processing %d due subscriptions.", len(subscriptions))
         
         for sub in subscriptions:
             # Backfill + incremental: first run uses start_date (full history), then last_run_at
@@ -89,7 +92,7 @@ def check_and_process_entity(self, subscription_id, start_date, end_date):
     try:
         sub = db.query(VegetationSubscription).filter(VegetationSubscription.id == subscription_id).first()
         if not sub:
-            print(f"Error: Subscription {subscription_id} not found")
+            logger.error("Subscription %s not found", subscription_id)
             return
             
         # Update status to syncing if new
@@ -107,12 +110,12 @@ def check_and_process_entity(self, subscription_id, start_date, end_date):
                 # Extract the largest polygon from the MultiPolygon
                 largest = max(geom_shape.geoms, key=lambda g: g.area)
                 intersects_geojson = largest.__geo_interface__
-                print(f"Converted MultiPolygon ({len(geom_shape.geoms)} parts) to Polygon for STAC")
+                logger.debug("Converted MultiPolygon (%d parts) to Polygon for STAC", len(geom_shape.geoms))
             else:
                 intersects_geojson = geom_shape.__geo_interface__
-            print(f"Search geometry type: {intersects_geojson['type']}, bbox: {bbox}")
+            logger.debug("Search geometry type: %s, bbox: %s", intersects_geojson['type'], bbox)
         except Exception as e:
-            print(f"Error parsing geometry for {subscription_id}: {e}")
+            logger.error("Error parsing geometry for %s: %s", subscription_id, e)
             sub.last_error = f"Geometry error: {str(e)}"
             sub.status = 'error'
             db.commit()
@@ -129,7 +132,7 @@ def check_and_process_entity(self, subscription_id, start_date, end_date):
         )
         
         if not creds:
-            print(f"Error: Copernicus credentials not available for subscription {subscription_id}")
+            logger.error("Copernicus credentials not available for subscription %s", subscription_id)
             sub.last_error = "Copernicus credentials not configured. Configure in platform admin or module settings."
             sub.status = 'error'
             db.commit()
@@ -152,7 +155,7 @@ def check_and_process_entity(self, subscription_id, start_date, end_date):
                 limit=20,
             )
         except Exception as e:
-            print(f"Error searching scenes: {e}")
+            logger.error("Error searching scenes: %s", e)
             sub.last_error = f"Search failed: {str(e)}"
             # Don't set error status permanently if just search fail?
             # sub.status = 'error' 
@@ -196,7 +199,7 @@ def check_and_process_entity(self, subscription_id, start_date, end_date):
                 )
                 db.add(job)
                 db.commit()
-                print(f"Triggering download for scene {scene['id']}")
+                logger.info("Triggering download for scene %s", scene['id'])
                 download_sentinel2_scene.delay(
                     job_id=str(job.id),
                     tenant_id=sub.tenant_id,
@@ -205,7 +208,7 @@ def check_and_process_entity(self, subscription_id, start_date, end_date):
                 triggered_count += 1
         
         if triggered_count > 0:
-            print(f"Triggered {triggered_count} downloads for subscription {subscription_id}")
+            logger.info("Triggered %d downloads for subscription %s", triggered_count, subscription_id)
             
         # Update status to active after queuing initial batch
         if sub.status == 'syncing':

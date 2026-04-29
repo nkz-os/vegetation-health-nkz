@@ -5,7 +5,7 @@
 
 import React, { useEffect, useState, useCallback } from 'react';
 import { Calendar, BarChart3, Eye, EyeOff } from 'lucide-react';
-import { useViewer } from '@nekazari/sdk';
+import { useViewer, useTranslation } from '@nekazari/sdk';
 import { useUIKit } from '../../hooks/useUIKit';
 import { useVegetationContext } from '../../services/vegetationContext';
 import { useVegetationApi } from '../../services/api';
@@ -18,6 +18,7 @@ interface TimelineWidgetProps {
 
 export const TimelineWidget: React.FC<TimelineWidgetProps> = ({ entityId }) => {
   // Get UI components safely from Host
+  const { t } = useTranslation();
   const { Card } = useUIKit();
   const { currentDate, setCurrentDate } = useViewer();
   const {
@@ -166,7 +167,7 @@ export const TimelineWidget: React.FC<TimelineWidgetProps> = ({ entityId }) => {
       <Card padding="md" className="bg-white/90 backdrop-blur-md border border-slate-200/50 rounded-xl">
         <div className="flex items-center justify-center gap-2 py-6 text-slate-500">
           <Calendar className="w-5 h-5" />
-          <p>Selecciona una parcela para ver el historial</p>
+          <p>{t('timelineWidget.selectParcel')}</p>
         </div>
       </Card>
     );
@@ -181,7 +182,7 @@ export const TimelineWidget: React.FC<TimelineWidgetProps> = ({ entityId }) => {
             onClick={loadStats}
             className="mt-2 text-sm text-blue-600 hover:underline"
           >
-            Reintentar
+            {t('timelineWidget.retry')}
           </button>
         </div>
       </Card>
@@ -201,7 +202,7 @@ export const TimelineWidget: React.FC<TimelineWidgetProps> = ({ entityId }) => {
             }`}
           >
             <BarChart3 className="w-3.5 h-3.5" />
-            Gráfica
+            {t('timelineWidget.chart')}
           </button>
           
           <button
@@ -213,12 +214,12 @@ export const TimelineWidget: React.FC<TimelineWidgetProps> = ({ entityId }) => {
             }`}
           >
             {showComparison ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
-            Año anterior
+            {t('timelineWidget.previousYear')}
           </button>
         </div>
         
         <div className="text-xs text-slate-500">
-          {stats.length} escenas disponibles
+          {t('timelineWidget.scenesAvailable', { count: stats.length })}
         </div>
       </div>
 

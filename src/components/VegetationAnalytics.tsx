@@ -13,13 +13,15 @@ import { useVegetationContext } from '../services/vegetationContext';
 import { useVegetationApi } from '../services/api';
 import TimeseriesChart from './widgets/TimeseriesChart';
 import { SetupWizard } from './pages/SetupWizard';
+import { IndexPillSelector } from './widgets/IndexPillSelector';
+import { SmartTimeline } from './widgets/SmartTimeline';
 import { useAuth } from '../hooks/useAuth';
 import { useTranslation } from '@nekazari/sdk';
-import type { VegetationJob, CustomFormula } from '../types';
+import type { VegetationJob, CustomFormula, CropSeason } from '../types';
 import {
   Loader2, Calculator, AlertCircle, CheckCircle,
   RefreshCw, BarChart3, Satellite, Leaf,
-  Trash2, Clock, Play, XCircle, Activity, Power, Map, ChevronDown, Beaker, FileDown,
+  Activity, Power, Map, ChevronDown, Beaker, Sprout,
 } from 'lucide-react';
 
 // Main indices the user can browse after analysis
@@ -31,7 +33,7 @@ export const VegetationAnalytics: React.FC = () => {
   const {
     selectedIndex, setSelectedIndex,
     selectedEntityId, setSelectedEntityId,
-    selectedSceneId,
+    selectedSceneId, selectedDate,
     setActiveJobId,
     setActiveRasterPath,
     setSelectedSceneId,
@@ -66,6 +68,9 @@ export const VegetationAnalytics: React.FC = () => {
   const [togglingMonitoring, setTogglingMonitoring] = useState(false);
   const [showSetupWizard, setShowSetupWizard] = useState(false);
   const [showCustomCreator, setShowCustomCreator] = useState(false);
+  const [cropSeasons, setCropSeasons] = useState<CropSeason[]>([]);
+  const [selectedSeasonId, setSelectedSeasonId] = useState<string>('');
+  const [loadingSeasons, setLoadingSeasons] = useState(false);
 
   // Date range for analysis
   const [startDate, setStartDate] = useState(() => {
@@ -133,6 +138,27 @@ export const VegetationAnalytics: React.FC = () => {
   useEffect(() => {
     loadSubscription();
   }, [loadSubscription]);
+
+  // Load existing crop seasons for this entity
+  const loadCropSeasons = useCallback(async () => {
+    if (!selectedEntityId || !isAuthenticated) {
+      setCropSeasons([]);
+      return;
+    }
+    setLoadingSeasons(true);
+    try {
+      const seasons = await api.listCropSeasons(selectedEntityId);
+      setCropSeasons(seasons);
+    } catch {
+      setCropSeasons([]);
+    } finally {
+      setLoadingSeasons(false);
+    }
+  }, [selectedEntityId, isAuthenticated, api]);
+
+  useEffect(() => {
+    loadCropSeasons();
+  }, [loadCropSeasons]);
 
   const loadCustomFormulas = useCallback(async () => {
     if (!isAuthenticated) return;
@@ -256,6 +282,29 @@ export const VegetationAnalytics: React.FC = () => {
     };
   }, [downloadJobId, selectedEntityId]);
 
+  // Handle crop season selection
+  const handleSeasonChange = (seasonId: string) => {
+    setSelectedSeasonId(seasonId);
+    if (!seasonId) {
+      const d = new Date();
+      d.setDate(d.getDate() - 30);
+      setStartDate(d.toISOString().split('T')[0]);
+      setEndDate(new Date().toISOString().split('T')[0]);
+    } else {
+      const season = cropSeasons.find(s => s.id === seasonId);
+      if (season) {
+        setStartDate(season.start_date);
+        setEndDate(season.end_date || new Date().toISOString().split('T')[0]);
+      }
+    }
+  };
+
+  // Handle date selection from SmartTimeline
+  const handleDateSelect = (date: string, sceneId: string) => {
+    setSelectedDate(new Date(date));
+    setSelectedSceneId(sceneId);
+  };
+
   // Handle "Analyze" button click
   const handleAnalyze = async () => {
     if (!selectedEntityId) return;
@@ -337,13 +386,6 @@ export const VegetationAnalytics: React.FC = () => {
     }
   };
 
-  const handleDeleteJob = async (jobId: string) => {
-    try {
-      await api.deleteJob(jobId);
-      setJobs(prev => prev.filter(j => j.id !== jobId));
-    } catch { /* ignore */ }
-  };
-
   const handleExportResult = async (format: 'geojson' | 'shapefile' | 'csv') => {
     if (!selectedEntityId) return;
     setExportingFormat(format);
@@ -372,8 +414,11 @@ export const VegetationAnalytics: React.FC = () => {
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-    } catch { /* ignore */ }
-    finally { setExportingFormat(null); }
+    } catch (err) {
+      console.error('[Vegetation] Export failed:', err);
+      setAnalyzeError(t('prescription.exportError'));
+      setTimeout(() => setAnalyzeError(null), 5000);
+    } finally { setExportingFormat(null); }
   };
 
   // Auth guard
@@ -401,16 +446,6 @@ export const VegetationAnalytics: React.FC = () => {
 
   const parcelShortName = selectedEntityId.split(':').pop() || selectedEntityId;
   const hasResults = Object.keys(indexResults).length > 0;
-
-  const statusIcon = (status: string) => {
-    switch (status) {
-      case 'completed': return <CheckCircle className="w-3.5 h-3.5 text-emerald-500" />;
-      case 'failed': return <XCircle className="w-3.5 h-3.5 text-red-500" />;
-      case 'running': return <Play className="w-3.5 h-3.5 text-blue-500 animate-pulse" />;
-      case 'pending': return <Clock className="w-3.5 h-3.5 text-amber-500" />;
-      default: return <AlertCircle className="w-3.5 h-3.5 text-slate-400" />;
-    }
-  };
 
   return (
     <div className="space-y-6 max-w-4xl mx-auto py-6 px-4">
@@ -468,6 +503,50 @@ export const VegetationAnalytics: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {/* Crop Season Selector */}
+      <Card padding="md">
+        <div className="flex items-center gap-3 flex-wrap">
+          <Sprout className="w-5 h-5 text-emerald-600 shrink-0" />
+          <div className="flex items-center gap-2 flex-1 min-w-0">
+            <select
+              value={selectedSeasonId}
+              onChange={(e) => handleSeasonChange(e.target.value)}
+              disabled={loadingSeasons}
+              className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 focus:ring-emerald-500 focus:border-emerald-500 bg-white min-w-[200px]"
+            >
+              <option value="">{t('cropSeason.allSeasons')}</option>
+              {cropSeasons.map((season) => {
+                const label = `${season.crop_type} ${season.start_date} - ${season.end_date || t('cropSeason.endDateHelp')}`;
+                return (
+                  <option key={season.id} value={season.id}>
+                    {label}
+                  </option>
+                );
+              })}
+            </select>
+            {loadingSeasons && (
+              <Loader2 className="w-4 h-4 animate-spin text-slate-400" />
+            )}
+          </div>
+          <button
+            onClick={() => setShowSetupWizard(true)}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-emerald-600 text-white hover:bg-emerald-700 transition-colors shrink-0"
+          >
+            <Sprout className="w-3.5 h-3.5" />
+            {t('cropSeason.newSeason')}
+          </button>
+        </div>
+      </Card>
+
+      {/* Index Pill Selector */}
+      <Card padding="md">
+        <IndexPillSelector
+          selectedIndex={effectiveIndex}
+          onIndexChange={(idx) => setSelectedIndex(idx)}
+          customIndexOptions={customFormulas.map(f => ({ key: f.id, label: f.name }))}
+        />
+      </Card>
 
       {/* Analyze Section */}
       <Card padding="md">
@@ -669,6 +748,14 @@ export const VegetationAnalytics: React.FC = () => {
         </div>
       </Card>
 
+      {/* Smart Timeline */}
+      <SmartTimeline
+        entityId={selectedEntityId}
+        indexType={effectiveIndex}
+        selectedDate={selectedDate ? selectedDate.toISOString().split('T')[0] : null}
+        onDateSelect={handleDateSelect}
+      />
+
       {/* Unified analysis table */}
       {hasResults && (
         <Card padding="md">
@@ -733,17 +820,28 @@ export const VegetationAnalytics: React.FC = () => {
                           </button>
                         </td>
                         <td className="px-3 py-2 text-center">
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleExportResult('geojson');
-                            }}
-                            disabled={exportingFormat !== null}
-                            className="inline-flex items-center gap-1 px-2 py-1 rounded border border-slate-200 text-slate-500 hover:bg-slate-100 disabled:opacity-50 text-xs"
-                            title="GeoJSON"
-                          >
-                            <FileDown className="w-3 h-3" />
-                          </button>
+                          {result.index_type === 'VRA_ZONES' ? (
+                            <div className="relative inline-flex">
+                              <select
+                                onChange={(e) => {
+                                  e.stopPropagation();
+                                  const fmt = e.target.value as 'geojson' | 'shapefile' | 'csv';
+                                  if (fmt) handleExportResult(fmt);
+                                  e.target.value = '';
+                                }}
+                                disabled={exportingFormat !== null}
+                                className="text-xs border border-slate-200 rounded px-1 py-1 text-slate-500 bg-white cursor-pointer disabled:opacity-50"
+                                defaultValue=""
+                              >
+                                <option value="" disabled>{t('prescription.exportFormats')}</option>
+                                <option value="geojson">{t('prescription.geojson')}</option>
+                                <option value="shapefile">{t('prescription.shapefile')}</option>
+                                <option value="csv">{t('prescription.csv')}</option>
+                              </select>
+                            </div>
+                          ) : (
+                            <span className="text-xs text-slate-300">—</span>
+                          )}
                         </td>
                       </tr>
                       {expandedIndexKey === key && selectedEntityId && (
@@ -799,7 +897,7 @@ export const VegetationAnalytics: React.FC = () => {
         </Card>
       )}
 
-      {/* Jobs for this parcel */}
+      {/* Calculation History — flat table */}
       <Card padding="md">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
@@ -820,34 +918,82 @@ export const VegetationAnalytics: React.FC = () => {
             {t('analyticsPage.noHistory')}
           </div>
         ) : (
-          <div className="space-y-1.5 max-h-64 overflow-y-auto">
-            {jobs.map(job => (
-              <div key={job.id} className="flex items-center justify-between py-2 px-3 bg-slate-50 rounded-lg text-sm hover:bg-slate-100">
-                <div className="flex items-center gap-2">
-                  {statusIcon(job.status)}
-                  <span className="text-slate-700 capitalize">
-                    {job.job_type === 'download' ? 'Download' : job.job_type === 'calculate_index' ? (job.result?.index_type || effectiveIndex) : job.job_type}
-                  </span>
-                </div>
-                <div className="flex items-center gap-3">
-                  <span className="text-xs text-slate-400">
-                    {new Date(job.created_at).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
-                  </span>
-                  {job.error_message && (
-                    <span className="text-xs text-red-500 max-w-[150px] truncate" title={job.error_message}>
-                      {job.error_message}
-                    </span>
-                  )}
-                  <button
-                    onClick={() => handleDeleteJob(job.id)}
-                    className="p-1 text-slate-300 hover:text-red-500 transition-colors"
-                    title={t('common.delete')}
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              </div>
-            ))}
+          <div className="overflow-x-auto rounded-lg border border-slate-200">
+            <table className="min-w-full text-xs">
+              <thead className="bg-slate-50 text-slate-500 uppercase tracking-wider">
+                <tr>
+                  <th className="px-3 py-2 text-left font-medium">{t('analyticsPage.date')}</th>
+                  <th className="px-3 py-2 text-left font-medium">{t('analyticsPage.index')}</th>
+                  <th className="px-3 py-2 text-right font-medium">{t('analytics.mean')}</th>
+                  <th className="px-3 py-2 text-right font-medium">{t('timeline.clouds')}</th>
+                  <th className="px-3 py-2 text-center font-medium">{t('analyticsPage.status')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[...jobs]
+                  .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+                  .map((job) => {
+                    const statusClass = job.status === 'completed'
+                      ? 'text-emerald-600 bg-emerald-50'
+                      : job.status === 'failed'
+                        ? 'text-red-600 bg-red-50'
+                        : 'text-amber-600 bg-amber-50';
+
+                    const statusLabel = job.status === 'completed'
+                      ? t('calculations.status.completed')
+                      : job.status === 'failed'
+                        ? t('calculations.status.failed')
+                        : job.status === 'running'
+                          ? t('calculations.status.running')
+                          : t('calculations.status.pending');
+
+                    return (
+                      <tr
+                        key={job.id}
+                        className="border-t border-slate-100 hover:bg-slate-50 cursor-pointer transition-colors"
+                        onClick={() => {
+                          // Select scene + index in the viewer
+                          const idxType = job.index_type || job.result?.index_type;
+                          if (idxType && job.scene_id) {
+                            setSelectedIndex(idxType);
+                            setSelectedSceneId(job.scene_id);
+                            if (job.completed_at) {
+                              setSelectedDate(new Date(job.completed_at));
+                            }
+                            if (job.result?.raster_path) {
+                              setActiveRasterPath(job.result.raster_path);
+                            }
+                            setActiveJobId(job.id);
+                          }
+                        }}
+                      >
+                        <td className="px-3 py-2 text-slate-700 whitespace-nowrap">
+                          {new Date(job.created_at).toLocaleDateString('es-ES', {
+                            day: '2-digit', month: 'short', year: 'numeric',
+                          })}
+                        </td>
+                        <td className="px-3 py-2 font-medium text-slate-800">
+                          {job.index_type || job.result?.index_type || '-'}
+                        </td>
+                        <td className="px-3 py-2 text-right text-slate-600 font-mono">
+                          {job.result_stats?.mean != null ? job.result_stats.mean.toFixed(3) : '-'}
+                        </td>
+                        <td className="px-3 py-2 text-right text-slate-400">
+                          {job.result?.cloud_coverage_pct != null
+                            ? `${Number(job.result.cloud_coverage_pct).toFixed(0)}%`
+                            : '-'
+                          }
+                        </td>
+                        <td className="px-3 py-2 text-center">
+                          <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-medium ${statusClass}`}>
+                            {statusLabel}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+              </tbody>
+            </table>
           </div>
         )}
       </Card>
@@ -859,7 +1005,6 @@ export const VegetationAnalytics: React.FC = () => {
           onClose={() => setShowSetupWizard(false)}
           entityId={selectedEntityId}
           entityName={parcelShortName}
-          geometry={null}
           onComplete={handleMonitoringActivated}
         />
       )}
