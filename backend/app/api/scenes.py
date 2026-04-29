@@ -39,6 +39,8 @@ class CalculateRequest(BaseModel):
     formula: Optional[str] = None
     start_date: Optional[str] = None
     end_date: Optional[str] = None
+    formula_id: Optional[str] = None
+    formula_name: Optional[str] = None
 
 
 class ZoningRequest(BaseModel):
@@ -66,19 +68,27 @@ async def calculate_index_endpoint(
             detail="Either scene_id or both start_date and end_date are required",
         )
 
+    # Build parameters with formula metadata to prevent CUSTOM key collision
+    parameters = {
+        "scene_id": request.scene_id,
+        "index_type": request.index_type,
+        "entity_id": request.entity_id,
+        "formula": request.formula,
+        "start_date": request.start_date,
+        "end_date": request.end_date,
+    }
+    if request.formula_id:
+        parameters["formula_id"] = request.formula_id
+        parameters["formula_name"] = request.formula_name or ""
+        parameters["formula_expression"] = request.formula
+        parameters["result_index_key"] = f"custom:{request.formula_id}"
+
     job = VegetationJob(
         tenant_id=tenant_id,
         job_type="calculate_index",
         entity_id=request.entity_id,
         entity_type="AgriParcel",
-        parameters={
-            "scene_id": request.scene_id,
-            "index_type": request.index_type,
-            "entity_id": request.entity_id,
-            "formula": request.formula,
-            "start_date": request.start_date,
-            "end_date": request.end_date,
-        },
+        parameters=parameters,
         created_by=current_user.get("user_id"),
     )
     db.add(job)

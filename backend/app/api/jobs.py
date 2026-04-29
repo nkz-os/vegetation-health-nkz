@@ -113,6 +113,8 @@ async def get_zoning_geojson(
     db: Session = Depends(get_db_with_tenant),
 ):
     """Get latest zoning result as GeoJSON for a parcel."""
+    from sqlalchemy import text
+
     job = (
         db.query(VegetationJob)
         .filter(
@@ -120,6 +122,8 @@ async def get_zoning_geojson(
             VegetationJob.entity_id == parcel_id,
             VegetationJob.job_type == "calculate_index",
             VegetationJob.status == "completed",
+            # Only VRA_ZONES jobs have zoning geojson
+            text("result->>'index_type' = 'VRA_ZONES'"),
         )
         .order_by(VegetationJob.created_at.desc())
         .first()

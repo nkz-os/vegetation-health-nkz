@@ -19,7 +19,7 @@ import type { VegetationJob, CustomFormula } from '../types';
 import {
   Loader2, Calculator, AlertCircle, CheckCircle,
   RefreshCw, BarChart3, Satellite, Leaf,
-  Activity, Power, Map, ChevronDown, Beaker, FileDown,
+  Activity, Power, Map, ChevronDown, Beaker,
 } from 'lucide-react';
 
 // Main indices the user can browse after analysis
@@ -365,8 +365,11 @@ export const VegetationAnalytics: React.FC = () => {
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-    } catch { /* ignore */ }
-    finally { setExportingFormat(null); }
+    } catch (err) {
+      console.error('[Vegetation] Export failed:', err);
+      setAnalyzeError(t('prescription.exportError'));
+      setTimeout(() => setAnalyzeError(null), 5000);
+    } finally { setExportingFormat(null); }
   };
 
   // Auth guard
@@ -716,17 +719,28 @@ export const VegetationAnalytics: React.FC = () => {
                           </button>
                         </td>
                         <td className="px-3 py-2 text-center">
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleExportResult('geojson');
-                            }}
-                            disabled={exportingFormat !== null}
-                            className="inline-flex items-center gap-1 px-2 py-1 rounded border border-slate-200 text-slate-500 hover:bg-slate-100 disabled:opacity-50 text-xs"
-                            title="GeoJSON"
-                          >
-                            <FileDown className="w-3 h-3" />
-                          </button>
+                          {result.index_type === 'VRA_ZONES' ? (
+                            <div className="relative inline-flex">
+                              <select
+                                onChange={(e) => {
+                                  e.stopPropagation();
+                                  const fmt = e.target.value as 'geojson' | 'shapefile' | 'csv';
+                                  if (fmt) handleExportResult(fmt);
+                                  e.target.value = '';
+                                }}
+                                disabled={exportingFormat !== null}
+                                className="text-xs border border-slate-200 rounded px-1 py-1 text-slate-500 bg-white cursor-pointer disabled:opacity-50"
+                                defaultValue=""
+                              >
+                                <option value="" disabled>{t('prescription.exportFormats')}</option>
+                                <option value="geojson">{t('prescription.geojson')}</option>
+                                <option value="shapefile">{t('prescription.shapefile')}</option>
+                                <option value="csv">{t('prescription.csv')}</option>
+                              </select>
+                            </div>
+                          ) : (
+                            <span className="text-xs text-slate-300">—</span>
+                          )}
                         </td>
                       </tr>
                       {expandedIndexKey === key && selectedEntityId && (
