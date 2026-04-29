@@ -36,16 +36,16 @@ WORKDIR /app
 
 # 4. Python Dependencies (Single Source of Truth)
 # Copy requirements first to leverage Docker layer caching
-COPY requirements.txt ./requirements.txt
+COPY backend/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     pip install --no-cache-dir -r requirements.txt
 
 # 5. Application Code and Assets
 # Copy code with appropriate ownership
-COPY --chown=appuser:appgroup app ./app
-COPY --chown=appuser:appgroup migrations ./migrations
-COPY --chown=appuser:appgroup scripts/run_migrations.py ./scripts/run_migrations.py
-COPY --chown=appuser:appgroup entrypoint.sh ./entrypoint.sh
+COPY --chown=appuser:appgroup backend/app ./app
+COPY --chown=appuser:appgroup backend/migrations ./migrations
+COPY --chown=appuser:appgroup backend/scripts/run_migrations.py ./scripts/run_migrations.py
+COPY --chown=appuser:appgroup backend/entrypoint.sh ./entrypoint.sh
 
 # Ensure scripts are executable
 RUN chmod +x /app/entrypoint.sh /app/scripts/run_migrations.py
