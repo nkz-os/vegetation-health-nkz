@@ -387,7 +387,10 @@
         "saving": "Enregistrement...",
         "success": "Saison enregistrée",
         "error": "Erreur lors de l'enregistrement",
-        "endDateHelp": "Laisser vide pour les saisons en cours"
+        "endDateHelp": "Laisser vide pour les saisons en cours",
+        "selectSeason": "Sélectionner la saison",
+        "newSeason": "Nouvelle saison",
+        "allSeasons": "Toutes les saisons"
     },
     "calculationCard": {
         "dateUnavailable": "Date unavailable",

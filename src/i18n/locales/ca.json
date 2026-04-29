@@ -387,7 +387,10 @@
         "saving": "Guardant...",
         "success": "Temporada guardada",
         "error": "Error en guardar la temporada",
-        "endDateHelp": "Deixar buit per a temporades en curs"
+        "endDateHelp": "Deixar buit per a temporades en curs",
+        "selectSeason": "Seleccionar temporada",
+        "newSeason": "Nova temporada",
+        "allSeasons": "Totes les temporades"
     },
     "calculationCard": {
         "dateUnavailable": "Date unavailable",

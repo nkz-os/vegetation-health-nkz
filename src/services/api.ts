@@ -18,6 +18,7 @@ import {
   CustomFormula,
   CustomFormulaValidationResponse,
   EntityIndexResult,
+  CropSeason,
 } from '../types';
 
 /**
@@ -437,6 +438,15 @@ export class VegetationApiClient {
       data
     );
     return response as unknown as { id: string; message: string };
+  }
+
+  /**
+   * List existing crop seasons for a parcel.
+   * GET /api/vegetation/crop-seasons/{entity_id}
+   */
+  async listCropSeasons(entityId: string): Promise<CropSeason[]> {
+    const response = await this.client.get(`/crop-seasons/${encodeURIComponent(entityId)}`);
+    return response as unknown as CropSeason[];
   }
 
   // ==========================================================================

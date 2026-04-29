@@ -387,7 +387,10 @@
         "saving": "Gordetzen...",
         "success": "Denboraldia gordeta",
         "error": "Errorea denboraldia gordetzean",
-        "endDateHelp": "Utzi hutsik unean dauden denboraldietarako"
+        "endDateHelp": "Utzi hutsik unean dauden denboraldietarako",
+        "selectSeason": "Hautatu denboraldia",
+        "newSeason": "Denboraldi berria",
+        "allSeasons": "Denboraldi guztiak"
     },
     "calculationCard": {
         "dateUnavailable": "Data ez erabilgarri",

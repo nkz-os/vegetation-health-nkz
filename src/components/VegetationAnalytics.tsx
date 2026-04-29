@@ -13,13 +13,15 @@ import { useVegetationContext } from '../services/vegetationContext';
 import { useVegetationApi } from '../services/api';
 import TimeseriesChart from './widgets/TimeseriesChart';
 import { SetupWizard } from './pages/SetupWizard';
+import { IndexPillSelector } from './widgets/IndexPillSelector';
+import { SmartTimeline } from './widgets/SmartTimeline';
 import { useAuth } from '../hooks/useAuth';
 import { useTranslation } from '@nekazari/sdk';
-import type { VegetationJob, CustomFormula } from '../types';
+import type { VegetationJob, CustomFormula, CropSeason } from '../types';
 import {
   Loader2, Calculator, AlertCircle, CheckCircle,
   RefreshCw, BarChart3, Satellite, Leaf,
-  Activity, Power, Map, ChevronDown, Beaker,
+  Activity, Power, Map, ChevronDown, Beaker, Sprout,
 } from 'lucide-react';
 
 // Main indices the user can browse after analysis
@@ -31,7 +33,7 @@ export const VegetationAnalytics: React.FC = () => {
   const {
     selectedIndex, setSelectedIndex,
     selectedEntityId, setSelectedEntityId,
-    selectedSceneId,
+    selectedSceneId, selectedDate,
     setActiveJobId,
     setActiveRasterPath,
     setSelectedSceneId,
@@ -66,6 +68,9 @@ export const VegetationAnalytics: React.FC = () => {
   const [togglingMonitoring, setTogglingMonitoring] = useState(false);
   const [showSetupWizard, setShowSetupWizard] = useState(false);
   const [showCustomCreator, setShowCustomCreator] = useState(false);
+  const [cropSeasons, setCropSeasons] = useState<CropSeason[]>([]);
+  const [selectedSeasonId, setSelectedSeasonId] = useState<string>('');
+  const [loadingSeasons, setLoadingSeasons] = useState(false);
 
   // Date range for analysis
   const [startDate, setStartDate] = useState(() => {
@@ -133,6 +138,27 @@ export const VegetationAnalytics: React.FC = () => {
   useEffect(() => {
     loadSubscription();
   }, [loadSubscription]);
+
+  // Load existing crop seasons for this entity
+  const loadCropSeasons = useCallback(async () => {
+    if (!selectedEntityId || !isAuthenticated) {
+      setCropSeasons([]);
+      return;
+    }
+    setLoadingSeasons(true);
+    try {
+      const seasons = await api.listCropSeasons(selectedEntityId);
+      setCropSeasons(seasons);
+    } catch {
+      setCropSeasons([]);
+    } finally {
+      setLoadingSeasons(false);
+    }
+  }, [selectedEntityId, isAuthenticated, api]);
+
+  useEffect(() => {
+    loadCropSeasons();
+  }, [loadCropSeasons]);
 
   const loadCustomFormulas = useCallback(async () => {
     if (!isAuthenticated) return;
@@ -255,6 +281,29 @@ export const VegetationAnalytics: React.FC = () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };
   }, [downloadJobId, selectedEntityId]);
+
+  // Handle crop season selection
+  const handleSeasonChange = (seasonId: string) => {
+    setSelectedSeasonId(seasonId);
+    if (!seasonId) {
+      const d = new Date();
+      d.setDate(d.getDate() - 30);
+      setStartDate(d.toISOString().split('T')[0]);
+      setEndDate(new Date().toISOString().split('T')[0]);
+    } else {
+      const season = cropSeasons.find(s => s.id === seasonId);
+      if (season) {
+        setStartDate(season.start_date);
+        setEndDate(season.end_date || new Date().toISOString().split('T')[0]);
+      }
+    }
+  };
+
+  // Handle date selection from SmartTimeline
+  const handleDateSelect = (date: string, sceneId: string) => {
+    setSelectedDate(new Date(date));
+    setSelectedSceneId(sceneId);
+  };
 
   // Handle "Analyze" button click
   const handleAnalyze = async () => {
@@ -455,6 +504,50 @@ export const VegetationAnalytics: React.FC = () => {
         </div>
       </div>
 
+      {/* Crop Season Selector */}
+      <Card padding="md">
+        <div className="flex items-center gap-3 flex-wrap">
+          <Sprout className="w-5 h-5 text-emerald-600 shrink-0" />
+          <div className="flex items-center gap-2 flex-1 min-w-0">
+            <select
+              value={selectedSeasonId}
+              onChange={(e) => handleSeasonChange(e.target.value)}
+              disabled={loadingSeasons}
+              className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 focus:ring-emerald-500 focus:border-emerald-500 bg-white min-w-[200px]"
+            >
+              <option value="">{t('cropSeason.allSeasons')}</option>
+              {cropSeasons.map((season) => {
+                const label = `${season.crop_type} ${season.start_date} - ${season.end_date || t('cropSeason.endDateHelp')}`;
+                return (
+                  <option key={season.id} value={season.id}>
+                    {label}
+                  </option>
+                );
+              })}
+            </select>
+            {loadingSeasons && (
+              <Loader2 className="w-4 h-4 animate-spin text-slate-400" />
+            )}
+          </div>
+          <button
+            onClick={() => setShowSetupWizard(true)}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-emerald-600 text-white hover:bg-emerald-700 transition-colors shrink-0"
+          >
+            <Sprout className="w-3.5 h-3.5" />
+            {t('cropSeason.newSeason')}
+          </button>
+        </div>
+      </Card>
+
+      {/* Index Pill Selector */}
+      <Card padding="md">
+        <IndexPillSelector
+          selectedIndex={effectiveIndex}
+          onIndexChange={(idx) => setSelectedIndex(idx)}
+          customIndexOptions={customFormulas.map(f => ({ key: f.id, label: f.name }))}
+        />
+      </Card>
+
       {/* Analyze Section */}
       <Card padding="md">
         <div className="space-y-4">
@@ -654,6 +747,14 @@ export const VegetationAnalytics: React.FC = () => {
           )}
         </div>
       </Card>
+
+      {/* Smart Timeline */}
+      <SmartTimeline
+        entityId={selectedEntityId}
+        indexType={effectiveIndex}
+        selectedDate={selectedDate ? selectedDate.toISOString().split('T')[0] : null}
+        onDateSelect={handleDateSelect}
+      />
 
       {/* Unified analysis table */}
       {hasResults && (

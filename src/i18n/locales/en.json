@@ -387,7 +387,10 @@
         "saving": "Saving...",
         "success": "Crop season saved",
         "error": "Error saving crop season",
-        "endDateHelp": "Leave empty for ongoing seasons"
+        "endDateHelp": "Leave empty for ongoing seasons",
+        "selectSeason": "Select season",
+        "newSeason": "New season",
+        "allSeasons": "All seasons"
     },
     "calculationCard": {
         "dateUnavailable": "Date unavailable",

@@ -387,7 +387,10 @@
         "saving": "Guardando...",
         "success": "Temporada guardada",
         "error": "Error al guardar la temporada",
-        "endDateHelp": "Dejar vacío para temporadas en curso"
+        "endDateHelp": "Dejar vacío para temporadas en curso",
+        "selectSeason": "Seleccionar temporada",
+        "newSeason": "Nueva temporada",
+        "allSeasons": "Todas las temporadas"
     },
     "calculationCard": {
         "dateUnavailable": "Fecha no disponible",

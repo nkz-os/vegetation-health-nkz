@@ -387,7 +387,10 @@
         "saving": "Guardando...",
         "success": "Sazão guardada",
         "error": "Erro ao guardar a sazão",
-        "endDateHelp": "Deixar vazio para sazões em curso"
+        "endDateHelp": "Deixar vazio para sazões em curso",
+        "selectSeason": "Selecionar sazão",
+        "newSeason": "Nova sazão",
+        "allSeasons": "Todas as sazões"
     },
     "calculationCard": {
         "dateUnavailable": "Date unavailable",
