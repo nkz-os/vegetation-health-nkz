@@ -18,6 +18,7 @@ import {
   CustomFormula,
   CustomFormulaValidationResponse,
   EntityIndexResult,
+  CropSeason,
 } from '../types';
 
 /**
@@ -52,12 +53,17 @@ export class VegetationApiClient {
       },
     });
 
-    // Shared interceptor: inject X-Tenant-ID on both clients.
+    // Shared interceptor: inject X-Tenant-ID and mobile Bearer token.
     // Auth is handled by httpOnly cookie (withCredentials: true).
     const addTenantId = (config: any) => {
       const tenantId = this.getTenantId();
       if (tenantId) {
         config.headers['X-Tenant-ID'] = tenantId;
+      }
+      // If mobile token exists (WebView context), add Bearer fallback
+      const mobileToken = (window as any).__nekazariMobileToken;
+      if (mobileToken && !config.headers['Authorization']) {
+        config.headers['Authorization'] = `Bearer ${mobileToken}`;
       }
       return config;
     };
@@ -408,6 +414,39 @@ export class VegetationApiClient {
   async deleteCustomFormula(formulaId: string): Promise<{ deleted: boolean; id: string }> {
     const response = await this.client.delete(`/custom-formulas/${encodeURIComponent(formulaId)}`);
     return response as unknown as { deleted: boolean; id: string };
+  }
+
+  // ==========================================================================
+  // Crop Season API
+  // ==========================================================================
+
+  /**
+   * Create a new crop season for a parcel (replaces v1 subscription wizard).
+   * POST /api/vegetation/crop-seasons/{entity_id}
+   */
+  async createCropSeason(
+    entityId: string,
+    data: {
+      crop_type: string;
+      start_date: string;
+      end_date?: string | null;
+      monitoring_enabled: boolean;
+    }
+  ): Promise<{ id: string; message: string }> {
+    const response = await this.client.post(
+      `/crop-seasons/${encodeURIComponent(entityId)}`,
+      data
+    );
+    return response as unknown as { id: string; message: string };
+  }
+
+  /**
+   * List existing crop seasons for a parcel.
+   * GET /api/vegetation/crop-seasons/{entity_id}
+   */
+  async listCropSeasons(entityId: string): Promise<CropSeason[]> {
+    const response = await this.client.get(`/crop-seasons/${encodeURIComponent(entityId)}`);
+    return response as unknown as CropSeason[];
   }
 
   // ==========================================================================

@@ -2,7 +2,7 @@
   "id": "vegetation-prime",
   "name": "vegetation-prime",
   "display_name": "Vegetation Prime",
-  "version": "1.51.0",
+  "version": "2.0.0",
   "description": "High-performance vegetation intelligence suite with advanced spectral index calculation, Sentinel-2 integration, and AI-powered predictions for agricultural monitoring.",
   "short_description": "Advanced vegetation health monitoring and analysis",
   "author": {
@@ -31,10 +31,21 @@
   "permissions": {
     "api_access": [
       "/api/vegetation/jobs",
-      "/api/vegetation/indices",
+      "/api/vegetation/jobs/zoning/{parcel_id}/geojson",
+      "/api/vegetation/entities/{entity_id}/scenes/available",
       "/api/vegetation/timeseries",
       "/api/vegetation/config",
-      "/api/vegetation/calculate"
+      "/api/vegetation/calculate",
+      "/api/vegetation/analyze",
+      "/api/vegetation/scenes",
+      "/api/vegetation/subscriptions",
+      "/api/vegetation/crop-seasons/{entity_id}",
+      "/api/vegetation/custom-formulas",
+      "/api/vegetation/export/{parcel_id}/geojson",
+      "/api/vegetation/export/{parcel_id}/shapefile",
+      "/api/vegetation/export/{parcel_id}/csv",
+      "/api/vegetation/viewer-url",
+      "/api/vegetation/capabilities"
     ],
     "storage_access": true,
     "external_requests": [
@@ -102,11 +113,17 @@
     "color": "#10B981",
     "features": [
       "Multi-spectral index calculation (NDVI, EVI, SAVI, GNDVI, NDRE)",
-      "Custom formula engine",
-      "Sentinel-2 L2A integration",
-      "Time series analysis",
-      "FIWARE NGSI-LD integration",
-      "High-performance raster visualization"
+      "Custom formula engine with safe expression evaluation",
+      "Sentinel-2 L2A integration via Copernicus Data Space",
+      "Sparse timeline with cloud-filtered scene availability",
+      "VRA management zone generation (K-means clustering)",
+      "Prescription map export (GeoJSON, Shapefile, CSV)",
+      "Crop season tracking with monitoring toggle",
+      "FIWARE NGSI-LD integration (Orion-LD digital twins)",
+      "High-performance COG raster visualization via CesiumJS",
+      "Multi-tenant isolation with Row Level Security",
+      "Mobile WebView auth (NKZ_AUTH_INJECTION)",
+      "6-language i18n (es, en, eu, ca, fr, pt)"
     ],
     "screenshots": [
       "assets/screenshot1.png"

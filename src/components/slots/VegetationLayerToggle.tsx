@@ -21,13 +21,17 @@ const VegetationLayerToggle: React.FC = () => {
       <Leaf className="w-4 h-4 text-green-600" />
       <span className="text-sm font-medium text-slate-700">{t('layerToggle.label')}</span>
       {hasLayer && (
-        <input
-          type="checkbox"
-          checked={layerVisible}
-          onChange={(e) => setLayerVisible(e.target.checked)}
-          className="ml-auto toggle toggle-sm toggle-success"
-          title={layerVisible ? t('layerToggle.hide') : t('layerToggle.show')}
-        />
+        <label className="ml-auto relative inline-flex items-center cursor-pointer">
+          <input
+            type="checkbox"
+            checked={layerVisible}
+            onChange={(e) => setLayerVisible(e.target.checked)}
+            className="sr-only peer"
+          />
+          <div className="w-9 h-5 bg-gray-300 rounded-full peer-checked:bg-green-500 peer-focus:ring-2 peer-focus:ring-green-300 after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-full"
+            title={layerVisible ? t('layerToggle.hide') : t('layerToggle.show')}
+          />
+        </label>
       )}
       {!hasLayer && (
         <span className="ml-auto text-xs text-slate-400">{t('layerToggle.noData')}</span>

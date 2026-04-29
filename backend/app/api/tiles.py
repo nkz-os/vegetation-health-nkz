@@ -26,6 +26,7 @@ INDEX_RENDER_CONFIG = {
     'NDMI': {'colormap_name': 'rdbu', 'rescale': (-1, 1)},
     'LAI': {'colormap_name': 'greens', 'rescale': (0, 6)},
     'CIre': {'colormap_name': 'greens', 'rescale': (0, 5)},
+    'CUSTOM': {'colormap_name': 'rdylgn', 'rescale': (-1, 1)},
 }
 DEFAULT_RENDER = {'colormap_name': 'rdylgn', 'rescale': (-1, 1)}
 

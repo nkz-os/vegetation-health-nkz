@@ -4,8 +4,6 @@ import { VegetationProvider, useVegetationContext } from './services/vegetationC
 
 import { useTranslation } from '@nekazari/sdk';
 
-// Export viewerSlots for host integration (align with module-template)
-export { viewerSlots } from './slots/index';
 import { VegetationAnalytics } from './components/VegetationAnalytics';
 import { useVegetationApi } from './services/api';
 import { Leaf, ChevronRight } from 'lucide-react';

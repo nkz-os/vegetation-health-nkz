@@ -2,7 +2,7 @@
  * TypeScript type definitions for Vegetation Prime module.
  */
 
-export type VegetationIndexType = 'NDVI' | 'EVI' | 'SAVI' | 'GNDVI' | 'NDRE' | 'NDMI' | 'CUSTOM' | 'SAMI' | 'VRA_ZONES';
+export type VegetationIndexType = 'NDVI' | 'EVI' | 'SAVI' | 'GNDVI' | 'NDRE' | 'NDMI' | 'CUSTOM' | 'VRA_ZONES';
 
 export type JobType = 'download' | 'process' | 'calculate_index' | 'SENTINEL_INGEST' | 'ZONING';
 
@@ -338,5 +338,15 @@ export interface CropRecommendation {
   valid_indices: VegetationIndexType[];
   crop_species: string;
   recommendations?: string[];
+}
+
+export interface CropSeason {
+  id: string;
+  entity_id: string;
+  crop_type: string;
+  start_date: string;
+  end_date?: string | null;
+  monitoring_enabled: boolean;
+  created_at: string;
 }
 

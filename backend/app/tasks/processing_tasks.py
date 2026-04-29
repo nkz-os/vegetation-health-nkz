@@ -203,6 +203,48 @@ def calculate_vegetation_index(
             default_bucket=bucket_name
         )
 
+        # ── VRA Zoning mode ────────────────────────────────────────────────
+        # Short-circuit: zoning does not use per-scene index calculation.
+        if index_type == 'VRA_ZONES':
+            logger.info("VRA zoning mode for entity %s", job.entity_id)
+            entity_id = job.entity_id
+            if not entity_id:
+                raise ValueError("entity_id is required for VRA zoning")
+
+            n_zones = (job.parameters or {}).get('n_zones', 3)
+            from app.jobs.zoning_algorithm import ZoningAlgorithm
+            zoning = ZoningAlgorithm(tenant_id=tenant_id)
+            result = zoning.execute(
+                parcel_id=entity_id,
+                scene_id="",
+                parameters={"n_zones": n_zones},
+            )
+
+            if result.get('status') == 'error':
+                raise ValueError(result.get('message', 'Zoning algorithm failed'))
+
+            job.mark_completed({
+                'status': result.get('status'),
+                'zones_created': result.get('zones_created'),
+                'message': result.get('message'),
+                'geojson': result.get('geojson'),
+                'index_type': 'VRA_ZONES',
+            })
+            db.commit()
+
+            logger.info(
+                "VRA zoning completed for %s: %s zones",
+                entity_id, result.get('zones_created', 0),
+            )
+
+            # Band-cleanup not applicable for zoning
+            db.close()
+            return {
+                'status': 'completed',
+                'index_type': 'VRA_ZONES',
+                'zones': result.get('zones_created', 0),
+            }
+
         source_image_count = 1
         scenes_to_process: List[VegetationScene] = []
 
