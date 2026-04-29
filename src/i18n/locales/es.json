@@ -293,7 +293,9 @@
         "savedFormulas": "Fórmulas guardadas",
         "noSavedFormulas": "No hay fórmulas guardadas",
         "formulaValid": "Fórmula válida",
-        "customTimeseriesNotAvailable": "La serie temporal para índices personalizados no está disponible todavía."
+        "customTimeseriesNotAvailable": "La serie temporal para índices personalizados no está disponible todavía.",
+        "date": "Fecha",
+        "status": "Estado"
     },
     "errors": {
         "loadFailed": "Error al cargar datos",
@@ -364,6 +366,28 @@
         "categorySoil": "Suelo/Agua",
         "categorySoilDesc": "Índices para etapas tempranas y análisis de suelo",
         "infoTooltip": "Ver información del índice"
+    },
+    "cropSeason": {
+        "title": "Configurar Temporada de Cultivo",
+        "cropType": "Tipo de cultivo",
+        "cropPlaceholder": "Seleccionar tipo de cultivo",
+        "wheat": "Trigo",
+        "corn": "Maíz",
+        "barley": "Cebada",
+        "vineyard": "Viñedo",
+        "olive": "Olivo",
+        "almond": "Almendro",
+        "vegetables": "Hortalizas",
+        "other": "Otro",
+        "startDate": "Fecha de inicio",
+        "endDate": "Fecha de fin (opcional)",
+        "monitoringToggle": "Monitorizar esta parcela",
+        "monitoringDesc": "Descargar y procesar imágenes satelitales automáticamente vía STAC",
+        "save": "Guardar temporada",
+        "saving": "Guardando...",
+        "success": "Temporada guardada",
+        "error": "Error al guardar la temporada",
+        "endDateHelp": "Dejar vacío para temporadas en curso"
     },
     "calculationCard": {
         "dateUnavailable": "Fecha no disponible",

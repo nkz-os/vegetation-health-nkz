@@ -19,7 +19,7 @@ import type { VegetationJob, CustomFormula } from '../types';
 import {
   Loader2, Calculator, AlertCircle, CheckCircle,
   RefreshCw, BarChart3, Satellite, Leaf,
-  Trash2, Clock, Play, XCircle, Activity, Power, Map, ChevronDown, Beaker, FileDown,
+  Activity, Power, Map, ChevronDown, Beaker, FileDown,
 } from 'lucide-react';
 
 // Main indices the user can browse after analysis
@@ -337,13 +337,6 @@ export const VegetationAnalytics: React.FC = () => {
     }
   };
 
-  const handleDeleteJob = async (jobId: string) => {
-    try {
-      await api.deleteJob(jobId);
-      setJobs(prev => prev.filter(j => j.id !== jobId));
-    } catch { /* ignore */ }
-  };
-
   const handleExportResult = async (format: 'geojson' | 'shapefile' | 'csv') => {
     if (!selectedEntityId) return;
     setExportingFormat(format);
@@ -401,16 +394,6 @@ export const VegetationAnalytics: React.FC = () => {
 
   const parcelShortName = selectedEntityId.split(':').pop() || selectedEntityId;
   const hasResults = Object.keys(indexResults).length > 0;
-
-  const statusIcon = (status: string) => {
-    switch (status) {
-      case 'completed': return <CheckCircle className="w-3.5 h-3.5 text-emerald-500" />;
-      case 'failed': return <XCircle className="w-3.5 h-3.5 text-red-500" />;
-      case 'running': return <Play className="w-3.5 h-3.5 text-blue-500 animate-pulse" />;
-      case 'pending': return <Clock className="w-3.5 h-3.5 text-amber-500" />;
-      default: return <AlertCircle className="w-3.5 h-3.5 text-slate-400" />;
-    }
-  };
 
   return (
     <div className="space-y-6 max-w-4xl mx-auto py-6 px-4">
@@ -799,7 +782,7 @@ export const VegetationAnalytics: React.FC = () => {
         </Card>
       )}
 
-      {/* Jobs for this parcel */}
+      {/* Calculation History — flat table */}
       <Card padding="md">
         <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
@@ -820,34 +803,82 @@ export const VegetationAnalytics: React.FC = () => {
             {t('analyticsPage.noHistory')}
           </div>
         ) : (
-          <div className="space-y-1.5 max-h-64 overflow-y-auto">
-            {jobs.map(job => (
-              <div key={job.id} className="flex items-center justify-between py-2 px-3 bg-slate-50 rounded-lg text-sm hover:bg-slate-100">
-                <div className="flex items-center gap-2">
-                  {statusIcon(job.status)}
-                  <span className="text-slate-700 capitalize">
-                    {job.job_type === 'download' ? 'Download' : job.job_type === 'calculate_index' ? (job.result?.index_type || effectiveIndex) : job.job_type}
-                  </span>
-                </div>
-                <div className="flex items-center gap-3">
-                  <span className="text-xs text-slate-400">
-                    {new Date(job.created_at).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
-                  </span>
-                  {job.error_message && (
-                    <span className="text-xs text-red-500 max-w-[150px] truncate" title={job.error_message}>
-                      {job.error_message}
-                    </span>
-                  )}
-                  <button
-                    onClick={() => handleDeleteJob(job.id)}
-                    className="p-1 text-slate-300 hover:text-red-500 transition-colors"
-                    title={t('common.delete')}
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              </div>
-            ))}
+          <div className="overflow-x-auto rounded-lg border border-slate-200">
+            <table className="min-w-full text-xs">
+              <thead className="bg-slate-50 text-slate-500 uppercase tracking-wider">
+                <tr>
+                  <th className="px-3 py-2 text-left font-medium">{t('analyticsPage.date')}</th>
+                  <th className="px-3 py-2 text-left font-medium">{t('analyticsPage.index')}</th>
+                  <th className="px-3 py-2 text-right font-medium">{t('analytics.mean')}</th>
+                  <th className="px-3 py-2 text-right font-medium">{t('timeline.clouds')}</th>
+                  <th className="px-3 py-2 text-center font-medium">{t('analyticsPage.status')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[...jobs]
+                  .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+                  .map((job) => {
+                    const statusClass = job.status === 'completed'
+                      ? 'text-emerald-600 bg-emerald-50'
+                      : job.status === 'failed'
+                        ? 'text-red-600 bg-red-50'
+                        : 'text-amber-600 bg-amber-50';
+
+                    const statusLabel = job.status === 'completed'
+                      ? t('calculations.status.completed')
+                      : job.status === 'failed'
+                        ? t('calculations.status.failed')
+                        : job.status === 'running'
+                          ? t('calculations.status.running')
+                          : t('calculations.status.pending');
+
+                    return (
+                      <tr
+                        key={job.id}
+                        className="border-t border-slate-100 hover:bg-slate-50 cursor-pointer transition-colors"
+                        onClick={() => {
+                          // Select scene + index in the viewer
+                          const idxType = job.index_type || job.result?.index_type;
+                          if (idxType && job.scene_id) {
+                            setSelectedIndex(idxType);
+                            setSelectedSceneId(job.scene_id);
+                            if (job.completed_at) {
+                              setSelectedDate(new Date(job.completed_at));
+                            }
+                            if (job.result?.raster_path) {
+                              setActiveRasterPath(job.result.raster_path);
+                            }
+                            setActiveJobId(job.id);
+                          }
+                        }}
+                      >
+                        <td className="px-3 py-2 text-slate-700 whitespace-nowrap">
+                          {new Date(job.created_at).toLocaleDateString('es-ES', {
+                            day: '2-digit', month: 'short', year: 'numeric',
+                          })}
+                        </td>
+                        <td className="px-3 py-2 font-medium text-slate-800">
+                          {job.index_type || job.result?.index_type || '-'}
+                        </td>
+                        <td className="px-3 py-2 text-right text-slate-600 font-mono">
+                          {job.result_stats?.mean != null ? job.result_stats.mean.toFixed(3) : '-'}
+                        </td>
+                        <td className="px-3 py-2 text-right text-slate-400">
+                          {job.result?.cloud_coverage_pct != null
+                            ? `${Number(job.result.cloud_coverage_pct).toFixed(0)}%`
+                            : '-'
+                          }
+                        </td>
+                        <td className="px-3 py-2 text-center">
+                          <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-medium ${statusClass}`}>
+                            {statusLabel}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+              </tbody>
+            </table>
           </div>
         )}
       </Card>
@@ -859,7 +890,6 @@ export const VegetationAnalytics: React.FC = () => {
           onClose={() => setShowSetupWizard(false)}
           entityId={selectedEntityId}
           entityName={parcelShortName}
-          geometry={null}
           onComplete={handleMonitoringActivated}
         />
       )}

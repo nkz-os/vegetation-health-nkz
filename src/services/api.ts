@@ -416,6 +416,30 @@ export class VegetationApiClient {
   }
 
   // ==========================================================================
+  // Crop Season API
+  // ==========================================================================
+
+  /**
+   * Create a new crop season for a parcel (replaces v1 subscription wizard).
+   * POST /api/vegetation/crop-seasons/{entity_id}
+   */
+  async createCropSeason(
+    entityId: string,
+    data: {
+      crop_type: string;
+      start_date: string;
+      end_date?: string | null;
+      monitoring_enabled: boolean;
+    }
+  ): Promise<{ id: string; message: string }> {
+    const response = await this.client.post(
+      `/crop-seasons/${encodeURIComponent(entityId)}`,
+      data
+    );
+    return response as unknown as { id: string; message: string };
+  }
+
+  // ==========================================================================
   // Integration Endpoints (N8N, Intelligence Module, Platform)
   // ==========================================================================
 

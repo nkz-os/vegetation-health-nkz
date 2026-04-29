@@ -293,7 +293,9 @@
         "savedFormulas": "Saved formulas",
         "noSavedFormulas": "No saved formulas",
         "formulaValid": "Formula is valid",
-        "customTimeseriesNotAvailable": "Timeseries for custom indices is not available yet."
+        "customTimeseriesNotAvailable": "Timeseries for custom indices is not available yet.",
+        "date": "Data",
+        "status": "Estat"
     },
     "errors": {
         "loadFailed": "Failed to load data",
@@ -364,6 +366,28 @@
         "categorySoil": "Soil/Water",
         "categorySoilDesc": "Indices for early stages and soil analysis",
         "infoTooltip": "View index information"
+    },
+    "cropSeason": {
+        "title": "Configurar Temporada de Cultiu",
+        "cropType": "Tipus de cultiu",
+        "cropPlaceholder": "Seleccionar tipus de cultiu",
+        "wheat": "Blat",
+        "corn": "Blat de moro",
+        "barley": "Ordi",
+        "vineyard": "Vinya",
+        "olive": "Olivera",
+        "almond": "Ametller",
+        "vegetables": "Hortalisses",
+        "other": "Altres",
+        "startDate": "Data d'inici",
+        "endDate": "Data de fi (opcional)",
+        "monitoringToggle": "Monitoritzar aquesta parcel·la",
+        "monitoringDesc": "Descarregar i processar imatges satel·litals automàticament via STAC",
+        "save": "Guardar temporada",
+        "saving": "Guardant...",
+        "success": "Temporada guardada",
+        "error": "Error en guardar la temporada",
+        "endDateHelp": "Deixar buit per a temporades en curs"
     },
     "calculationCard": {
         "dateUnavailable": "Date unavailable",

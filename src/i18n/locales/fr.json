@@ -293,7 +293,9 @@
         "savedFormulas": "Saved formulas",
         "noSavedFormulas": "No saved formulas",
         "formulaValid": "Formula is valid",
-        "customTimeseriesNotAvailable": "Timeseries for custom indices is not available yet."
+        "customTimeseriesNotAvailable": "Timeseries for custom indices is not available yet.",
+        "date": "Date",
+        "status": "Statut"
     },
     "errors": {
         "loadFailed": "Failed to load data",
@@ -364,6 +366,28 @@
         "categorySoil": "Soil/Water",
         "categorySoilDesc": "Indices for early stages and soil analysis",
         "infoTooltip": "View index information"
+    },
+    "cropSeason": {
+        "title": "Configurer la Saison de Culture",
+        "cropType": "Type de culture",
+        "cropPlaceholder": "Sélectionner le type de culture",
+        "wheat": "Blé",
+        "corn": "Maïs",
+        "barley": "Orge",
+        "vineyard": "Vignoble",
+        "olive": "Olivier",
+        "almond": "Amandier",
+        "vegetables": "Légumes",
+        "other": "Autre",
+        "startDate": "Date de début",
+        "endDate": "Date de fin (optionnelle)",
+        "monitoringToggle": "Surveiller cette parcelle",
+        "monitoringDesc": "Télécharger et traiter les images satellite automatiquement via STAC",
+        "save": "Enregistrer la saison",
+        "saving": "Enregistrement...",
+        "success": "Saison enregistrée",
+        "error": "Erreur lors de l'enregistrement",
+        "endDateHelp": "Laisser vide pour les saisons en cours"
     },
     "calculationCard": {
         "dateUnavailable": "Date unavailable",
