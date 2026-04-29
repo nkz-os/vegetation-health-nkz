@@ -21,8 +21,8 @@ services:
   # FastAPI backend
   backend:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: backend/Dockerfile
     container_name: vegetation-prime-api
     ports:
       - "8000:8000"
@@ -64,8 +64,8 @@ services:
   # Celery worker (same image as backend, different command)
   worker:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: backend/Dockerfile
     container_name: vegetation-prime-worker
     command: celery -A app.celery_app worker --loglevel=info --concurrency=4
     environment:
