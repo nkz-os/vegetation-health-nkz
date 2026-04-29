@@ -1,5 +1,6 @@
 import React from 'react';
 import { X, Info, Beaker, Target, AlertTriangle, Leaf } from 'lucide-react';
+import { useTranslation } from '@nekazari/sdk';
 import { getIndexInfo } from '../../data/indexInfo';
 
 interface IndexInfoModalProps {
@@ -13,6 +14,7 @@ export const IndexInfoModal: React.FC<IndexInfoModalProps> = ({
     isOpen,
     onClose
 }) => {
+    const { t } = useTranslation();
     if (!isOpen) return null;
 
     const info = getIndexInfo(indexType);
@@ -21,8 +23,8 @@ export const IndexInfoModal: React.FC<IndexInfoModalProps> = ({
         return (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
                 <div className="bg-white rounded-xl p-6 max-w-md">
-                    <p className="text-slate-600">Información no disponible para este índice.</p>
-                    <button onClick={onClose} className="mt-4 px-4 py-2 bg-slate-200 rounded-lg">Cerrar</button>
+                    <p className="text-slate-600">{t('indexInfo.unavailable')}</p>
+                    <button onClick={onClose} className="mt-4 px-4 py-2 bg-slate-200 rounded-lg">{t('indexInfo.close')}</button>
                 </div>
             </div>
         );
@@ -70,7 +72,7 @@ export const IndexInfoModal: React.FC<IndexInfoModalProps> = ({
                     <div className="bg-slate-50 rounded-lg p-4">
                         <div className="flex items-center gap-2 mb-2">
                             <Beaker className="w-4 h-4 text-slate-500" />
-                            <h3 className="font-semibold text-slate-800">Fórmula</h3>
+                            <h3 className="font-semibold text-slate-800">{t('indexInfo.formula')}</h3>
                         </div>
                         <code className="text-sm font-mono bg-white px-3 py-2 rounded border border-slate-200 block">
                             {info.formula}
@@ -81,7 +83,7 @@ export const IndexInfoModal: React.FC<IndexInfoModalProps> = ({
                     <div>
                         <div className="flex items-center gap-2 mb-3">
                             <Info className="w-4 h-4 text-slate-500" />
-                            <h3 className="font-semibold text-slate-800">Interpretación de Valores</h3>
+                            <h3 className="font-semibold text-slate-800">{t('indexInfo.interpretation')}</h3>
                         </div>
                         <div className="space-y-2">
                             {Object.entries(info.interpretation).map(([key, { range, meaning }]) => (
@@ -108,7 +110,7 @@ export const IndexInfoModal: React.FC<IndexInfoModalProps> = ({
                     <div>
                         <div className="flex items-center gap-2 mb-3">
                             <Target className="w-4 h-4 text-slate-500" />
-                            <h3 className="font-semibold text-slate-800">Mejor Para</h3>
+                            <h3 className="font-semibold text-slate-800">{t('indexInfo.bestFor')}</h3>
                         </div>
                         <div className="flex flex-wrap gap-2">
                             {info.bestFor.map((use, i) => (
@@ -132,7 +134,7 @@ export const IndexInfoModal: React.FC<IndexInfoModalProps> = ({
                         <div className="flex items-start gap-2">
                             <AlertTriangle className="w-4 h-4 text-amber-600 mt-0.5" />
                             <div>
-                                <h3 className="font-semibold text-amber-800 mb-1">Limitaciones</h3>
+                                <h3 className="font-semibold text-amber-800 mb-1">{t('indexInfo.limitations')}</h3>
                                 <p className="text-sm text-amber-700">{info.limitations}</p>
                             </div>
                         </div>

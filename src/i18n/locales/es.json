@@ -14,7 +14,9 @@
         "download": "Descargar",
         "close": "Cerrar",
         "noData": "Sin datos disponibles",
-        "retry": "Reintentar"
+        "retry": "Reintentar",
+        "expand": "Expandir panel",
+        "collapse": "Contraer panel"
     },
     "dashboard": {
         "title": "Gestión de Cultivos (Vegetation Prime)",
@@ -153,18 +155,6 @@
         "testAlert": "Probar Alerta",
         "activeAlerts": "Alertas Activas",
         "noAlerts": "No hay alertas configuradas"
-    },
-    "weather": {
-        "title": "Datos Meteorológicos",
-        "currentConditions": "Condiciones Actuales",
-        "temperature": "Temperatura",
-        "humidity": "Humedad",
-        "precipitation": "Precipitación",
-        "wind": "Viento",
-        "sensors": "Sensores Disponibles",
-        "noSensors": "No hay sensores meteorológicos vinculados",
-        "interpretation": "Interpretación",
-        "impactOnCrops": "Impacto en Cultivos"
     },
     "zoning": {
         "title": "Zonificación de Parcelas",
@@ -365,7 +355,6 @@
         "gndvi": "GNDVI - Índice de Vegetación de Diferencia Normalizada Verde",
         "ndre": "NDRE - Índice de Diferencia Normalizada de Borde Rojo",
         "ndmi": "NDMI - Índice de Humedad de Diferencia Normalizada",
-        "sami": "SAMI - Índice de Humedad del Suelo (Sentinel-1 SAR)",
         "vra": "VRA - Zonas de Aplicación Variable",
         "custom": "Índice Personalizado",
         "categoryGeneral": "Salud General",
@@ -419,7 +408,6 @@
         "gndviDesc": "Índice de Vegetación de Diferencia Normalizada Verde - Sensible al contenido de clorofila",
         "ndreDesc": "Índice de Diferencia Normalizada de Borde Rojo - Sensible al estrés del cultivo y nitrógeno",
         "ndmiDesc": "Índice de Humedad de Diferencia Normalizada - Mide el contenido de agua en la vegetación",
-        "samiDesc": "Índice de Humedad del Suelo Sentinel-1 - Proxy de humedad basado en radar",
         "vraDesc": "Zonas de Aplicación Variable - Zonas de manejo agrupadas por IA",
         "customDesc": "Índice Personalizado - Fórmula definida por el usuario"
     },
@@ -440,8 +428,17 @@
                 "high": "Vegetación densa y saludable",
                 "veryHigh": "Bosque tropical denso o cultivos de alta biomasa"
             },
-            "bestFor": ["Monitorización general de cultivos", "Detección de estrés hídrico", "Clasificación de cobertura del suelo", "Detección de cambios estacionales"],
-            "limitations": ["Se satura en vegetación densa (LAI > 3)", "Afectado por el brillo del suelo en zonas áridas", "No distingue bien entre tipos de cultivos"]
+            "bestFor": [
+                "Monitorización general de cultivos",
+                "Detección de estrés hídrico",
+                "Clasificación de cobertura del suelo",
+                "Detección de cambios estacionales"
+            ],
+            "limitations": [
+                "Se satura en vegetación densa (LAI > 3)",
+                "Afectado por el brillo del suelo en zonas áridas",
+                "No distingue bien entre tipos de cultivos"
+            ]
         },
         "evi": {
             "fullName": "Índice de Vegetación Mejorado",
@@ -453,8 +450,16 @@
                 "high": "Cobertura vegetal densa y activa",
                 "veryHigh": "Bosques densos y plantaciones de alto rendimiento"
             },
-            "bestFor": ["Áreas con alta biomasa (selvas, plantaciones)", "Regiones con influencia atmosférica (humedad, aerosoles)", "Monitoreo en zonas de alta reflectancia del suelo"],
-            "limitations": ["Requiere corrección atmosférica precisa", "Más complejo computacionalmente", "Menos sensible en zonas con baja cobertura vegetal"]
+            "bestFor": [
+                "Áreas con alta biomasa (selvas, plantaciones)",
+                "Regiones con influencia atmosférica (humedad, aerosoles)",
+                "Monitoreo en zonas de alta reflectancia del suelo"
+            ],
+            "limitations": [
+                "Requiere corrección atmosférica precisa",
+                "Más complejo computacionalmente",
+                "Menos sensible en zonas con baja cobertura vegetal"
+            ]
         },
         "ndmi": {
             "fullName": "Índice de Humedad de Diferencia Normalizada",
@@ -466,8 +471,17 @@
                 "high": "Buena hidratación de la vegetación",
                 "veryHigh": "Saturación de agua, posible inundación"
             },
-            "bestFor": ["Detección de estrés hídrico en cultivos", "Monitoreo de sequías", "Evaluación de riesgo de incendios", "Gestión de riego"],
-            "limitations": ["Menor resolución espacial (20m, banda SWIR)", "Afectado por nubes y sombras densas", "No discrimina entre agua del suelo y agua en la vegetación"]
+            "bestFor": [
+                "Detección de estrés hídrico en cultivos",
+                "Monitoreo de sequías",
+                "Evaluación de riesgo de incendios",
+                "Gestión de riego"
+            ],
+            "limitations": [
+                "Menor resolución espacial (20m, banda SWIR)",
+                "Afectado por nubes y sombras densas",
+                "No discrimina entre agua del suelo y agua en la vegetación"
+            ]
         },
         "savi": {
             "fullName": "Índice de Vegetación Ajustado al Suelo",
@@ -479,8 +493,17 @@
                 "high": "Cobertura vegetal media-alta (50-80%)",
                 "veryHigh": "Cobertura completa y densa (> 80%)"
             },
-            "bestFor": ["Cultivos en etapas tempranas", "Zonas áridas y semiáridas", "Donde el suelo es visible entre las plantas", "Viñedos y olivares con marco amplio"],
-            "limitations": ["Requiere ajustar el factor L según cobertura", "Menos sensible que el NDVI en coberturas densas", "El valor de L=0.5 es un compromiso"]
+            "bestFor": [
+                "Cultivos en etapas tempranas",
+                "Zonas áridas y semiáridas",
+                "Donde el suelo es visible entre las plantas",
+                "Viñedos y olivares con marco amplio"
+            ],
+            "limitations": [
+                "Requiere ajustar el factor L según cobertura",
+                "Menos sensible que el NDVI en coberturas densas",
+                "El valor de L=0.5 es un compromiso"
+            ]
         },
         "gndvi": {
             "fullName": "Índice de Vegetación de Diferencia Normalizada Verde",
@@ -492,8 +515,17 @@
                 "high": "Alta concentración de clorofila, buena salud",
                 "veryHigh": "Máxima actividad fotosintética"
             },
-            "bestFor": ["Evaluación de contenido de clorofila", "Detección de deficiencia de nitrógeno", "Monitoreo de la senescencia en cultivos", "Diferenciación de especies vegetales"],
-            "limitations": ["Menor rango dinámico que el NDVI", "Más sensible a las condiciones de iluminación", "La banda verde (B03) tiene menor relación señal-ruido"]
+            "bestFor": [
+                "Evaluación de contenido de clorofila",
+                "Detección de deficiencia de nitrógeno",
+                "Monitoreo de la senescencia en cultivos",
+                "Diferenciación de especies vegetales"
+            ],
+            "limitations": [
+                "Menor rango dinámico que el NDVI",
+                "Más sensible a las condiciones de iluminación",
+                "La banda verde (B03) tiene menor relación señal-ruido"
+            ]
         },
         "ndre": {
             "fullName": "Índice de Diferencia Normalizada de Borde Rojo",
@@ -505,8 +537,17 @@
                 "high": "Alta eficiencia fotosintética",
                 "veryHigh": "Óptima salud y densidad de clorofila"
             },
-            "bestFor": ["Agricultura de precisión (dosis variable de N)", "Detección temprana de estrés en cultivos", "Clasificación de variedades de cultivos", "Monitoreo de la senescencia foliar"],
-            "limitations": ["Requiere banda Red Edge (B05, B06, B7 o B8A)", "Menor disponibilidad en satélites no-Sentinel-2", "Puede verse afectado por la estructura del dosel"]
+            "bestFor": [
+                "Agricultura de precisión (dosis variable de N)",
+                "Detección temprana de estrés en cultivos",
+                "Clasificación de variedades de cultivos",
+                "Monitoreo de la senescencia foliar"
+            ],
+            "limitations": [
+                "Requiere banda Red Edge (B05, B06, B7 o B8A)",
+                "Menor disponibilidad en satélites no-Sentinel-2",
+                "Puede verse afectado por la estructura del dosel"
+            ]
         }
     }
 }

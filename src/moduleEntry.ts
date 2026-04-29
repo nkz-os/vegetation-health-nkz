@@ -10,6 +10,9 @@ import pkg from '../package.json';
 import esTranslations from './i18n/locales/es.json';
 import enTranslations from './i18n/locales/en.json';
 import euTranslations from './i18n/locales/eu.json';
+import caTranslations from './i18n/locales/ca.json';
+import frTranslations from './i18n/locales/fr.json';
+import ptTranslations from './i18n/locales/pt.json';
 
 const MODULE_ID = 'vegetation-prime';
 
@@ -25,6 +28,9 @@ if (!window.__NKZ__) {
     i18n.addResourceBundle('es', 'common', esTranslations, true, true);
     i18n.addResourceBundle('en', 'common', enTranslations, true, true);
     i18n.addResourceBundle('eu', 'common', euTranslations, true, true);
+    i18n.addResourceBundle('ca', 'common', caTranslations, true, true);
+    i18n.addResourceBundle('fr', 'common', frTranslations, true, true);
+    i18n.addResourceBundle('pt', 'common', ptTranslations, true, true);
   }
   const LazyApp = React.lazy(() => import('./App'));
 

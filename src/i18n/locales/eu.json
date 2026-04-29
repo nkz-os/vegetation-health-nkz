@@ -14,7 +14,9 @@
         "download": "Deskargatu",
         "close": "Itxi",
         "noData": "Ez dago daturik eskuragarri",
-        "retry": "Saiatu berriro"
+        "retry": "Saiatu berriro",
+        "expand": "Zabaldu panela",
+        "collapse": "Tolestu panela"
     },
     "dashboard": {
         "title": "Laborantza Kudeaketa (Vegetation Prime)",
@@ -153,18 +155,6 @@
         "testAlert": "Probatu Alerta",
         "activeAlerts": "Alerta Aktiboak",
         "noAlerts": "Ez dago alertarik konfiguratuta"
-    },
-    "weather": {
-        "title": "Eguraldi Datuak",
-        "currentConditions": "Uneko Baldintzak",
-        "temperature": "Tenperatura",
-        "humidity": "Hezetasuna",
-        "precipitation": "Prezipitazioa",
-        "wind": "Haizea",
-        "sensors": "Sentsore Eskuragarriak",
-        "noSensors": "Ez dago eguraldi sentsorerik lotuta",
-        "interpretation": "Interpretazioa",
-        "impactOnCrops": "Laborantzarekiko Eragina"
     },
     "zoning": {
         "title": "Lurzati Zonifikazioa",
@@ -365,7 +355,6 @@
         "gndvi": "GNDVI - Landaredi Indize Normalizatu Berdea",
         "ndre": "NDRE - Ertz Gorriaren Indize Normalizatua",
         "ndmi": "NDMI - Hezetasun Indize Normalizatua",
-        "sami": "SAMI - Lurzoruaren Hezetasun Indizea (Sentinel-1 SAR)",
         "vra": "VRA - Aplikazio Aldakorreko Zonak",
         "custom": "Indize Pertsonalizatua",
         "categoryGeneral": "Osasun Orokorra",
@@ -419,7 +408,6 @@
         "gndviDesc": "Landaredi Indize Normalizatu Berdea",
         "ndreDesc": "Ertz Gorriaren Indize Normalizatua",
         "ndmiDesc": "Hezetasun Indize Normalizatua",
-        "samiDesc": "Sentinel-1 Lurzoruaren Hezetasuna",
         "vraDesc": "Aplikazio Aldakorreko Zonak",
         "customDesc": "Indize Pertsonalizatua"
     },
