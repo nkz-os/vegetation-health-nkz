@@ -5,6 +5,35 @@ All notable changes to the Vegetation Prime module will be documented in this fi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0] - 2026-04-30
+
+### Added
+- `NKZ_AUTH_INJECTION` listener (`useMobileAuth` hook) for nkz-mobile WebView auth
+- Mobile Bearer token fallback in API client (dual cookie + Bearer mode)
+- `vegetation_crop_seasons` table + CRUD API: link parcel to crop type + date range
+- `cropSeason` i18n namespace across all 6 locales (es, en, eu, ca, fr, pt)
+- Catalan (ca), French (fr), Portuguese (pt) locale files
+
+### Changed
+- **Setup wizard**: replaced 3-step wizard with single modal (crop type + start date + monitoring toggle)
+- **Timeline**: now sparse event-based from availability API (`GET scenes/available`), tick marks colored by NDVI value, tooltips on hover
+- **Calculation history**: replaced card grid + bar charts with flat sortable HTML table
+- **Layer control**: `w-80` → `w-full max-w-[320px]` for responsive mobile viewports
+
+### Fixed
+- Dockerfile `COPY` paths corrected for `backend/` build context (was referencing non-existent `backend/backend/`)
+- SQLAlchemy column type mismatches: `Text` → `DateTime`/`Boolean`/`Numeric` in 4 model fields
+- Replaced all `print()` calls with structured `logger.info/warning/error` in scheduler and subscriptions
+- Replaced DaisyUI `toggle` classes (undefined dependency) with pure Tailwind CSS toggle component
+- ~28 hardcoded Spanish UI strings migrated to `t()` i18n calls
+
+### Removed
+- Dead code: `src/i18n/index.ts` (orphaned i18next instance, never imported)
+- Unnecessary re-export `viewerSlots` from `App.tsx`
+- Weather/Eguraldia tab and all `weather.*` i18n keys (belongs to IoT/DataHub domain)
+- SAMI (Sentinel-1 SAR) index from types, legend, and UI (no pipeline implemented)
+- Unused `@deck.gl/*` dependencies
+
 ## [1.0.0] - 2025-01-XX
 
 ### Added

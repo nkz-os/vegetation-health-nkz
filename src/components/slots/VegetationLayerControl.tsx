@@ -98,7 +98,7 @@ const VegetationLayerControl: React.FC = () => {
 
   return (
     <>
-      <Card padding="md" className="bg-white/90 backdrop-blur-md border border-slate-200/50 rounded-xl w-80 shadow-lg pointer-events-auto">
+      <Card padding="md" className="bg-white/90 backdrop-blur-md border border-slate-200/50 rounded-xl w-full max-w-[320px] shadow-lg pointer-events-auto">
         <div className="space-y-4">
           {/* Header */}
           <div className="flex items-center justify-between border-b border-slate-100 pb-2">
