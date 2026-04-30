@@ -19,6 +19,7 @@ export interface VegetationJob {
   updated_at?: string;
   started_at?: string;
   completed_at?: string;
+  parameters?: Record<string, any>;
   result?: Record<string, any>;
   error_message?: string;
   entity_id?: string;

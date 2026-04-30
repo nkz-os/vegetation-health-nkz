@@ -295,7 +295,15 @@
         "formulaValid": "Formula is valid",
         "customTimeseriesNotAvailable": "Timeseries for custom indices is not available yet.",
         "date": "Date",
-        "status": "Status"
+        "status": "Status",
+        "firstStep": "Set up your first season",
+        "firstStepDesc": "Assign a crop and start date to this parcel. The system will automatically search for satellite images.",
+        "readyToAnalyze": "Ready to analyze",
+        "readyToAnalyzeDesc": "The system will download the best available satellite image and calculate all vegetation indices.",
+        "analysisNote": "Sentinel-2 passes every ~5 days. Results depend on cloud-free image availability.",
+        "vraZoning": "VRA Zoning",
+        "observations": "observations",
+        "advancedOptions": "Advanced options"
     },
     "errors": {
         "loadFailed": "Failed to load data",

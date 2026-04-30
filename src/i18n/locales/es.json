@@ -295,7 +295,15 @@
         "formulaValid": "Fórmula válida",
         "customTimeseriesNotAvailable": "La serie temporal para índices personalizados no está disponible todavía.",
         "date": "Fecha",
-        "status": "Estado"
+        "status": "Estado",
+        "firstStep": "Configura tu primera campaña",
+        "firstStepDesc": "Asigna un cultivo y fecha de inicio a esta parcela. El sistema buscará imágenes de satélite automáticamente.",
+        "readyToAnalyze": "Todo listo para analizar",
+        "readyToAnalyzeDesc": "El sistema descargará la mejor imagen de satélite disponible y calculará todos los índices de vegetación.",
+        "analysisNote": "Sentinel-2 pasa cada ~5 días. Los resultados dependen de la disponibilidad de imágenes sin nubes.",
+        "vraZoning": "Zonificar VRA",
+        "observations": "observaciones",
+        "advancedOptions": "Opciones avanzadas"
     },
     "errors": {
         "loadFailed": "Error al cargar datos",
