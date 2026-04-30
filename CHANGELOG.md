@@ -27,12 +27,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Replaced DaisyUI `toggle` classes (undefined dependency) with pure Tailwind CSS toggle component
 - ~28 hardcoded Spanish UI strings migrated to `t()` i18n calls
 
+- **VRA Zoning**: wired `ZoningAlgorithm` into Celery task pipeline (was disconnected); GeoJSON endpoint now returns real data
+- **Export API**: new `export.py` router with GeoJSON, Shapefile, CSV download endpoints
+- **Custom formulas**: added PATCH update endpoint; fixed legacy `/calculate` CUSTOM key collision; added CUSTOM colormap
+- **Index pills**: replaced 4 verbose categories with 2 compact rows (Vegetación + Manejo), added compact mode for bottom-panel
+- **Unified viewer context-panel**: real crop season data, real monitoring status, Analyze with polling, VRA triggers zoning
+- **Standalone page**: reduced from 9 sections to 4 — crop season, analyze card (indices+custom formulas), compact history, viewer link
+- **VRA Zoning API docs**: complete contract for GIS/machinery module consumption (`docs/api/vra-zoning-api.md`)
+
+### Fixed
+- Dockerfile `COPY` paths corrected for `backend/` build context (was referencing non-existent `backend/backend/`)
+- SQLAlchemy column type mismatches: `Text` → `DateTime`/`Boolean`/`Numeric` in 4 model fields
+- Replaced all `print()` calls with structured `logger.info/warning/error` in scheduler and subscriptions
+- Replaced DaisyUI `toggle` classes (undefined dependency) with pure Tailwind CSS toggle component
+- ~28 hardcoded Spanish UI strings migrated to `t()` i18n calls
+- Job history table: show scene date (not submission date), added delete button per row
+- `Array.isArray()` guards on all API-fed `.map()` calls to prevent runtime crashes
+- Context-panel buttons now wired (Analyze with polling, Export with guard, VRA triggers job)
+- Basque (eu) translations: fixed `barley` (was "beer") and `other`
+
 ### Removed
 - Dead code: `src/i18n/index.ts` (orphaned i18next instance, never imported)
 - Unnecessary re-export `viewerSlots` from `App.tsx`
 - Weather/Eguraldia tab and all `weather.*` i18n keys (belongs to IoT/DataHub domain)
 - SAMI (Sentinel-1 SAR) index from types, legend, and UI (no pipeline implemented)
 - Unused `@deck.gl/*` dependencies
+- Raster preview from standalone page (Cesium handles visualization)
+- SmartTimeline, Quick stats, Date indicator from standalone page (live in unified viewer slots)
 
 ## [1.0.0] - 2025-01-XX
 
