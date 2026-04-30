@@ -18,9 +18,9 @@ import { useAuth } from '../hooks/useAuth';
 import { useTranslation } from '@nekazari/sdk';
 import type { VegetationJob, CustomFormula, CropSeason } from '../types';
 import {
-  Loader2, Calculator, AlertCircle, CheckCircle,
-  RefreshCw, BarChart3, Satellite, Leaf,
-  Activity, Sprout, ChevronDown, Beaker,
+  Loader2, AlertCircle, CheckCircle,
+  RefreshCw, BarChart3, Satellite,
+  Sprout, ChevronDown, Beaker,
 } from 'lucide-react';
 
 // Main indices the user can browse after analysis
@@ -57,6 +57,7 @@ export const VegetationAnalytics: React.FC = () => {
   const [customValidationMsg, setCustomValidationMsg] = useState<string | null>(null);
   const [customError, setCustomError] = useState<string | null>(null);
   const [exportingFormat, setExportingFormat] = useState<string | null>(null);
+  const [deletingJobId, setDeletingJobId] = useState<string | null>(null);
   const [customBusy, setCustomBusy] = useState(false);
 
   // Monitoring state
@@ -346,6 +347,18 @@ export const VegetationAnalytics: React.FC = () => {
     }
   };
 
+  const handleDeleteJob = async (jobId: string) => {
+    setDeletingJobId(jobId);
+    try {
+      await api.deleteJob(jobId);
+      setJobs(prev => prev.filter(j => j.id !== jobId));
+    } catch {
+      // Silently fail — row stays
+    } finally {
+      setDeletingJobId(null);
+    }
+  };
+
   const handleExportResult = async (format: 'geojson' | 'shapefile' | 'csv') => {
     if (!selectedEntityId) return;
     setExportingFormat(format);
@@ -486,61 +499,50 @@ export const VegetationAnalytics: React.FC = () => {
         </div>
       </Card>
 
-      {/* Index Pill Selector */}
-      <Card padding="md">
-        <IndexPillSelector
-          selectedIndex={effectiveIndex}
-          onIndexChange={(idx) => setSelectedIndex(idx)}
-          customIndexOptions={(Array.isArray(customFormulas) ? customFormulas : []).map(f => ({ key: f.id, label: f.name }))}
-        />
-      </Card>
-
-      {/* Analyze Section */}
-      <Card padding="md">
-        <div className="space-y-4">
-          <div className="flex items-center gap-2">
-            <Satellite className="w-5 h-5 text-emerald-600" />
-            <h3 className="text-sm font-semibold text-slate-800">
-              {t('configPanel.vegetationAnalysis')}
-            </h3>
-          </div>
-
-
-          {/* Analyze button */}
-          <div className="flex items-center gap-3">
-            <button
-              onClick={handleAnalyze}
-              disabled={isAnalyzing}
-              className="flex items-center gap-2 px-5 py-2.5 bg-emerald-600 text-white rounded-lg text-sm font-semibold hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm"
-            >
-              {isAnalyzing ? (
-                <><Loader2 className="w-4 h-4 animate-spin" />{t('analyticsPage.analyzing')}</>
-              ) : (
-                <><Calculator className="w-4 h-4" />{t('dashboard.analyze')}</>
-              )}
-            </button>
-            {isAnalyzing && analyzeProgress && (
-              <span className="text-xs text-slate-500 animate-pulse">{analyzeProgress}</span>
-            )}
-          </div>
-
-          {/* Error */}
-          {analyzeError && (
-            <div className="flex items-center gap-2 text-xs text-red-600 bg-red-50 p-3 rounded-lg">
-              <AlertCircle className="w-4 h-4 flex-shrink-0" />
-              <span>{analyzeError}</span>
-            </div>
-          )}
-
-          {/* Partial results during analysis */}
-          {isAnalyzing && hasResults && (
-            <div className="flex items-center gap-2 text-xs text-emerald-600 bg-emerald-50 p-2 rounded-lg">
-              <CheckCircle className="w-4 h-4" />
-              <span>{Object.keys(indexResults).length} {t('analytics.indexSelector').toLowerCase()} {t('calculations.status.completed').toLowerCase()}</span>
-            </div>
-          )}
+      {/* Index pills + Analyze in one compact row */}
+      <div className="flex items-start gap-3 flex-wrap">
+        <div className="flex-1 min-w-0">
+          <IndexPillSelector
+            selectedIndex={effectiveIndex}
+            onIndexChange={(idx) => setSelectedIndex(idx)}
+            customIndexOptions={(Array.isArray(customFormulas) ? customFormulas : []).map(f => ({ key: f.id, label: f.name }))}
+          />
         </div>
-      </Card>
+        <button
+          onClick={handleAnalyze}
+          disabled={isAnalyzing}
+          className="flex items-center gap-2 px-5 py-2.5 bg-emerald-600 text-white rounded-lg text-sm font-semibold hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm shrink-0"
+          title={t('configPanel.forceLatestScene')}
+        >
+          {isAnalyzing ? (
+            <><Loader2 className="w-4 h-4 animate-spin" />{t('analyticsPage.processingHistoric')}</>
+          ) : hasResults ? (
+            <><RefreshCw className="w-4 h-4" />{t('configPanel.forceLatestScene')}</>
+          ) : (
+            <><Satellite className="w-4 h-4" />{t('dashboard.analyze')}</>
+          )}
+        </button>
+      </div>
+
+      {/* Analyze error / progress */}
+      {analyzeError && (
+        <div className="flex items-center gap-2 text-xs text-red-600 bg-red-50 p-3 rounded-lg">
+          <AlertCircle className="w-4 h-4 flex-shrink-0" />
+          <span>{analyzeError}</span>
+        </div>
+      )}
+      {isAnalyzing && analyzeProgress && (
+        <div className="flex items-center gap-2 text-xs text-emerald-600 bg-emerald-50 p-3 rounded-lg">
+          <Loader2 className="w-4 h-4 animate-spin" />
+          <span>{analyzeProgress}</span>
+        </div>
+      )}
+      {isAnalyzing && hasResults && (
+        <div className="flex items-center gap-2 text-xs text-emerald-600 bg-emerald-50 p-2 rounded-lg">
+          <CheckCircle className="w-4 h-4" />
+          <span>{Object.keys(indexResults).length} {t('analytics.indexSelector').toLowerCase()} {t('calculations.status.completed').toLowerCase()}</span>
+        </div>
+      )}
 
       {/* Smart Timeline */}
       <SmartTimeline
@@ -566,22 +568,47 @@ export const VegetationAnalytics: React.FC = () => {
       )}
 
 
-      {/* Empty state — no results and not analyzing */}
+      {/* Empty state — guide the farmer step by step */}
       {!hasResults && !isAnalyzing && !loadingResults && (
         <Card padding="md">
-          <div className="text-center py-8">
-            <Leaf className="w-12 h-12 text-slate-200 mx-auto mb-3" />
-            <h3 className="text-lg font-medium text-slate-600 mb-1">{t('analytics.noScenes')}</h3>
-            <p className="text-sm text-slate-400 max-w-md mx-auto mb-4">
-              {t('analyticsPage.inactiveMonitoringDesc')}
+          <div className="text-center py-8 max-w-md mx-auto">
+            <Satellite className="w-16 h-16 text-slate-200 mx-auto mb-4" />
+            <h3 className="text-lg font-semibold text-slate-700 mb-2">
+              {cropSeasons.length === 0
+                ? t('analyticsPage.firstStep')
+                : t('analyticsPage.readyToAnalyze')}
+            </h3>
+            <p className="text-sm text-slate-500 mb-6 leading-relaxed">
+              {cropSeasons.length === 0
+                ? t('analyticsPage.firstStepDesc')
+                : t('analyticsPage.readyToAnalyzeDesc')}
             </p>
-            <button
-              onClick={() => setShowSetupWizard(true)}
-              className="inline-flex items-center gap-2 px-5 py-2.5 bg-emerald-600 text-white rounded-lg text-sm font-semibold hover:bg-emerald-700 transition-colors shadow-sm"
-            >
-              <Activity className="w-4 h-4" />
-              {t('analyticsPage.configureMonitoring')}
-            </button>
+            <div className="flex items-center justify-center gap-3 flex-wrap">
+              {cropSeasons.length === 0 && (
+                <button
+                  onClick={() => setShowSetupWizard(true)}
+                  className="inline-flex items-center gap-2 px-5 py-2.5 bg-emerald-600 text-white rounded-lg text-sm font-semibold hover:bg-emerald-700 transition-colors shadow-sm"
+                >
+                  <Sprout className="w-4 h-4" />
+                  {t('cropSeason.newSeason')}
+                </button>
+              )}
+              <button
+                onClick={handleAnalyze}
+                disabled={isAnalyzing}
+                className="inline-flex items-center gap-2 px-5 py-2.5 bg-white border-2 border-emerald-600 text-emerald-700 rounded-lg text-sm font-semibold hover:bg-emerald-50 transition-colors shadow-sm"
+              >
+                {isAnalyzing ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Satellite className="w-4 h-4" />
+                )}
+                {t('dashboard.analyze')}
+              </button>
+            </div>
+            <p className="text-xs text-slate-400 mt-4">
+              {t('analyticsPage.analysisNote')}
+            </p>
           </div>
         </Card>
       )}
@@ -616,6 +643,7 @@ export const VegetationAnalytics: React.FC = () => {
                   <th className="px-3 py-2 text-right font-medium">{t('analytics.mean')}</th>
                   <th className="px-3 py-2 text-right font-medium">{t('timeline.clouds')}</th>
                   <th className="px-3 py-2 text-center font-medium">{t('analyticsPage.status')}</th>
+                  <th className="px-3 py-2 text-center font-medium"></th>
                 </tr>
               </thead>
               <tbody>
@@ -657,9 +685,12 @@ export const VegetationAnalytics: React.FC = () => {
                         }}
                       >
                         <td className="px-3 py-2 text-slate-700 whitespace-nowrap">
-                          {new Date(job.created_at).toLocaleDateString('es-ES', {
-                            day: '2-digit', month: 'short', year: 'numeric',
-                          })}
+                          {(job.result?.sensing_date || job.parameters?.date || job.created_at)
+                            ? new Date(job.result?.sensing_date || job.parameters?.date || job.created_at).toLocaleDateString('es-ES', {
+                                day: '2-digit', month: 'short', year: 'numeric',
+                              })
+                            : '-'
+                          }
                         </td>
                         <td className="px-3 py-2 font-medium text-slate-800">
                           {job.index_type || job.result?.index_type || '-'}
@@ -677,6 +708,16 @@ export const VegetationAnalytics: React.FC = () => {
                           <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-medium ${statusClass}`}>
                             {statusLabel}
                           </span>
+                        </td>
+                        <td className="px-3 py-2 text-center">
+                          <button
+                            onClick={(e) => { e.stopPropagation(); handleDeleteJob(job.id); }}
+                            disabled={deletingJobId === job.id}
+                            className="text-xs text-red-400 hover:text-red-600 disabled:opacity-30 p-1"
+                            title={t('common.delete')}
+                          >
+                            {deletingJobId === job.id ? <Loader2 className="w-3 h-3 animate-spin" /> : '✕'}
+                          </button>
                         </td>
                       </tr>
                     );

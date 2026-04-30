@@ -295,7 +295,15 @@
         "formulaValid": "Formula baliozkoa da",
         "customTimeseriesNotAvailable": "Indize pertsonalizatuen denbora-seriea ez dago oraindik eskuragarri.",
         "date": "Data",
-        "status": "Egoera"
+        "status": "Egoera",
+        "firstStep": "Set up your first season",
+        "firstStepDesc": "Assign a crop and start date to this parcel. The system will automatically search for satellite images.",
+        "readyToAnalyze": "Ready to analyze",
+        "readyToAnalyzeDesc": "The system will download the best available satellite image and calculate all vegetation indices.",
+        "analysisNote": "Sentinel-2 passes every ~5 days. Results depend on cloud-free image availability.",
+        "vraZoning": "VRA Zoning",
+        "observations": "observations",
+        "advancedOptions": "Advanced options"
     },
     "errors": {
         "loadFailed": "Errorea datuak kargatzean",

@@ -3,10 +3,11 @@
  * Displays: header, opacity, crop season, quick stats, monitoring indicator, action buttons.
  */
 
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useTranslation, useViewer } from '@nekazari/sdk';
 import { useUIKit } from '../../hooks/useUIKit';
 import { useVegetationContext } from '../../services/vegetationContext';
+import { useVegetationApi } from '../../services/api';
 
 const VegetationLayerControl: React.FC = () => {
   const { t } = useTranslation();
@@ -23,8 +24,49 @@ const VegetationLayerControl: React.FC = () => {
     setLayerOpacity,
   } = useVegetationContext();
 
+  const api = useVegetationApi();
+  const [analyzing, setAnalyzing] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [ctrlError, setCtrlError] = useState<string | null>(null);
+
   const opacity = layerOpacity;
   const setOpacity = setLayerOpacity;
+
+  const handleAnalyze = async () => {
+    if (!selectedEntityId) return;
+    setAnalyzing(true);
+    setCtrlError(null);
+    try {
+      await api.analyzeParcel({ entity_id: selectedEntityId });
+    } catch (err: any) {
+      setCtrlError(err?.response?.data?.detail || err?.message || 'Error');
+      setTimeout(() => setCtrlError(null), 5000);
+    } finally {
+      setAnalyzing(false);
+    }
+  };
+
+  const handleExport = async () => {
+    if (!selectedEntityId) return;
+    setExporting(true);
+    setCtrlError(null);
+    try {
+      const blob = await api.exportPrescriptionGeojson(selectedEntityId);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `prescription_${selectedEntityId.split(':').pop()}.geojson`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      setCtrlError(err?.response?.data?.detail || err?.message || 'Error');
+      setTimeout(() => setCtrlError(null), 5000);
+    } finally {
+      setExporting(false);
+    }
+  };
 
   // Current index statistics for quick display
   const activeStats = selectedIndex && indexResults[selectedIndex]
@@ -134,12 +176,11 @@ const VegetationLayerControl: React.FC = () => {
         {/* Action Buttons */}
         <div className="flex gap-2 pt-2 border-t border-slate-100">
           <button
-            className="flex-1 px-3 py-2 text-sm font-medium text-white bg-green-600 hover:bg-green-700 rounded-lg transition-colors"
-            onClick={() => {
-              /* Analyze — triggered via context or standalone page */
-            }}
+            className="flex-1 px-3 py-2 text-sm font-medium text-white bg-green-600 hover:bg-green-700 rounded-lg transition-colors disabled:opacity-50"
+            onClick={handleAnalyze}
+            disabled={analyzing}
           >
-            🔄 {t('dashboard.analyze', 'Analizar')}
+            {analyzing ? '...' : '🔄'} {t('dashboard.analyze', 'Analizar')}
           </button>
           <button
             className="flex-1 px-3 py-2 text-sm font-medium text-green-700 bg-green-50 hover:bg-green-100 rounded-lg transition-colors"
@@ -148,14 +189,16 @@ const VegetationLayerControl: React.FC = () => {
             🗺 {t('layerControl.vra', 'VRA')}
           </button>
           <button
-            className="flex-1 px-3 py-2 text-sm font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
-            onClick={() => {
-              /* Export GeoJSON */
-            }}
+            className="flex-1 px-3 py-2 text-sm font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors disabled:opacity-50"
+            onClick={handleExport}
+            disabled={exporting}
           >
             📥 {t('common.export', 'Exportar')}
           </button>
         </div>
+        {ctrlError && (
+          <p className="text-xs text-red-600">{ctrlError}</p>
+        )}
       </div>
     </Card>
   );
