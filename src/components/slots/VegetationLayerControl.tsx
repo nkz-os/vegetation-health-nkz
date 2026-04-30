@@ -22,12 +22,18 @@ const VegetationLayerControl: React.FC = () => {
     layerOpacity,
     setSelectedIndex,
     setLayerOpacity,
+    setIndexResults,
   } = useVegetationContext();
 
   const api = useVegetationApi();
   const [analyzing, setAnalyzing] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [ctrlError, setCtrlError] = useState<string | null>(null);
+  const [pollTimer, setPollTimer] = useState<ReturnType<typeof setInterval> | null>(null);
+  const [cropSeason, setCropSeason] = useState<any>(null);
+  const [loadingSeason, setLoadingSeason] = useState(false);
+  const [monitoringActive, setMonitoringActive] = useState(false);
+  const [zoningBusy, setZoningBusy] = useState(false);
 
   const opacity = layerOpacity;
   const setOpacity = setLayerOpacity;
@@ -37,17 +43,87 @@ const VegetationLayerControl: React.FC = () => {
     setAnalyzing(true);
     setCtrlError(null);
     try {
-      await api.analyzeParcel({ entity_id: selectedEntityId });
+      const result = await api.analyzeParcel({ entity_id: selectedEntityId });
+      const jobId = result.job_id;
+      const timer = setInterval(async () => {
+        try {
+          const data = await api.getJobDetails(jobId);
+          if (data?.job?.status === 'failed') {
+            clearInterval(timer);
+            setPollTimer(null);
+            setCtrlError(data.job.error_message || 'Job failed');
+            setTimeout(() => setCtrlError(null), 5000);
+            setAnalyzing(false);
+            return;
+          }
+          const results = await api.getEntityResults(selectedEntityId);
+          if (results.active_jobs === 0 && results.has_results) {
+            clearInterval(timer);
+            setPollTimer(null);
+            setIndexResults(results.indices || {});
+            if (results.indices && results.indices['NDVI']) {
+              setSelectedIndex('NDVI');
+            }
+            setAnalyzing(false);
+          }
+        } catch {
+          // transient — keep polling
+        }
+      }, 3000);
+      setPollTimer(timer);
     } catch (err: any) {
       setCtrlError(err?.response?.data?.detail || err?.message || 'Error');
       setTimeout(() => setCtrlError(null), 5000);
-    } finally {
       setAnalyzing(false);
+    }
+  };
+
+  const handleVraZoning = async () => {
+    if (!selectedEntityId) return;
+    if (indexResults['VRA_ZONES']) {
+      setSelectedIndex('VRA_ZONES');
+      return;
+    }
+    setZoningBusy(true);
+    setCtrlError(null);
+    try {
+      const result = await api.calculateIndex({
+        entity_id: selectedEntityId,
+        index_type: 'VRA_ZONES' as any,
+      });
+      const timer = setInterval(async () => {
+        try {
+          const details = await api.getJobDetails(result.job_id);
+          if (details?.job?.status === 'completed') {
+            clearInterval(timer);
+            setZoningBusy(false);
+            const data = await api.getEntityResults(selectedEntityId);
+            if (data.indices) {
+              setIndexResults(data.indices);
+            }
+            setSelectedIndex('VRA_ZONES');
+          } else if (details?.job?.status === 'failed') {
+            clearInterval(timer);
+            setZoningBusy(false);
+            setCtrlError(t('zoning.failed', 'Zonificación fallida'));
+            setTimeout(() => setCtrlError(null), 5000);
+          }
+        } catch { /* keep polling */ }
+      }, 3000);
+    } catch (err: any) {
+      setZoningBusy(false);
+      setCtrlError(err?.message || String(err));
+      setTimeout(() => setCtrlError(null), 5000);
     }
   };
 
   const handleExport = async () => {
     if (!selectedEntityId) return;
+    if (!indexResults['VRA_ZONES']) {
+      setCtrlError(t('prescription.noVraData', 'No hay datos VRA para exportar'));
+      setTimeout(() => setCtrlError(null), 5000);
+      return;
+    }
     setExporting(true);
     setCtrlError(null);
     try {
@@ -82,6 +158,36 @@ const VegetationLayerControl: React.FC = () => {
     lastSyncedDateRef.current = ts;
     setCurrentDate(selectedDate);
   }, [selectedDate, setCurrentDate]);
+
+  // Cleanup poll timer on unmount
+  useEffect(() => {
+    return () => {
+      if (pollTimer) clearInterval(pollTimer);
+    };
+  }, [pollTimer]);
+
+  // Fetch crop seasons and subscription status
+  useEffect(() => {
+    if (!selectedEntityId) { setCropSeason(null); return; }
+    let cancelled = false;
+    setLoadingSeason(true);
+    api.listCropSeasons(selectedEntityId)
+      .then(seasons => {
+        if (cancelled) return;
+        const arr = Array.isArray(seasons) ? seasons : [];
+        const active = arr.find((s: any) => s.is_active) || arr[0] || null;
+        setCropSeason(active);
+      })
+      .catch(() => setCropSeason(null))
+      .finally(() => { if (!cancelled) setLoadingSeason(false); });
+    api.getSubscriptionForEntity(selectedEntityId)
+      .then((sub: any) => {
+        if (cancelled) return;
+        setMonitoringActive(!!sub?.is_active);
+      })
+      .catch(() => { if (!cancelled) setMonitoringActive(false); });
+    return () => { cancelled = true; };
+  }, [selectedEntityId, api]);
 
   if (!selectedEntityId) {
     return (
@@ -125,19 +231,24 @@ const VegetationLayerControl: React.FC = () => {
         {/* Crop Season */}
         <div className="space-y-2 pt-2 border-t border-slate-100">
           <label className="text-xs font-medium text-slate-600 uppercase tracking-wider">
-            {t('cropSeason.title', 'Campaña de Cultivo')}
+            {t('cropSeason.title', 'Campaña')}
           </label>
-          <p className="text-sm text-slate-500">
-            {t('layerControl.noCropSeason', 'Sin campaña asignada')}
-            {' '}
-            <a href="#" className="text-green-600 hover:text-green-700 font-medium">
-              {t('layerControl.configure', 'Configurar')}
-            </a>
-          </p>
+          {loadingSeason ? (
+            <p className="text-sm text-slate-400">...</p>
+          ) : cropSeason ? (
+            <p className="text-sm text-slate-700">
+              {t(`cropSeason.${cropSeason.crop_type}`, cropSeason.crop_type)}
+              {' '}{cropSeason.start_date} – {cropSeason.end_date || '...'}
+            </p>
+          ) : (
+            <p className="text-sm text-slate-500">
+              {t('layerControl.noCropSeason', 'Sin campaña asignada')}
+            </p>
+          )}
         </div>
 
         {/* Quick Stats */}
-        {activeStats && (
+        {activeStats && Object.keys(indexResults).length > 0 && (
           <div className="space-y-2 pt-2 border-t border-slate-100">
             <label className="text-xs font-medium text-slate-600 uppercase tracking-wider">
               {t('analyticsPage.quickStats', 'Estadísticas rápidas')}
@@ -167,9 +278,11 @@ const VegetationLayerControl: React.FC = () => {
 
         {/* Monitoring Indicator */}
         <div className="flex items-center gap-2 pt-2 border-t border-slate-100">
-          <span className="w-2.5 h-2.5 rounded-full bg-slate-300" />
+          <span className={`w-2.5 h-2.5 rounded-full ${monitoringActive ? 'bg-emerald-500' : 'bg-slate-300'}`} />
           <span className="text-sm text-slate-500">
-            {t('layerControl.inactive', 'Inactiva')}
+            {monitoringActive
+              ? t('layerControl.active', 'Activa')
+              : t('layerControl.inactive', 'Inactiva')}
           </span>
         </div>
 
@@ -183,10 +296,11 @@ const VegetationLayerControl: React.FC = () => {
             {analyzing ? '...' : '🔄'} {t('dashboard.analyze', 'Analizar')}
           </button>
           <button
-            className="flex-1 px-3 py-2 text-sm font-medium text-green-700 bg-green-50 hover:bg-green-100 rounded-lg transition-colors"
-            onClick={() => setSelectedIndex('VRA_ZONES')}
+            className="flex-1 px-3 py-2 text-sm font-medium text-green-700 bg-green-50 hover:bg-green-100 rounded-lg transition-colors disabled:opacity-50"
+            onClick={handleVraZoning}
+            disabled={zoningBusy}
           >
-            🗺 {t('layerControl.vra', 'VRA')}
+            {zoningBusy ? '...' : '🗺'} {t('layerControl.vra', 'VRA')}
           </button>
           <button
             className="flex-1 px-3 py-2 text-sm font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors disabled:opacity-50"

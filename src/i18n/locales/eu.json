@@ -117,7 +117,8 @@
         "recentActivity": "Azken Jarduerak",
         "noRecentActivity": "Ez dago azken jarduerarik.",
         "advancedConfig": "Konfigurazio Aurreratua",
-        "vegetationAnalysis": "Landaretza Analisia"
+        "vegetationAnalysis": "Landaretza Analisia",
+        "analyzeFirstTime": "Analizatu satelitearekin"
     },
     "prescription": {
         "title": "Preskripzio Mapak",
@@ -138,6 +139,7 @@
         "exporting": "Esportatzen...",
         "exportSuccess": "Behar bezala esportatu da: {{filename}}",
         "exportError": "Errorea esportatzerakoan. Saiatu berriro.",
+        "noVraData": "Ez dago VRA daturik. Exekutatu zonifikazioa lehenengo.",
         "viewOnMap": "Ikusi mapan"
     },
     "export": {
@@ -160,6 +162,7 @@
         "title": "Lurzati Zonifikazioa",
         "managementZones": "Kudeaketa Zonaldeak",
         "generateZones": "Sortu Zonaldeak",
+        "failed": "Zonifikazioak huts egin du",
         "numZones": "Zonalde Kopurua",
         "saveAsParcel": "Gorde Lurzati Bezala",
         "vraReady": "Aldakorra Aplikatzeko Prest",
@@ -303,7 +306,8 @@
         "analysisNote": "Sentinel-2 passes every ~5 days. Results depend on cloud-free image availability.",
         "vraZoning": "VRA Zoning",
         "observations": "observations",
-        "advancedOptions": "Advanced options"
+        "advancedOptions": "Advanced options",
+        "openInViewer": "Open in 3D viewer"
     },
     "errors": {
         "loadFailed": "Errorea datuak kargatzean",
@@ -388,12 +392,12 @@
         "cropPlaceholder": "Aukeratu labore mota",
         "wheat": "Garia",
         "corn": "Artoa",
-        "barley": "Garagardoa",
+        "barley": "Garagarra",
         "vineyard": "Mahastia",
         "olive": "Olibondoa",
         "almond": "Almendrondoa",
         "vegetables": "Barazkiak",
-        "other": "Beste bat",
+        "other": "Bestelakoa",
         "startDate": "Hasiera data",
         "endDate": "Amaiera data (aukerakoa)",
         "monitoringToggle": "Monitorizatu lurzati hau",

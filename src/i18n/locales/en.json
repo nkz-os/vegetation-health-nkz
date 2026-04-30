@@ -117,7 +117,8 @@
         "recentActivity": "Recent Activity",
         "noRecentActivity": "No recent activity.",
         "advancedConfig": "Advanced Configuration",
-        "vegetationAnalysis": "Vegetation Analysis"
+        "vegetationAnalysis": "Vegetation Analysis",
+        "analyzeFirstTime": "Analyze with satellite"
     },
     "prescription": {
         "title": "Prescription Maps",
@@ -138,6 +139,7 @@
         "exporting": "Exporting...",
         "exportSuccess": "Exported successfully: {{filename}}",
         "exportError": "Export failed. Please try again.",
+        "noVraData": "No VRA data. Run zoning first.",
         "viewOnMap": "View on map"
     },
     "export": {
@@ -160,6 +162,7 @@
         "title": "Parcel Zoning",
         "managementZones": "Management Zones",
         "generateZones": "Generate Zones",
+        "failed": "Zoning failed",
         "numZones": "Number of Zones",
         "saveAsParcel": "Save as Parcel",
         "vraReady": "Ready for Variable Rate Application",
@@ -303,7 +306,8 @@
         "analysisNote": "Sentinel-2 passes every ~5 days. Results depend on cloud-free image availability.",
         "vraZoning": "VRA Zoning",
         "observations": "observations",
-        "advancedOptions": "Advanced options"
+        "advancedOptions": "Advanced options",
+        "openInViewer": "Open in 3D viewer"
     },
     "errors": {
         "loadFailed": "Failed to load data",

@@ -33,6 +33,7 @@ export const VegetationAnalytics: React.FC = () => {
     selectedIndex, setSelectedIndex,
     selectedEntityId, setSelectedEntityId,
     selectedSceneId, selectedDate,
+    activeRasterPath,
     setActiveJobId,
     setActiveRasterPath,
     setSelectedSceneId,
@@ -95,6 +96,7 @@ export const VegetationAnalytics: React.FC = () => {
           const result = data.indices[idx];
           if (result) {
             setActiveJobId(result.job_id);
+            setActiveRasterPath(result.raster_path ?? null);
           }
         }
       }
@@ -254,6 +256,10 @@ export const VegetationAnalytics: React.FC = () => {
   const handleDateSelect = (date: string, sceneId: string) => {
     setSelectedDate(new Date(date));
     setSelectedSceneId(sceneId);
+    // Update active raster so RasterPreview updates
+    if (indexResults[effectiveIndex]?.raster_path) {
+      setActiveRasterPath(indexResults[effectiveIndex].raster_path);
+    }
   };
 
   // Handle "Analyze" button click
@@ -519,7 +525,7 @@ export const VegetationAnalytics: React.FC = () => {
           ) : hasResults ? (
             <><RefreshCw className="w-4 h-4" />{t('configPanel.forceLatestScene')}</>
           ) : (
-            <><Satellite className="w-4 h-4" />{t('dashboard.analyze')}</>
+            <><Satellite className="w-4 h-4" />{t('configPanel.analyzeFirstTime')}</>
           )}
         </button>
       </div>
@@ -551,6 +557,47 @@ export const VegetationAnalytics: React.FC = () => {
         selectedDate={selectedDate ? selectedDate.toISOString().split('T')[0] : null}
         onDateSelect={handleDateSelect}
       />
+
+      {/* Date indicator */}
+      {selectedDate && hasResults && (
+        <div className="flex items-center gap-2 text-sm text-slate-600 bg-slate-50 rounded-lg px-3 py-1.5">
+          <span className="text-base">📅</span>
+          <span className="font-medium">
+            {selectedDate.toLocaleDateString('es-ES', { day: '2-digit', month: 'long', year: 'numeric' })}
+          </span>
+          {indexResults[effectiveIndex]?.statistics?.mean != null && (
+            <span className="text-slate-400">
+              · {effectiveIndex}: {indexResults[effectiveIndex].statistics.mean.toFixed(3)}
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* Raster Preview */}
+      {activeRasterPath && selectedEntityId && (
+        <div className="rounded-xl border border-slate-200 overflow-hidden bg-slate-900">
+          <div className="relative">
+            <img
+              src={`${window.location.origin}/api/vegetation/tiles/render/13/4096/4096.png?raster_path=${encodeURIComponent(activeRasterPath)}&index=${effectiveIndex}`}
+              alt={`${effectiveIndex} raster`}
+              className="w-full h-48 object-cover opacity-90"
+              onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+            />
+            <div className="absolute bottom-2 left-2 bg-black/60 text-white text-xs px-2 py-1 rounded">
+              {effectiveIndex} · {selectedDate?.toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' })}
+            </div>
+            <a
+              href={`/module/vegetation?entityId=${encodeURIComponent(selectedEntityId)}&tab=analysis`}
+              className="absolute bottom-2 right-2 bg-emerald-600/80 text-white text-xs px-2 py-1 rounded hover:bg-emerald-700 transition-colors"
+              target="_blank"
+              rel="noopener"
+              title={t('analyticsPage.openInViewer')}
+            >
+              {t('analyticsPage.openInViewer')}
+            </a>
+          </div>
+        </div>
+      )}
 
       {/* Quick stats */}
       {hasResults && indexResults[effectiveIndex]?.statistics && (
