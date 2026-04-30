@@ -319,7 +319,13 @@
         "colorLegend": "Kolore legenda",
         "hide": "Ezkutatu",
         "show": "Erakutsi",
-        "cloudCoverage": "Laino estaldura"
+        "cloudCoverage": "Laino estaldura",
+        "header": "Vegetation",
+        "noCropSeason": "No crop season assigned",
+        "configure": "Configure",
+        "vra": "VRA",
+        "active": "Active",
+        "inactive": "Inactive"
     },
     "monitoring": {
         "activate": "Monitorizazioa aktibatu",
@@ -365,7 +371,8 @@
         "categoryNutritionDesc": "Nutrizio eta klorofila analisirako indizeak",
         "categorySoil": "Lurzorua/Ura",
         "categorySoilDesc": "Hasierako etapatarako eta lurzoruaren analisirako indizeak",
-        "infoTooltip": "Indizearen informazioa ikusi"
+        "infoTooltip": "Indizearen informazioa ikusi",
+        "categoryManagement": "Kudeaketa"
     },
     "cropSeason": {
         "title": "Labora Denboraldia Konfiguratu",

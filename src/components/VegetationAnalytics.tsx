@@ -7,11 +7,10 @@
  *  3. After completion, user switches between indices to see stats + map layer
  */
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Card } from '@nekazari/ui-kit';
 import { useVegetationContext } from '../services/vegetationContext';
 import { useVegetationApi } from '../services/api';
-import TimeseriesChart from './widgets/TimeseriesChart';
 import { SetupWizard } from './pages/SetupWizard';
 import { IndexPillSelector } from './widgets/IndexPillSelector';
 import { SmartTimeline } from './widgets/SmartTimeline';
@@ -21,7 +20,7 @@ import type { VegetationJob, CustomFormula, CropSeason } from '../types';
 import {
   Loader2, Calculator, AlertCircle, CheckCircle,
   RefreshCw, BarChart3, Satellite, Leaf,
-  Activity, Power, Map, ChevronDown, Beaker, Sprout,
+  Activity, Sprout, ChevronDown, Beaker,
 } from 'lucide-react';
 
 // Main indices the user can browse after analysis
@@ -46,13 +45,11 @@ export const VegetationAnalytics: React.FC = () => {
   // Local state
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analyzeError, setAnalyzeError] = useState<string | null>(null);
-  const [downloadJobId, setDownloadJobId] = useState<string | null>(null);
+  const [analysisJobId, setAnalysisJobId] = useState<string | null>(null);
   const [analyzeProgress, setAnalyzeProgress] = useState<string>('');
   const [jobs, setJobs] = useState<VegetationJob[]>([]);
   const [loadingJobs, setLoadingJobs] = useState(false);
   const [loadingResults, setLoadingResults] = useState(false);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const [expandedIndexKey, setExpandedIndexKey] = useState<string | null>(null);
   const [customFormulas, setCustomFormulas] = useState<CustomFormula[]>([]);
   const [selectedCustomFormulaIds, setSelectedCustomFormulaIds] = useState<string[]>([]);
   const [customName, setCustomName] = useState('');
@@ -62,23 +59,16 @@ export const VegetationAnalytics: React.FC = () => {
   const [exportingFormat, setExportingFormat] = useState<string | null>(null);
   const [customBusy, setCustomBusy] = useState(false);
 
-  // Monitoring subscription state
-  const [subscription, setSubscription] = useState<any | null>(null);
-  const [loadingSub, setLoadingSub] = useState(false);
-  const [togglingMonitoring, setTogglingMonitoring] = useState(false);
+  // Monitoring state
+  const [monitoringActive, setMonitoringActive] = useState(false);
   const [showSetupWizard, setShowSetupWizard] = useState(false);
   const [showCustomCreator, setShowCustomCreator] = useState(false);
   const [cropSeasons, setCropSeasons] = useState<CropSeason[]>([]);
   const [selectedSeasonId, setSelectedSeasonId] = useState<string>('');
   const [loadingSeasons, setLoadingSeasons] = useState(false);
 
-  // Date range for analysis
-  const [startDate, setStartDate] = useState(() => {
-    const d = new Date();
-    d.setDate(d.getDate() - 30);
-    return d.toISOString().split('T')[0];
-  });
-  const [endDate, setEndDate] = useState(() => new Date().toISOString().split('T')[0]);
+  // Advanced section toggle
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   const effectiveIndex = selectedIndex || 'NDVI';
 
@@ -118,26 +108,16 @@ export const VegetationAnalytics: React.FC = () => {
     loadResults();
   }, [loadResults]);
 
-  // Load subscription status for this entity
-  const loadSubscription = useCallback(async () => {
+  // Check if monitoring is active for this entity
+  useEffect(() => {
     if (!selectedEntityId || !isAuthenticated) {
-      setSubscription(null);
+      setMonitoringActive(false);
       return;
     }
-    setLoadingSub(true);
-    try {
-      const sub = await api.getSubscriptionForEntity(selectedEntityId);
-      setSubscription(sub);
-    } catch {
-      setSubscription(null);
-    } finally {
-      setLoadingSub(false);
-    }
+    api.getSubscriptionForEntity(selectedEntityId)
+      .then(sub => setMonitoringActive(!!sub?.is_active))
+      .catch(() => setMonitoringActive(false));
   }, [selectedEntityId, isAuthenticated]);
-
-  useEffect(() => {
-    loadSubscription();
-  }, [loadSubscription]);
 
   // Load existing crop seasons for this entity
   const loadCropSeasons = useCallback(async () => {
@@ -174,24 +154,10 @@ export const VegetationAnalytics: React.FC = () => {
     loadCustomFormulas();
   }, [loadCustomFormulas]);
 
-  // Toggle monitoring active/inactive
-  const handleToggleMonitoring = async () => {
-    if (!subscription) return;
-    setTogglingMonitoring(true);
-    try {
-      await api.updateSubscription(subscription.id, { is_active: !subscription.is_active });
-      await loadSubscription();
-    } catch {
-      // Silently fail — user sees no change
-    } finally {
-      setTogglingMonitoring(false);
-    }
-  };
-
   // Called when SetupWizard completes
   const handleMonitoringActivated = () => {
     setShowSetupWizard(false);
-    loadSubscription();
+    setMonitoringActive(true);
     loadResults();
   };
 
@@ -216,54 +182,52 @@ export const VegetationAnalytics: React.FC = () => {
 
   // Poll for job completion during analysis
   useEffect(() => {
-    if (!downloadJobId) return;
+    if (!analysisJobId || !selectedEntityId) return;
 
     const poll = async () => {
       try {
-        const details = await api.getJobDetails(downloadJobId);
+        const details = await api.getJobDetails(analysisJobId);
         const status = details?.job?.status;
 
         if (status === 'completed') {
           setAnalyzeProgress(t('calculations.status.completed'));
           // Download done — now wait for calculation jobs to finish
           // Poll for results
-          if (selectedEntityId) {
-            const data = await api.getEntityResults(selectedEntityId);
-            const activeCount = data.active_jobs || 0;
+          const data = await api.getEntityResults(selectedEntityId);
+          const activeCount = data.active_jobs || 0;
 
-            if (activeCount === 0 && data.has_results) {
-              // All done!
-              setIndexResults(data.indices);
-              setIsAnalyzing(false);
-              setDownloadJobId(null);
-              setAnalyzeProgress('');
-              // Select NDVI by default
-              if (data.indices['NDVI']) {
-                setSelectedIndex('NDVI');
-                setActiveJobId(data.indices['NDVI'].job_id);
-              } else {
-                const first = Object.keys(data.indices)[0];
-                if (first) {
-                  setSelectedIndex(first as any);
-                  setActiveJobId(data.indices[first].job_id);
-                }
-              }
-              loadJobs();
-              return;
-            }
-
-            if (data.has_results) {
-              // Some results available, show partial
-              setIndexResults(data.indices);
-              setAnalyzeProgress(`${Object.keys(data.indices).length}/${MAIN_INDICES.length} ${t('analytics.indexSelector').toLowerCase()}...`);
+          if (activeCount === 0 && data.has_results) {
+            // All done!
+            setIndexResults(data.indices);
+            setIsAnalyzing(false);
+            setAnalysisJobId(null);
+            setAnalyzeProgress('');
+            // Select NDVI by default
+            if (data.indices['NDVI']) {
+              setSelectedIndex('NDVI');
+              setActiveJobId(data.indices['NDVI'].job_id);
             } else {
-              setAnalyzeProgress(t('analyticsPage.processingHistoric'));
+              const first = Object.keys(data.indices)[0];
+              if (first) {
+                setSelectedIndex(first as any);
+                setActiveJobId(data.indices[first].job_id);
+              }
             }
+            loadJobs();
+            return;
+          }
+
+          if (data.has_results) {
+            // Some results available, show partial
+            setIndexResults(data.indices);
+            setAnalyzeProgress(`${Object.keys(data.indices).length}/${MAIN_INDICES.length} ${t('analytics.indexSelector').toLowerCase()}...`);
+          } else {
+            setAnalyzeProgress(t('analyticsPage.processingHistoric'));
           }
         } else if (status === 'failed') {
           setAnalyzeError(details?.job?.error_message || t('errors.calculationFailed'));
           setIsAnalyzing(false);
-          setDownloadJobId(null);
+          setAnalysisJobId(null);
           loadJobs();
           return;
         } else {
@@ -274,29 +238,15 @@ export const VegetationAnalytics: React.FC = () => {
       }
     };
 
-    pollRef.current = setInterval(poll, 3000);
+    const intervalId = setInterval(poll, 3000);
     poll(); // First poll immediately
 
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
-    };
-  }, [downloadJobId, selectedEntityId]);
+    return () => clearInterval(intervalId);
+  }, [analysisJobId, selectedEntityId]);
 
   // Handle crop season selection
   const handleSeasonChange = (seasonId: string) => {
     setSelectedSeasonId(seasonId);
-    if (!seasonId) {
-      const d = new Date();
-      d.setDate(d.getDate() - 30);
-      setStartDate(d.toISOString().split('T')[0]);
-      setEndDate(new Date().toISOString().split('T')[0]);
-    } else {
-      const season = cropSeasons.find(s => s.id === seasonId);
-      if (season) {
-        setStartDate(season.start_date);
-        setEndDate(season.end_date || new Date().toISOString().split('T')[0]);
-      }
-    }
   };
 
   // Handle date selection from SmartTimeline
@@ -312,24 +262,34 @@ export const VegetationAnalytics: React.FC = () => {
     setAnalyzeError(null);
     setAnalyzeProgress(t('analyticsPage.processingHistoricDesc'));
 
+    // Derive date range from selected crop season
+    let start_date: string;
+    let end_date: string;
+    if (selectedSeasonId) {
+      const season = cropSeasons.find(s => s.id === selectedSeasonId);
+      start_date = season?.start_date || '';
+      const d = new Date();
+      end_date = season?.end_date || d.toISOString().split('T')[0];
+    } else {
+      const d = new Date();
+      d.setDate(d.getDate() - 30);
+      start_date = d.toISOString().split('T')[0];
+      end_date = new Date().toISOString().split('T')[0];
+    }
+
     try {
       const result = await api.analyzeParcel({
         entity_id: selectedEntityId,
-        start_date: startDate,
-        end_date: endDate,
+        start_date,
+        end_date,
         custom_formulas: selectedCustomFormulaIds,
       });
-      setDownloadJobId(result.job_id);
+      setAnalysisJobId(result.job_id);
     } catch (err: any) {
       const msg = err?.response?.data?.detail || err?.message || t('errors.serverError');
       setAnalyzeError(typeof msg === 'string' ? msg : JSON.stringify(msg));
       setIsAnalyzing(false);
     }
-  };
-
-  const getIndexDisplayName = (indexKey: string, result: any) => {
-    if (result?.is_custom) return result?.formula_name || indexKey;
-    return indexKey;
   };
 
   const handleValidateCustomFormula = async () => {
@@ -456,45 +416,32 @@ export const VegetationAnalytics: React.FC = () => {
           <p className="text-sm text-slate-500">{t('analyticsPage.analyticsDashboard')}</p>
         </div>
         <div className="flex items-center gap-3">
-          {/* Monitoring status badge */}
-          {!loadingSub && (
-            subscription ? (
-              <div className="flex items-center gap-2">
-                <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium ${
-                  subscription.is_active
-                    ? 'bg-emerald-100 text-emerald-700'
-                    : 'bg-amber-100 text-amber-700'
-                }`}>
-                  <Activity className="w-3 h-3" />
-                  {subscription.is_active
-                    ? t('analyticsPage.activeMonitoring')
-                    : t('analyticsPage.inactiveMonitoring')}
-                </span>
-                <button
-                  onClick={handleToggleMonitoring}
-                  disabled={togglingMonitoring}
-                  className={`p-1.5 rounded-lg transition-colors ${
-                    subscription.is_active
-                      ? 'text-amber-500 hover:bg-amber-50 hover:text-amber-700'
-                      : 'text-emerald-500 hover:bg-emerald-50 hover:text-emerald-700'
-                  }`}
-                  title={subscription.is_active
-                    ? t('monitoring.deactivate')
-                    : t('monitoring.activate')}
-                >
-                  <Power className={`w-4 h-4 ${togglingMonitoring ? 'animate-pulse' : ''}`} />
-                </button>
-              </div>
-            ) : (
-              <button
-                onClick={() => setShowSetupWizard(true)}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-emerald-600 text-white hover:bg-emerald-700 transition-colors"
-              >
-                <Activity className="w-3 h-3" />
-                {t('analyticsPage.configureMonitoring')}
-              </button>
-            )
+          {/* Monitoring status indicator */}
+          <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium ${
+            monitoringActive
+              ? 'bg-emerald-100 text-emerald-700'
+              : 'bg-slate-100 text-slate-500'
+          }`}>
+            <span className={`w-2 h-2 rounded-full inline-block ${
+              monitoringActive ? 'bg-emerald-500' : 'bg-slate-300'
+            }`} />
+            {monitoringActive
+              ? t('analyticsPage.activeMonitoring')
+              : t('analyticsPage.inactiveMonitoring')}
+          </span>
+          {monitoringActive && jobs.length > 0 && (
+            <span className="text-xs text-slate-400">
+              {t('analyticsPage.lastUpdate')}: {new Date(Math.max(...jobs.map(j => new Date(j.created_at).getTime()))).toLocaleDateString('es-ES', {
+                day: '2-digit', month: 'short', year: 'numeric',
+              })}
+            </span>
           )}
+          <button
+            onClick={() => setShowSetupWizard(true)}
+            className="text-xs text-emerald-600 hover:text-emerald-800 underline"
+          >
+            {t('analyticsPage.configureMonitoring')}
+          </button>
           <button
             onClick={() => setSelectedEntityId(null)}
             className="text-sm text-slate-500 hover:text-slate-700 underline"
@@ -558,159 +505,6 @@ export const VegetationAnalytics: React.FC = () => {
             </h3>
           </div>
 
-          {/* Date range */}
-          <div className="flex items-center gap-3 flex-wrap">
-            <div className="flex items-center gap-2">
-              <label className="text-xs text-slate-500">{t('analyticsPage.from')}</label>
-              <input
-                type="date"
-                value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
-                className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 focus:ring-emerald-500 focus:border-emerald-500"
-              />
-            </div>
-            <div className="flex items-center gap-2">
-              <label className="text-xs text-slate-500">{t('analyticsPage.to')}</label>
-              <input
-                type="date"
-                value={endDate}
-                onChange={(e) => setEndDate(e.target.value)}
-                className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 focus:ring-emerald-500 focus:border-emerald-500"
-              />
-            </div>
-          </div>
-
-          {/* Custom indices: visible before running analysis (simple flow) */}
-          <div className="rounded-xl border border-emerald-100 bg-gradient-to-br from-emerald-50/90 to-slate-50/80 p-4 space-y-3">
-            <div className="flex items-start justify-between gap-2">
-              <div className="flex items-center gap-2 min-w-0">
-                <Beaker className="w-5 h-5 text-emerald-600 shrink-0" />
-                <div>
-                  <p className="text-sm font-semibold text-slate-800">{t('analyticsPage.customIndex')}</p>
-                  <p className="text-xs text-slate-600 mt-0.5 leading-relaxed">{t('analyticsPage.customIndicesHint')}</p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowCustomCreator((v) => !v)}
-                className="text-xs font-semibold text-emerald-700 hover:text-emerald-900 whitespace-nowrap shrink-0"
-              >
-                {showCustomCreator ? t('common.close') : t('analyticsPage.createNewFormula')}
-              </button>
-            </div>
-
-            <div className="space-y-2">
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-xs font-medium text-slate-600">{t('analyticsPage.savedFormulas')}</span>
-                {selectedCustomFormulaIds.length > 0 && (
-                  <span className="text-xs text-emerald-700 font-medium">
-                    {t('analyticsPage.customSelectedCount', { count: selectedCustomFormulaIds.length })}
-                  </span>
-                )}
-              </div>
-              {customFormulas.length === 0 ? (
-                <p className="text-xs text-slate-500">{t('analyticsPage.noSavedFormulas')}</p>
-              ) : (
-                <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
-                  {customFormulas.map((formula) => (
-                    <label
-                      key={formula.id}
-                      className="flex items-center gap-3 px-3 py-2 rounded-lg bg-white border border-slate-200/80 cursor-pointer hover:border-emerald-200"
-                    >
-                      <input
-                        type="checkbox"
-                        className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
-                        checked={selectedCustomFormulaIds.includes(formula.id)}
-                        onChange={(e) => {
-                          setSelectedCustomFormulaIds((prev) =>
-                            e.target.checked
-                              ? Array.from(new Set([...prev, formula.id]))
-                              : prev.filter((id) => id !== formula.id),
-                          );
-                        }}
-                      />
-                      <span className="text-sm text-slate-800 flex-1 truncate" title={formula.formula}>
-                        {formula.name}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          handleDeleteCustomFormula(formula.id);
-                        }}
-                        className="text-xs text-red-500 hover:text-red-700 shrink-0"
-                      >
-                        {t('common.delete')}
-                      </button>
-                    </label>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {showCustomCreator && (
-              <div className="space-y-3 pt-3 border-t border-emerald-100">
-                <p className="text-xs text-slate-600">{t('analyticsPage.customFormulaHelp')}</p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-xs text-slate-500">{t('analyticsPage.customName')}</label>
-                    <input
-                      type="text"
-                      value={customName}
-                      onChange={(e) => setCustomName(e.target.value)}
-                      className="mt-1 w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:ring-emerald-500 focus:border-emerald-500 bg-white"
-                      placeholder="NDMI"
-                    />
-                  </div>
-                  <div className="sm:col-span-2">
-                    <label className="text-xs text-slate-500">{t('analyticsPage.customFormula')}</label>
-                    <input
-                      type="text"
-                      value={customFormula}
-                      onChange={(e) => setCustomFormula(e.target.value)}
-                      className="mt-1 w-full text-sm border border-slate-200 rounded-lg px-3 py-2 font-mono focus:ring-emerald-500 focus:border-emerald-500 bg-white"
-                      placeholder="(B08-B11)/(B08+B11)"
-                    />
-                  </div>
-                </div>
-                <div className="flex flex-wrap gap-1.5">
-                  {AVAILABLE_BANDS.map((band) => (
-                    <button
-                      key={band}
-                      type="button"
-                      onClick={() => setCustomFormula((prev) => (prev ? `${prev}${band}` : band))}
-                      className="px-2 py-0.5 text-xs bg-white border border-slate-200 rounded-md text-slate-600 hover:border-emerald-300 hover:text-emerald-800"
-                    >
-                      {band}
-                    </button>
-                  ))}
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={handleValidateCustomFormula}
-                    disabled={customBusy || !customFormula.trim()}
-                    className="px-3 py-1.5 rounded-lg border border-slate-200 text-sm hover:bg-white disabled:opacity-50"
-                  >
-                    {t('analyticsPage.validateFormula')}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleCreateAndAttachFormula}
-                    disabled={customBusy || !customFormula.trim() || !customName.trim() || !selectedEntityId}
-                    className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-sm hover:bg-emerald-700 disabled:opacity-50"
-                  >
-                    {t('analyticsPage.saveAndRunAnalysis')}
-                  </button>
-                </div>
-                {customValidationMsg && <p className="text-xs text-emerald-600">{customValidationMsg}</p>}
-                {customError && <p className="text-xs text-red-600">{customError}</p>}
-              </div>
-            )}
-            {customError && !showCustomCreator && (
-              <p className="text-xs text-red-600">{customError}</p>
-            )}
-          </div>
 
           {/* Analyze button */}
           <div className="flex items-center gap-3">
@@ -756,124 +550,21 @@ export const VegetationAnalytics: React.FC = () => {
         onDateSelect={handleDateSelect}
       />
 
-      {/* Unified analysis table */}
-      {hasResults && (
+      {/* Quick stats */}
+      {hasResults && indexResults[effectiveIndex]?.statistics && (
         <Card padding="md">
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-semibold text-slate-800">{t('analyticsPage.analysisResults')}</h3>
-              <button
-                onClick={loadResults}
-                disabled={loadingResults}
-                className="p-1 text-slate-400 hover:text-emerald-600"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 ${loadingResults ? 'animate-spin' : ''}`} />
-              </button>
-            </div>
-            <div className="overflow-x-auto rounded-lg border border-slate-200">
-              <table className="min-w-full text-sm">
-                <thead className="bg-slate-50 text-slate-600">
-                  <tr>
-                    <th className="px-3 py-2 text-left">{t('analyticsPage.index')}</th>
-                    <th className="px-3 py-2 text-right">{t('analytics.mean')}</th>
-                    <th className="px-3 py-2 text-right">{t('analytics.min')}</th>
-                    <th className="px-3 py-2 text-right">{t('analytics.max')}</th>
-                    <th className="px-3 py-2 text-right">{t('analytics.stdDev')}</th>
-                    <th className="px-3 py-2 text-center">{t('analyticsPage.viewMap')}</th>
-                    <th className="px-3 py-2 text-center">{t('common.export')}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {Object.entries(indexResults).map(([key, result]) => (
-                    <React.Fragment key={key}>
-                      <tr
-                        className="border-t border-slate-100 hover:bg-slate-50 cursor-pointer"
-                        onClick={() => setExpandedIndexKey(prev => (prev === key ? null : key))}
-                      >
-                        <td className="px-3 py-2 font-medium text-slate-800">
-                          {getIndexDisplayName(key, result)}
-                          {result?.is_custom ? <span className="ml-1 text-xs text-emerald-600">*</span> : null}
-                        </td>
-                        <td className="px-3 py-2 text-right">{result.statistics.mean != null ? result.statistics.mean.toFixed(3) : '-'}</td>
-                        <td className="px-3 py-2 text-right">{result.statistics.min != null ? result.statistics.min.toFixed(3) : '-'}</td>
-                        <td className="px-3 py-2 text-right">{result.statistics.max != null ? result.statistics.max.toFixed(3) : '-'}</td>
-                        <td className="px-3 py-2 text-right">{result.statistics.std_dev != null ? result.statistics.std_dev.toFixed(3) : '-'}</td>
-                        <td className="px-3 py-2 text-center">
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              const mapKey = result.index_key || key;
-                              setSelectedIndex(mapKey);
-                              setActiveJobId(result.job_id);
-                              setActiveRasterPath(result.raster_path ?? null);
-                              if (result.scene_id) {
-                                setSelectedSceneId(result.scene_id);
-                                if (result.sensing_date) {
-                                  setSelectedDate(new Date(result.sensing_date));
-                                }
-                              }
-                            }}
-                            className="inline-flex items-center gap-1 px-2 py-1 rounded border border-slate-200 text-slate-600 hover:bg-slate-100"
-                          >
-                            <Map className="w-3 h-3" />
-                            {t('analyticsPage.viewMap')}
-                          </button>
-                        </td>
-                        <td className="px-3 py-2 text-center">
-                          {result.index_type === 'VRA_ZONES' ? (
-                            <div className="relative inline-flex">
-                              <select
-                                onChange={(e) => {
-                                  e.stopPropagation();
-                                  const fmt = e.target.value as 'geojson' | 'shapefile' | 'csv';
-                                  if (fmt) handleExportResult(fmt);
-                                  e.target.value = '';
-                                }}
-                                disabled={exportingFormat !== null}
-                                className="text-xs border border-slate-200 rounded px-1 py-1 text-slate-500 bg-white cursor-pointer disabled:opacity-50"
-                                defaultValue=""
-                              >
-                                <option value="" disabled>{t('prescription.exportFormats')}</option>
-                                <option value="geojson">{t('prescription.geojson')}</option>
-                                <option value="shapefile">{t('prescription.shapefile')}</option>
-                                <option value="csv">{t('prescription.csv')}</option>
-                              </select>
-                            </div>
-                          ) : (
-                            <span className="text-xs text-slate-300">—</span>
-                          )}
-                        </td>
-                      </tr>
-                      {expandedIndexKey === key && selectedEntityId && (
-                        <tr className="border-t border-slate-100 bg-slate-50">
-                          <td className="px-3 py-3" colSpan={7}>
-                            <div className="flex items-center gap-2 mb-2 text-slate-600">
-                              <ChevronDown className="w-4 h-4" />
-                              <span className="text-xs">{t('analyticsPage.historicEvolution')}</span>
-                            </div>
-                            {result.is_custom ? (
-                              <div className="p-3 text-xs text-slate-500 bg-white rounded-lg border border-slate-200">
-                                {t('analyticsPage.customTimeseriesNotAvailable')}
-                              </div>
-                            ) : (
-                              <div className="h-56 bg-white rounded-lg border border-slate-200">
-                                <TimeseriesChart
-                                  entityId={selectedEntityId}
-                                  indexType={(result.index_type || key) as any}
-                                />
-                              </div>
-                            )}
-                          </td>
-                        </tr>
-                      )}
-                    </React.Fragment>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+          <div className="flex items-center gap-4 text-sm text-slate-700 flex-wrap">
+            <span><strong>{t('analytics.mean')}:</strong> {indexResults[effectiveIndex].statistics.mean?.toFixed(3) ?? '-'}</span>
+            <span className="text-slate-300">·</span>
+            <span><strong>{t('analytics.min')}:</strong> {indexResults[effectiveIndex].statistics.min?.toFixed(3) ?? '-'}</span>
+            <span className="text-slate-300">·</span>
+            <span><strong>{t('analytics.max')}:</strong> {indexResults[effectiveIndex].statistics.max?.toFixed(3) ?? '-'}</span>
+            <span className="text-slate-300">·</span>
+            <span><strong>N {t('analyticsPage.observations')}:</strong> {indexResults[effectiveIndex].statistics.pixel_count ?? '-'}</span>
           </div>
         </Card>
       )}
+
 
       {/* Empty state — no results and not analyzing */}
       {!hasResults && !isAnalyzing && !loadingResults && (
@@ -884,15 +575,13 @@ export const VegetationAnalytics: React.FC = () => {
             <p className="text-sm text-slate-400 max-w-md mx-auto mb-4">
               {t('analyticsPage.inactiveMonitoringDesc')}
             </p>
-            {!subscription && (
-              <button
-                onClick={() => setShowSetupWizard(true)}
-                className="inline-flex items-center gap-2 px-5 py-2.5 bg-emerald-600 text-white rounded-lg text-sm font-semibold hover:bg-emerald-700 transition-colors shadow-sm"
-              >
-                <Activity className="w-4 h-4" />
-                {t('analyticsPage.configureMonitoring')}
-              </button>
-            )}
+            <button
+              onClick={() => setShowSetupWizard(true)}
+              className="inline-flex items-center gap-2 px-5 py-2.5 bg-emerald-600 text-white rounded-lg text-sm font-semibold hover:bg-emerald-700 transition-colors shadow-sm"
+            >
+              <Activity className="w-4 h-4" />
+              {t('analyticsPage.configureMonitoring')}
+            </button>
           </div>
         </Card>
       )}
@@ -996,6 +685,189 @@ export const VegetationAnalytics: React.FC = () => {
             </table>
           </div>
         )}
+      </Card>
+
+      {/* Advanced Options */}
+      <Card padding="md">
+        <div className="space-y-3">
+          <button
+            onClick={() => setShowAdvanced(!showAdvanced)}
+            className="inline-flex items-center gap-2 text-sm font-semibold text-slate-700 hover:text-slate-900 transition-colors"
+          >
+            <ChevronDown className={`w-4 h-4 transition-transform ${showAdvanced ? 'rotate-180' : ''}`} />
+            ⚙️ {t('analyticsPage.advancedOptions')}
+          </button>
+
+          {showAdvanced && (
+            <div className="space-y-4 pt-2">
+              {/* Custom Formulas */}
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <Beaker className="w-4 h-4 text-emerald-600" />
+                  <span className="text-sm font-medium text-slate-700">{t('analyticsPage.customIndex')}</span>
+                </div>
+                <p className="text-xs text-slate-600">{t('analyticsPage.customIndicesHint')}</p>
+
+                {/* Saved formulas */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-medium text-slate-600">{t('analyticsPage.savedFormulas')}</span>
+                    {selectedCustomFormulaIds.length > 0 && (
+                      <span className="text-xs text-emerald-700 font-medium">
+                        {t('analyticsPage.customSelectedCount', { count: selectedCustomFormulaIds.length })}
+                      </span>
+                    )}
+                  </div>
+                  {customFormulas.length === 0 ? (
+                    <p className="text-xs text-slate-500">{t('analyticsPage.noSavedFormulas')}</p>
+                  ) : (
+                    <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
+                      {customFormulas.map((formula) => (
+                        <label
+                          key={formula.id}
+                          className="flex items-center gap-3 px-3 py-2 rounded-lg bg-white border border-slate-200/80 cursor-pointer hover:border-emerald-200"
+                        >
+                          <input
+                            type="checkbox"
+                            className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                            checked={selectedCustomFormulaIds.includes(formula.id)}
+                            onChange={(e) => {
+                              setSelectedCustomFormulaIds((prev) =>
+                                e.target.checked
+                                  ? Array.from(new Set([...prev, formula.id]))
+                                  : prev.filter((id) => id !== formula.id),
+                              );
+                            }}
+                          />
+                          <span className="text-sm text-slate-800 flex-1 truncate" title={formula.formula}>
+                            {formula.name}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              handleDeleteCustomFormula(formula.id);
+                            }}
+                            className="text-xs text-red-500 hover:text-red-700 shrink-0"
+                          >
+                            {t('common.delete')}
+                          </button>
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Formula creator toggle */}
+                <button
+                  type="button"
+                  onClick={() => setShowCustomCreator((v) => !v)}
+                  className="text-xs font-semibold text-emerald-700 hover:text-emerald-900"
+                >
+                  {showCustomCreator ? t('common.close') : t('analyticsPage.createNewFormula')}
+                </button>
+
+                {showCustomCreator && (
+                  <div className="space-y-3 pt-3 border-t border-slate-100">
+                    <p className="text-xs text-slate-600">{t('analyticsPage.customFormulaHelp')}</p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-xs text-slate-500">{t('analyticsPage.customName')}</label>
+                        <input
+                          type="text"
+                          value={customName}
+                          onChange={(e) => setCustomName(e.target.value)}
+                          className="mt-1 w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:ring-emerald-500 focus:border-emerald-500 bg-white"
+                          placeholder="NDMI"
+                        />
+                      </div>
+                      <div className="sm:col-span-2">
+                        <label className="text-xs text-slate-500">{t('analyticsPage.customFormula')}</label>
+                        <input
+                          type="text"
+                          value={customFormula}
+                          onChange={(e) => setCustomFormula(e.target.value)}
+                          className="mt-1 w-full text-sm border border-slate-200 rounded-lg px-3 py-2 font-mono focus:ring-emerald-500 focus:border-emerald-500 bg-white"
+                          placeholder="(B08-B11)/(B08+B11)"
+                        />
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {AVAILABLE_BANDS.map((band) => (
+                        <button
+                          key={band}
+                          type="button"
+                          onClick={() => setCustomFormula((prev) => (prev ? `${prev}${band}` : band))}
+                          className="px-2 py-0.5 text-xs bg-white border border-slate-200 rounded-md text-slate-600 hover:border-emerald-300 hover:text-emerald-800"
+                        >
+                          {band}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={handleValidateCustomFormula}
+                        disabled={customBusy || !customFormula.trim()}
+                        className="px-3 py-1.5 rounded-lg border border-slate-200 text-sm hover:bg-white disabled:opacity-50"
+                      >
+                        {t('analyticsPage.validateFormula')}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleCreateAndAttachFormula}
+                        disabled={customBusy || !customFormula.trim() || !customName.trim() || !selectedEntityId}
+                        className="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-sm hover:bg-emerald-700 disabled:opacity-50"
+                      >
+                        {t('analyticsPage.saveAndRunAnalysis')}
+                      </button>
+                    </div>
+                    {customValidationMsg && <p className="text-xs text-emerald-600">{customValidationMsg}</p>}
+                    {customError && <p className="text-xs text-red-600">{customError}</p>}
+                  </div>
+                )}
+                {customError && !showCustomCreator && (
+                  <p className="text-xs text-red-600">{customError}</p>
+                )}
+              </div>
+
+              {/* VRA Zoning + Export */}
+              <div className="flex items-center gap-3 pt-3 border-t border-slate-100">
+                <button
+                  onClick={() => {
+                    if (indexResults[effectiveIndex]) {
+                      setActiveJobId(indexResults[effectiveIndex].job_id);
+                      if (indexResults[effectiveIndex].raster_path) {
+                        setActiveRasterPath(indexResults[effectiveIndex].raster_path);
+                      }
+                    }
+                  }}
+                  disabled={!indexResults[effectiveIndex]}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  🗺 {t('analyticsPage.vraZoning')}
+                </button>
+                <div className="relative inline-flex">
+                  <select
+                    onChange={(e) => {
+                      const fmt = e.target.value as 'geojson' | 'shapefile' | 'csv';
+                      if (fmt) handleExportResult(fmt);
+                      e.target.value = '';
+                    }}
+                    disabled={exportingFormat !== null}
+                    className="text-xs border border-slate-200 rounded px-2 py-1.5 text-slate-600 bg-white cursor-pointer disabled:opacity-50"
+                    defaultValue=""
+                  >
+                    <option value="" disabled>{t('prescription.exportFormats')}</option>
+                    <option value="geojson">{t('prescription.geojson')}</option>
+                    <option value="shapefile">{t('prescription.shapefile')}</option>
+                    <option value="csv">{t('prescription.csv')}</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
       </Card>
 
       {/* Setup Wizard Modal */}

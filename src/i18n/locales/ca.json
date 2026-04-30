@@ -319,7 +319,13 @@
         "colorLegend": "Color legend",
         "hide": "Hide",
         "show": "Show",
-        "cloudCoverage": "Cloud coverage"
+        "cloudCoverage": "Cloud coverage",
+        "header": "Vegetation",
+        "noCropSeason": "No crop season assigned",
+        "configure": "Configure",
+        "vra": "VRA",
+        "active": "Active",
+        "inactive": "Inactive"
     },
     "monitoring": {
         "activate": "Activate monitoring",
@@ -365,7 +371,8 @@
         "categoryNutritionDesc": "Indices for nutrition and chlorophyll analysis",
         "categorySoil": "Soil/Water",
         "categorySoilDesc": "Indices for early stages and soil analysis",
-        "infoTooltip": "View index information"
+        "infoTooltip": "View index information",
+        "categoryManagement": "Management"
     },
     "cropSeason": {
         "title": "Configurar Temporada de Cultiu",
