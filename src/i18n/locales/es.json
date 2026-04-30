@@ -117,7 +117,8 @@
         "recentActivity": "Actividad Reciente",
         "noRecentActivity": "No hay actividad reciente.",
         "advancedConfig": "Configuración Avanzada",
-        "vegetationAnalysis": "Análisis de Vegetación"
+        "vegetationAnalysis": "Análisis de Vegetación",
+        "analyzeFirstTime": "Analizar con satélite"
     },
     "prescription": {
         "title": "Mapas de Prescripción",
@@ -138,6 +139,7 @@
         "exporting": "Exportando...",
         "exportSuccess": "Exportado correctamente: {{filename}}",
         "exportError": "Error al exportar. Inténtalo de nuevo.",
+        "noVraData": "No hay datos VRA. Ejecuta zonificación primero.",
         "viewOnMap": "Ver en el mapa"
     },
     "export": {
@@ -160,6 +162,7 @@
         "title": "Zonificación de Parcelas",
         "managementZones": "Zonas de Manejo",
         "generateZones": "Generar Zonas",
+        "failed": "Zonificación fallida",
         "numZones": "Número de Zonas",
         "saveAsParcel": "Guardar como Parcela",
         "vraReady": "Listo para Aplicación Variable",
@@ -303,7 +306,8 @@
         "analysisNote": "Sentinel-2 pasa cada ~5 días. Los resultados dependen de la disponibilidad de imágenes sin nubes.",
         "vraZoning": "Zonificar VRA",
         "observations": "observaciones",
-        "advancedOptions": "Opciones avanzadas"
+        "advancedOptions": "Opciones avanzadas",
+        "openInViewer": "Abrir en visor 3D"
     },
     "errors": {
         "loadFailed": "Error al cargar datos",
