@@ -516,7 +516,7 @@ export const VegetationAnalytics: React.FC = () => {
               className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 focus:ring-emerald-500 focus:border-emerald-500 bg-white min-w-[200px]"
             >
               <option value="">{t('cropSeason.allSeasons')}</option>
-              {cropSeasons.map((season) => {
+              {(Array.isArray(cropSeasons) ? cropSeasons : []).map((season) => {
                 const label = `${season.crop_type} ${season.start_date} - ${season.end_date || t('cropSeason.endDateHelp')}`;
                 return (
                   <option key={season.id} value={season.id}>
@@ -544,7 +544,7 @@ export const VegetationAnalytics: React.FC = () => {
         <IndexPillSelector
           selectedIndex={effectiveIndex}
           onIndexChange={(idx) => setSelectedIndex(idx)}
-          customIndexOptions={customFormulas.map(f => ({ key: f.id, label: f.name }))}
+          customIndexOptions={(Array.isArray(customFormulas) ? customFormulas : []).map(f => ({ key: f.id, label: f.name }))}
         />
       </Card>
 
@@ -930,7 +930,7 @@ export const VegetationAnalytics: React.FC = () => {
                 </tr>
               </thead>
               <tbody>
-                {[...jobs]
+                {[...(Array.isArray(jobs) ? jobs : [])]
                   .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
                   .map((job) => {
                     const statusClass = job.status === 'completed'
