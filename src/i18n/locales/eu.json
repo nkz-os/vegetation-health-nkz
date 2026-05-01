@@ -307,7 +307,8 @@
         "vraZoning": "VRA Zoning",
         "observations": "observations",
         "advancedOptions": "Advanced options",
-        "openInViewer": "Open in 3D viewer"
+        "openInViewer": "Open in 3D viewer",
+        "useInGuidance": "Gidatzeko erabili"
     },
     "errors": {
         "loadFailed": "Errorea datuak kargatzean",
