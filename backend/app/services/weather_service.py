@@ -20,7 +20,7 @@ import httpx
 logger = logging.getLogger(__name__)
 
 # Configuration
-WEATHER_MODULE_URL = os.getenv("WEATHER_MODULE_URL", "http://weather-worker:8000")
+WEATHER_MODULE_URL = os.getenv("WEATHER_MODULE_URL", "http://timeseries-reader-service:5000")
 ORION_LD_URL = os.getenv("ORION_LD_URL", "http://orion-ld:1026")
 
 
