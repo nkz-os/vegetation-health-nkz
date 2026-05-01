@@ -64,20 +64,67 @@ class ZoningAlgorithm:
         
         return output_labels, centroids
 
-    def vectorize_zones(self, label_img: np.ndarray, transform):
+    def vectorize_zones(self, label_img: np.ndarray, transform, ndvi_data: np.ndarray, centroids: np.ndarray):
         """
-        Converts clustering result to GeoJSON polygons.
+        Converts clustering result to GeoJSON polygons with enriched properties:
+        zone_id, cluster_id, zone_class, mean_value, area_ha.
+
+        zone_class is computed from per-zone mean NDVI relative to centroid order:
+          - Highest centroid → "high"
+          - Middle centroid(s) → "medium"
+          - Lowest centroid → "low"
         """
-        # Ensure label_img is int32 for shapes
+        from shapely.geometry import shape as shapely_shape
+
         label_img_int = label_img.astype(np.int32)
         mask = label_img_int != -1
-        
-        results = (
-            {'properties': {'cluster_id': int(v)}, 'geometry': s}
-            for i, (s, v)
-            in enumerate(shapes(label_img_int, mask=mask, transform=transform))
-        )
-        return list(results)
+
+        # Sort zone IDs by their centroid (ascending NDVI)
+        centroid_vals = centroids.flatten()
+        sorted_zones = np.argsort(centroid_vals)
+        n_zones = len(sorted_zones)
+        zone_class_map: dict = {}
+        for rank, zone_id in enumerate(sorted_zones):
+            if n_zones == 1:
+                zone_class_map[int(zone_id)] = "medium"
+            elif rank == 0:
+                zone_class_map[int(zone_id)] = "low"
+            elif rank == n_zones - 1:
+                zone_class_map[int(zone_id)] = "high"
+            else:
+                zone_class_map[int(zone_id)] = "medium"
+
+        def _compute_area_ha(geom: dict) -> float:
+            try:
+                s = shapely_shape(geom)
+                # Transform from degrees to meters approximation
+                return s.area * 111319.9 * 111319.9 * 0.0001  # rough m² → ha
+            except Exception:
+                return 0.0
+
+        features = []
+        for i, (s, v) in enumerate(shapes(label_img_int, mask=mask, transform=transform)):
+            zone_id = int(v)
+            zone_mask = label_img_int == zone_id
+            zone_pixels = ndvi_data[zone_mask]
+            mean_val = float(np.nanmean(zone_pixels)) if len(zone_pixels) > 0 else 0.0
+            pixel_area_ha = (abs(transform[0]) * abs(transform[4])) / 10000  # m²/px → ha
+            area_ha = float(np.count_nonzero(zone_mask)) * pixel_area_ha
+            zone_class = zone_class_map.get(zone_id, "medium")
+            prescription_rate = 1.0 + (mean_val - 0.3) * 0.5  # simple linear mapping
+
+            features.append({
+                'properties': {
+                    'zone_id': zone_id,
+                    'cluster_id': zone_id,
+                    'zone_class': zone_class,
+                    'mean_value': round(mean_val, 4),
+                    'area_ha': round(area_ha, 2),
+                    'prescription_rate': round(max(0.5, min(2.0, prescription_rate)), 2),
+                },
+                'geometry': s,
+            })
+        return features
 
     async def generate_zones(self, parcel_id: str, n_zones: int=3):
         """
@@ -136,19 +183,19 @@ class ZoningAlgorithm:
                 logger.warning("Clustering failed or yielded no results")
                 return {"status": "error", "message": "Clustering failed"}
 
-            # 3. Vectorize
-            vectors = self.vectorize_zones(labels, transform)
-            
+            # 3. Vectorize — pass NDVI data for per-zone statistics
+            vectors = self.vectorize_zones(labels, transform, ndvi_data, centroids)
+
             if not vectors:
                 logger.warning("No zones generated")
                 return {"status": "error", "message": "No zones generated after vectorization"}
         finally:
             db.close()
 
-        # 4. Upload to Orion
+        # 4. Upload to Orion — enriched with zoneClass and prescriptionRate
         for zone in vectors:
-            cluster_val = zone['properties']['cluster_id']
-            zone_id = f"urn:ngsi-ld:AgriManagementZone:{parcel_id.split(':')[-1]}:Z{cluster_val}"
+            props = zone['properties']
+            zone_id = f"urn:ngsi-ld:AgriManagementZone:{parcel_id.split(':')[-1]}:Z{props['zone_id']}"
             entity = {
                 "id": zone_id,
                 "type": "AgriManagementZone",
@@ -162,7 +209,23 @@ class ZoningAlgorithm:
                 },
                 "zoneName": {
                     "type": "Property",
-                    "value": f"Zone {cluster_val + 1}"
+                    "value": f"Zone {props['zone_id'] + 1}"
+                },
+                "zoneId": {
+                    "type": "Property",
+                    "value": props['zone_id']
+                },
+                "zoneClass": {
+                    "type": "Property",
+                    "value": props['zone_class']
+                },
+                "prescriptionRate": {
+                    "type": "Property",
+                    "value": props['prescription_rate']
+                },
+                "areaHa": {
+                    "type": "Property",
+                    "value": props['area_ha']
                 },
                 "variableAttribute": {
                     "type": "Property",

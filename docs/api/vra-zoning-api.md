@@ -67,7 +67,12 @@ Returns the **complete GeoJSON FeatureCollection** from the most recent complete
     {
       "type": "Feature",
       "properties": {
-        "cluster_id": 0
+        "zone_id": 0,
+        "cluster_id": 0,
+        "zone_class": "low",
+        "mean_value": 0.2145,
+        "area_ha": 2.85,
+        "prescription_rate": 0.96
       },
       "geometry": {
         "type": "Polygon",
@@ -77,7 +82,27 @@ Returns the **complete GeoJSON FeatureCollection** from the most recent complete
     {
       "type": "Feature",
       "properties": {
-        "cluster_id": 1
+        "zone_id": 1,
+        "cluster_id": 1,
+        "zone_class": "medium",
+        "mean_value": 0.4521,
+        "area_ha": 4.12,
+        "prescription_rate": 1.08
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[lon, lat], [lon, lat], ...]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "zone_id": 2,
+        "cluster_id": 2,
+        "zone_class": "high",
+        "mean_value": 0.6834,
+        "area_ha": 3.51,
+        "prescription_rate": 1.19
       },
       "geometry": {
         "type": "Polygon",
@@ -238,7 +263,12 @@ Every zoning feature returned by the API follows this contract:
 {
   "type": "Feature",
   "properties": {
-    "cluster_id": 0
+    "zone_id": 1,
+    "cluster_id": 1,
+    "zone_class": "medium",
+    "mean_value": 0.4521,
+    "area_ha": 4.12,
+    "prescription_rate": 1.08
   },
   "geometry": {
     "type": "Polygon",
@@ -251,16 +281,25 @@ Every zoning feature returned by the API follows this contract:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `properties.cluster_id` | integer | Zone index (0 to n_zones-1). Each cluster_id represents one management zone. The mapping from cluster_id to vigor level depends on the sorting of centroid values. |
-| `geometry.type` | string | Always `"Polygon"` in current implementation. `MultiPolygon` is theoretically possible depending on raster topology, but rare. |
-| `geometry.coordinates` | array | WGS 84 `[longitude, latitude]` pairs. Outer ring is counterclockwise (per GeoJSON spec). |
+| `properties.zone_id` | integer | Zone index (0 to n_zones-1). Primary identifier for GIS/machinery integration. |
+| `properties.cluster_id` | integer | K-means cluster label. Equivalent to `zone_id`. |
+| `properties.zone_class` | string | Vigor class: `"low"`, `"medium"`, `"high"`. Based on centroid-ordered NDVI values. |
+| `properties.mean_value` | number | Mean NDVI for this zone, rounded to 4 decimals. |
+| `properties.area_ha` | number | Zone area in hectares (approximate, from pixel count). |
+| `properties.prescription_rate` | number | Input rate multiplier (0.5 to 2.0). Low vigor → reduce, high vigor → increase. |
+| `geometry.type` | string | Always `"Polygon"` in current implementation. |
+| `geometry.coordinates` | array | WGS 84 `[longitude, latitude]` pairs. Outer ring is counterclockwise. |
 
-**Coordinate precision:** Coordinates are stored as native 64-bit floats from raster reprojection. Typical precision is 6-7 decimal places (~10 cm at the equator).
+**Vigor to prescription mapping:**
+- `"low"` → `prescription_rate < 1.0` (reduce inputs)
+- `"medium"` → `prescription_rate ≈ 1.0` (baseline)
+- `"high"` → `prescription_rate > 1.0` (increase inputs)
+
+**Coordinate precision:** 6-7 decimal places (~10 cm at the equator).
 
 **Consuming notes:**
-
-- Zone 0 is the lowest cluster_id but NOT necessarily the lowest vigor. The algorithm assigns cluster IDs arbitrarily (K-means centroid labels). To determine vigor ordering, sort zones by the centroid value (available from the source raster statistics via job result or by computing zonal statistics on the GeoJSON itself).
-- Adjacent zones with the same cluster_id in the raster are merged during vectorization (`rasterio.features.shapes`). A single feature may therefore cover disconnected areas; use `geometry.type` to verify.
+- `zone_id` starts at 0 for the lowest-vigor zone and increments to n_zones-1 for the highest.
+- Adjacent zones with the same cluster_id are merged during vectorization. A feature may cover disconnected areas.
 
 ---
 
@@ -322,6 +361,22 @@ urn:ngsi-ld:AgriManagementZone:abc123:Z0
   "zoneName": {
     "type": "Property",
     "value": "Zone 1"
+  },
+  "zoneId": {
+    "type": "Property",
+    "value": 0
+  },
+  "zoneClass": {
+    "type": "Property",
+    "value": "low"
+  },
+  "prescriptionRate": {
+    "type": "Property",
+    "value": 0.96
+  },
+  "areaHa": {
+    "type": "Property",
+    "value": 2.85
   },
   "variableAttribute": {
     "type": "Property",
