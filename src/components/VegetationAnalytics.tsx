@@ -624,7 +624,15 @@ export const VegetationAnalytics: React.FC = () => {
 
       {/* VRA + Export — visible only when data exists */}
       {hasResults && (
-        <div className="flex items-center gap-2 justify-end">
+        <div className="flex items-center gap-2 justify-end flex-wrap">
+          <a
+            href={`/module/gis-routing?entityId=${encodeURIComponent(selectedEntityId)}`}
+            className="text-xs text-emerald-600 hover:text-emerald-800 font-medium"
+            title={t('analyticsPage.useInGuidance')}
+          >
+            🚜 {t('analyticsPage.useInGuidance')}
+          </a>
+          <span className="text-slate-200">|</span>
           <button
             onClick={() => setSelectedIndex('VRA_ZONES')}
             className="text-xs text-slate-500 hover:text-emerald-600"
