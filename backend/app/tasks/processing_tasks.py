@@ -281,14 +281,14 @@ def calculate_vegetation_index(
             logger.info(f"Single scene mode: {scene_id}")
             self.update_state(state="PROGRESS", meta={"progress": 10, "message": "Loading scene"})
 
-            scene = (
-                db.query(VegetationScene)
-                .filter(
-                    VegetationScene.id == uuid.UUID(scene_id),
-                    VegetationScene.tenant_id == tenant_id,
-                )
-                .first()
+            # scene_id can be a UUID (from DB) or a Sentinel-2 product ID (from API)
+            scene_query = db.query(VegetationScene).filter(
+                VegetationScene.tenant_id == tenant_id,
             )
+            try:
+                scene = scene_query.filter(VegetationScene.id == uuid.UUID(scene_id)).first()
+            except (ValueError, AttributeError):
+                scene = scene_query.filter(VegetationScene.scene_id == scene_id).first()
 
             if not scene:
                 raise ValueError(f"Scene {scene_id} not found")
