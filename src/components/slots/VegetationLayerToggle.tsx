@@ -5,8 +5,12 @@
 
 import React from 'react';
 import { Leaf } from 'lucide-react';
+import { SlotShellCompact } from '@nekazari/viewer-kit';
+import { Toggle } from '@nekazari/ui-kit';
 import { useVegetationContext } from '../../services/vegetationContext';
 import { useTranslation } from '@nekazari/sdk';
+
+const vegetationAccent = { base: '#65A30D', soft: '#ECFCCB', strong: '#4D7C0F' };
 
 const VegetationLayerToggle: React.FC = () => {
   const { t } = useTranslation();
@@ -17,26 +21,20 @@ const VegetationLayerToggle: React.FC = () => {
   if (!selectedEntityId) return null;
 
   return (
-    <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/90 border border-slate-200/50 shadow-sm pointer-events-auto">
-      <Leaf className="w-4 h-4 text-green-600" />
-      <span className="text-sm font-medium text-slate-700">{t('layerToggle.label')}</span>
-      {hasLayer && (
-        <label className="ml-auto relative inline-flex items-center cursor-pointer">
-          <input
-            type="checkbox"
-            checked={layerVisible}
-            onChange={(e) => setLayerVisible(e.target.checked)}
-            className="sr-only peer"
-          />
-          <div className="w-9 h-5 bg-gray-300 rounded-full peer-checked:bg-green-500 peer-focus:ring-2 peer-focus:ring-green-300 after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-full"
-            title={layerVisible ? t('layerToggle.hide') : t('layerToggle.show')}
-          />
-        </label>
-      )}
-      {!hasLayer && (
-        <span className="ml-auto text-xs text-slate-400">{t('layerToggle.noData')}</span>
-      )}
-    </div>
+    <SlotShellCompact moduleId="vegetation-prime" accent={vegetationAccent}>
+      <div className="flex items-center gap-nkz-inline">
+        <Leaf className="w-4 h-4 text-nkz-accent-base" />
+        <Toggle
+          checked={layerVisible}
+          onChange={setLayerVisible}
+          label={t('layerToggle.label')}
+          disabled={!hasLayer}
+        />
+        {!hasLayer && (
+          <span className="text-nkz-xs text-nkz-text-muted">{t('layerToggle.noData')}</span>
+        )}
+      </div>
+    </SlotShellCompact>
   );
 };
 
