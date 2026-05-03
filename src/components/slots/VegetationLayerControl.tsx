@@ -4,14 +4,17 @@
  */
 
 import React, { useEffect, useState } from 'react';
+import { Leaf, Download, Map, Beaker } from 'lucide-react';
+import { SlotShell } from '@nekazari/viewer-kit';
+import { Stack, Slider, Button, Badge, Spinner } from '@nekazari/ui-kit';
 import { useTranslation, useViewer } from '@nekazari/sdk';
-import { useUIKit } from '../../hooks/useUIKit';
 import { useVegetationContext } from '../../services/vegetationContext';
 import { useVegetationApi } from '../../services/api';
 
+const vegetationAccent = { base: '#65A30D', soft: '#ECFCCB', strong: '#4D7C0F' };
+
 const VegetationLayerControl: React.FC = () => {
   const { t } = useTranslation();
-  const { Card } = useUIKit();
   const { setCurrentDate } = useViewer();
 
   const {
@@ -191,57 +194,54 @@ const VegetationLayerControl: React.FC = () => {
 
   if (!selectedEntityId) {
     return (
-      <Card padding="md" className="bg-white/90 backdrop-blur-md border border-slate-200/50 rounded-xl w-full">
-        <div className="flex items-center justify-center gap-2 py-4 text-slate-500">
-          <p>{t('layerControl.selectParcel', 'Selecciona una parcela para ver capas')}</p>
+      <SlotShell moduleId="vegetation-prime" accent={vegetationAccent}>
+        <div className="flex items-center justify-center gap-nkz-inline py-nkz-section text-nkz-text-muted">
+          <p className="text-nkz-sm">{t('layerControl.selectParcel', 'Selecciona una parcela para ver capas')}</p>
         </div>
-      </Card>
+      </SlotShell>
     );
   }
 
   return (
-    <Card padding="md" className="bg-white/90 backdrop-blur-md border border-slate-200/50 rounded-xl w-full max-w-[320px] shadow-lg pointer-events-auto">
-      <div className="space-y-4">
-        {/* Header */}
-        <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-          <h3 className="font-semibold text-slate-800 flex items-center gap-2">
-            🌿 {t('layerControl.header', 'Vegetación')}
-          </h3>
-          <span className="text-xs text-slate-500 font-mono">
+    <SlotShell
+      title="Vegetación"
+      icon={<Leaf className="w-4 h-4" />}
+      collapsible
+      accent={vegetationAccent}
+    >
+      <Stack gap="stack">
+        {/* Header info bar */}
+        <div className="flex items-center justify-between">
+          <span className="text-nkz-xs text-nkz-text-muted font-mono">
             {selectedEntityId.split(':').pop()}
           </span>
         </div>
 
         {/* Opacity */}
-        <div className="space-y-1">
-          <div className="flex justify-between text-xs text-slate-600">
-            <span>{t('layerControl.opacity', 'Opacidad')}</span>
-            <span>{opacity}%</span>
-          </div>
-          <input
-            type="range"
-            min="0"
-            max="100"
-            value={opacity}
-            onChange={(e) => setOpacity(parseInt(e.target.value))}
-            className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-green-600"
-          />
-        </div>
+        <Slider
+          value={opacity}
+          onChange={setOpacity}
+          min={0}
+          max={100}
+          step={1}
+          label={t('layerControl.opacity', 'Opacidad')}
+          unit="%"
+        />
 
         {/* Crop Season */}
-        <div className="space-y-2 pt-2 border-t border-slate-100">
-          <label className="text-xs font-medium text-slate-600 uppercase tracking-wider">
+        <div className="space-y-nkz-tight pt-nkz-stack border-t border-nkz-border">
+          <label className="text-nkz-xs font-semibold uppercase tracking-wider text-nkz-text-muted">
             {t('cropSeason.title', 'Campaña')}
           </label>
           {loadingSeason ? (
-            <p className="text-sm text-slate-400">...</p>
+            <Spinner size="sm" />
           ) : cropSeason ? (
-            <p className="text-sm text-slate-700">
+            <p className="text-nkz-sm text-nkz-text-primary">
               {t(`cropSeason.${cropSeason.crop_type}`, cropSeason.crop_type)}
               {' '}{cropSeason.start_date} – {cropSeason.end_date || '...'}
             </p>
           ) : (
-            <p className="text-sm text-slate-500">
+            <p className="text-nkz-sm text-nkz-text-muted">
               {t('layerControl.noCropSeason', 'Sin campaña asignada')}
             </p>
           )}
@@ -249,26 +249,26 @@ const VegetationLayerControl: React.FC = () => {
 
         {/* Quick Stats */}
         {activeStats && Object.keys(indexResults).length > 0 && (
-          <div className="space-y-2 pt-2 border-t border-slate-100">
-            <label className="text-xs font-medium text-slate-600 uppercase tracking-wider">
+          <div className="space-y-nkz-tight pt-nkz-stack border-t border-nkz-border">
+            <label className="text-nkz-xs font-semibold uppercase tracking-wider text-nkz-text-muted">
               {t('analyticsPage.quickStats', 'Estadísticas rápidas')}
             </label>
-            <div className="grid grid-cols-3 gap-2">
-              <div className="bg-slate-50 rounded-lg p-2 text-center">
-                <div className="text-xs text-slate-500">{t('analytics.mean', 'Media')}</div>
-                <div className="text-sm font-semibold text-slate-800">
+            <div className="grid grid-cols-3 gap-nkz-inline">
+              <div className="bg-nkz-surface-sunken rounded-nkz-md p-nkz-inline text-center">
+                <div className="text-nkz-xs text-nkz-text-muted">{t('analytics.mean', 'Media')}</div>
+                <div className="text-nkz-sm font-semibold text-nkz-text-primary">
                   {activeStats.mean?.toFixed(3) ?? '—'}
                 </div>
               </div>
-              <div className="bg-slate-50 rounded-lg p-2 text-center">
-                <div className="text-xs text-slate-500">{t('analytics.min', 'Mínimo')}</div>
-                <div className="text-sm font-semibold text-slate-800">
+              <div className="bg-nkz-surface-sunken rounded-nkz-md p-nkz-inline text-center">
+                <div className="text-nkz-xs text-nkz-text-muted">{t('analytics.min', 'Mínimo')}</div>
+                <div className="text-nkz-sm font-semibold text-nkz-text-primary">
                   {activeStats.min?.toFixed(3) ?? '—'}
                 </div>
               </div>
-              <div className="bg-slate-50 rounded-lg p-2 text-center">
-                <div className="text-xs text-slate-500">{t('analytics.max', 'Máximo')}</div>
-                <div className="text-sm font-semibold text-slate-800">
+              <div className="bg-nkz-surface-sunken rounded-nkz-md p-nkz-inline text-center">
+                <div className="text-nkz-xs text-nkz-text-muted">{t('analytics.max', 'Máximo')}</div>
+                <div className="text-nkz-sm font-semibold text-nkz-text-primary">
                   {activeStats.max?.toFixed(3) ?? '—'}
                 </div>
               </div>
@@ -277,44 +277,52 @@ const VegetationLayerControl: React.FC = () => {
         )}
 
         {/* Monitoring Indicator */}
-        <div className="flex items-center gap-2 pt-2 border-t border-slate-100">
-          <span className={`w-2.5 h-2.5 rounded-full ${monitoringActive ? 'bg-emerald-500' : 'bg-slate-300'}`} />
-          <span className="text-sm text-slate-500">
+        <div className="pt-nkz-stack border-t border-nkz-border">
+          <Badge intent={monitoringActive ? 'positive' : 'default'}>
             {monitoringActive
               ? t('layerControl.active', 'Activa')
               : t('layerControl.inactive', 'Inactiva')}
-          </span>
+          </Badge>
         </div>
 
         {/* Action Buttons */}
-        <div className="flex gap-2 pt-2 border-t border-slate-100">
-          <button
-            className="flex-1 px-3 py-2 text-sm font-medium text-white bg-green-600 hover:bg-green-700 rounded-lg transition-colors disabled:opacity-50"
+        <div className="flex gap-nkz-inline pt-nkz-stack border-t border-nkz-border">
+          <Button
+            variant="primary"
+            size="sm"
             onClick={handleAnalyze}
             disabled={analyzing}
+            leadingIcon={analyzing ? <Spinner size="sm" /> : <Beaker className="w-4 h-4" />}
           >
-            {analyzing ? '...' : '🔄'} {t('dashboard.analyze', 'Analizar')}
-          </button>
-          <button
-            className="flex-1 px-3 py-2 text-sm font-medium text-green-700 bg-green-50 hover:bg-green-100 rounded-lg transition-colors disabled:opacity-50"
+            {t('dashboard.analyze', 'Analizar')}
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
             onClick={handleVraZoning}
             disabled={zoningBusy}
+            leadingIcon={zoningBusy ? <Spinner size="sm" /> : <Map className="w-4 h-4" />}
           >
-            {zoningBusy ? '...' : '🗺'} {t('layerControl.vra', 'VRA')}
-          </button>
-          <button
-            className="flex-1 px-3 py-2 text-sm font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors disabled:opacity-50"
+            {t('layerControl.vra', 'VRA')}
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
             onClick={handleExport}
             disabled={exporting}
+            leadingIcon={<Download className="w-4 h-4" />}
           >
-            📥 {t('common.export', 'Exportar')}
-          </button>
+            {t('common.export', 'Exportar')}
+          </Button>
         </div>
+
         {ctrlError && (
-          <p className="text-xs text-red-600">{ctrlError}</p>
+          <Badge intent="negative" className="flex items-center gap-nkz-tight">
+            <span className="text-nkz-xs">{ctrlError}</span>
+          </Badge>
         )}
-      </div>
-    </Card>
+      </Stack>
+    </SlotShell>
   );
 };
 

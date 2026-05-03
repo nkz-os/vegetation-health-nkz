@@ -12,8 +12,10 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@nekazari/design-tokens": "^0.1.0-alpha",
     "@nekazari/sdk": "^1.0.3",
-    "@nekazari/ui-kit": "^1.0.0",
+    "@nekazari/ui-kit": "^1.0.2-alpha.0",
+    "@nekazari/viewer-kit": "^0.1.0-alpha",
     "axios": "^1.13.2",
     "i18next": "^23.11.0",
     "lucide-react": "^0.424.0",

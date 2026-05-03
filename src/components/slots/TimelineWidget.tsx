@@ -5,8 +5,9 @@
 
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { Calendar, BarChart3 } from 'lucide-react';
+import { SlotShell } from '@nekazari/viewer-kit';
+import { Stack, Badge } from '@nekazari/ui-kit';
 import { useViewer, useTranslation } from '@nekazari/sdk';
-import { useUIKit } from '../../hooks/useUIKit';
 import { useVegetationContext } from '../../services/vegetationContext';
 import { useVegetationApi } from '../../services/api';
 import { SceneStats } from '../../types';
@@ -17,10 +18,10 @@ interface TimelineWidgetProps {
   entityId?: string;
 }
 
+const vegetationAccent = { base: '#65A30D', soft: '#ECFCCB', strong: '#4D7C0F' };
+
 export const TimelineWidget: React.FC<TimelineWidgetProps> = ({ entityId }) => {
-  // Get UI components safely from Host
   const { t } = useTranslation();
-  const { Card } = useUIKit();
   const { currentDate, setCurrentDate } = useViewer();
   const {
     selectedIndex,
@@ -147,89 +148,91 @@ export const TimelineWidget: React.FC<TimelineWidgetProps> = ({ entityId }) => {
 
   if (!effectiveEntityId) {
     return (
-      <Card padding="md" className="bg-white/90 backdrop-blur-md border border-slate-200/50 rounded-xl">
-        <div className="flex items-center justify-center gap-2 py-6 text-slate-500">
+      <SlotShell moduleId="vegetation-prime" accent={vegetationAccent}>
+        <div className="flex items-center justify-center gap-nkz-inline py-nkz-section text-nkz-text-muted">
           <Calendar className="w-5 h-5" />
-          <p>{t('timelineWidget.selectParcel')}</p>
+          <p className="text-nkz-sm">{t('timelineWidget.selectParcel')}</p>
         </div>
-      </Card>
+      </SlotShell>
     );
   }
 
   if (error) {
     return (
-      <Card padding="md" className="bg-white/90 backdrop-blur-md border border-slate-200/50 rounded-xl">
-        <div className="text-center text-red-600 py-4">
-          <p>{error}</p>
-          <button 
+      <SlotShell moduleId="vegetation-prime" accent={vegetationAccent}>
+        <Stack gap="inline">
+          <Badge intent="negative">{error}</Badge>
+          <button
             onClick={loadStats}
-            className="mt-2 text-sm text-blue-600 hover:underline"
+            className="text-nkz-sm text-nkz-accent-base hover:underline"
           >
             {t('timelineWidget.retry')}
           </button>
-        </div>
-      </Card>
+        </Stack>
+      </SlotShell>
     );
   }
 
   return (
-    <div className="space-y-2">
-      {/* Compact index pill selector above the timeline */}
-      <IndexPillSelector
-        selectedIndex={selectedIndex || 'NDVI'}
-        onIndexChange={(idx: string) => setSelectedIndex(idx)}
-        customIndexOptions={customIndexOptions}
-        compact
-      />
+    <SlotShell moduleId="vegetation-prime" accent={vegetationAccent}>
+      <div className="space-y-nkz-inline">
+        {/* Compact index pill selector above the timeline */}
+        <IndexPillSelector
+          selectedIndex={selectedIndex || 'NDVI'}
+          onIndexChange={(idx: string) => setSelectedIndex(idx)}
+          customIndexOptions={customIndexOptions}
+          compact
+        />
 
-      <div className="flex items-center justify-between px-1">
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setShowChart(!showChart)}
-            className={`flex items-center gap-1.5 px-2 py-1 rounded-md text-xs transition-colors ${
-              showChart
-                ? 'bg-slate-800 text-white'
-                : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
-            }`}
-          >
-            <BarChart3 className="w-3.5 h-3.5" />
-            {t('timelineWidget.chart')}
-          </button>
-        </div>
-
-        <div className="text-xs text-slate-500">
-          {t('timelineWidget.scenesAvailable', { count: stats.length })}
-        </div>
-      </div>
-
-      {showChart && (
-        <>
-          <SmartTimeline
-            stats={stats}
-            selectedDate={selectedDate ? selectedDate.toISOString().split('T')[0] : null}
-            onDateSelect={handleDateSelect}
-            indexType={selectedIndex || 'NDVI'}
-            isLoading={loading}
-          />
-
-          {/* Subtle compact legend bar below the timeline */}
-          <div className="flex items-center justify-center gap-4 mt-2 text-[10px] text-slate-400">
-            <span className="flex items-center gap-1">
-              <span className="w-3 h-1.5 rounded-full bg-red-400 inline-block" />
-              {t('legend.low')}
-            </span>
-            <span className="flex items-center gap-1">
-              <span className="w-3 h-1.5 rounded-full bg-amber-400 inline-block" />
-              {t('legend.moderate')}
-            </span>
-            <span className="flex items-center gap-1">
-              <span className="w-3 h-1.5 rounded-full bg-green-500 inline-block" />
-              {t('legend.high')}
-            </span>
+        <div className="flex items-center justify-between px-nkz-inline">
+          <div className="flex items-center gap-nkz-inline">
+            <button
+              onClick={() => setShowChart(!showChart)}
+              className={`flex items-center gap-nkz-tight px-nkz-inline py-nkz-tight rounded-nkz-md text-nkz-xs transition-colors ${
+                showChart
+                  ? 'bg-nkz-accent-base text-nkz-text-on-accent'
+                  : 'bg-nkz-surface-sunken text-nkz-text-secondary hover:bg-nkz-surface'
+              }`}
+            >
+              <BarChart3 className="w-3.5 h-3.5" />
+              {t('timelineWidget.chart')}
+            </button>
           </div>
-        </>
-      )}
-    </div>
+
+          <div className="text-nkz-xs text-nkz-text-muted">
+            {t('timelineWidget.scenesAvailable', { count: stats.length })}
+          </div>
+        </div>
+
+        {showChart && (
+          <>
+            <SmartTimeline
+              stats={stats}
+              selectedDate={selectedDate ? selectedDate.toISOString().split('T')[0] : null}
+              onDateSelect={handleDateSelect}
+              indexType={selectedIndex || 'NDVI'}
+              isLoading={loading}
+            />
+
+            {/* Subtle compact legend bar below the timeline */}
+            <div className="flex items-center justify-center gap-nkz-inline mt-nkz-inline text-[10px] text-nkz-text-muted">
+              <span className="flex items-center gap-nkz-tight">
+                <span className="w-3 h-1.5 rounded-full bg-red-400 inline-block" />
+                {t('legend.low')}
+              </span>
+              <span className="flex items-center gap-nkz-tight">
+                <span className="w-3 h-1.5 rounded-full bg-amber-400 inline-block" />
+                {t('legend.moderate')}
+              </span>
+              <span className="flex items-center gap-nkz-tight">
+                <span className="w-3 h-1.5 rounded-full bg-green-500 inline-block" />
+                {t('legend.high')}
+              </span>
+            </div>
+          </>
+        )}
+      </div>
+    </SlotShell>
   );
 };
 
