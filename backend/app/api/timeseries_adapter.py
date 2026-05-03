@@ -273,22 +273,43 @@ async def get_timeseries_data(
     from psycopg2.extras import RealDictCursor
 
     conn = None
+    fiware_mode = os.getenv("FIWARE_NATIVE_MODE", "false").lower().strip()
     try:
         conn = psycopg2.connect(_get_postgres_url(), cursor_factory=RealDictCursor)
         cur = conn.cursor()
-        cur.execute(
-            """
-            SELECT time, value_numeric
-            FROM telemetry
-            WHERE tenant_id = %s
-              AND entity_id = %s
-              AND metric_name = %s
-              AND time >= %s
-              AND time < %s
-            ORDER BY time ASC
-            """,
-            (tenant_id, entity_id, metric_name, start_dt, end_dt),
-        )
+
+        if fiware_mode in ("true", "dual"):
+            # SYNC-2: FIWARE native mode → query telemetry_events (canonical source)
+            cur.execute(
+                """
+                SELECT observed_at AS time,
+                       (payload->'measurements'->>%s)::float AS value_numeric
+                FROM telemetry_events
+                WHERE tenant_id = %s
+                  AND entity_type = 'VegetationIndex'
+                  AND entity_id = %s
+                  AND observed_at >= %s
+                  AND observed_at < %s
+                  AND payload->'measurements'->>%s IS NOT NULL
+                ORDER BY observed_at ASC
+                """,
+                (attribute, tenant_id, entity_id, start_dt, end_dt, attribute),
+            )
+        else:
+            # Legacy mode: query telemetry table
+            cur.execute(
+                """
+                SELECT time, value_numeric
+                FROM telemetry
+                WHERE tenant_id = %s
+                  AND entity_id = %s
+                  AND metric_name = %s
+                  AND time >= %s
+                  AND time < %s
+                ORDER BY time ASC
+                """,
+                (tenant_id, entity_id, metric_name, start_dt, end_dt),
+            )
         rows = cur.fetchall()
         cur.close()
     except Exception as e:
