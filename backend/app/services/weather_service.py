@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 # Configuration
 WEATHER_MODULE_URL = os.getenv("WEATHER_MODULE_URL", "http://timeseries-reader-service:5000")
 ORION_LD_URL = os.getenv("ORION_LD_URL", "http://orion-ld:1026")
+ENTITY_MANAGER_URL = os.getenv("ENTITY_MANAGER_URL", "http://entity-manager-service:5000")
 
 
 @dataclass
@@ -301,6 +302,71 @@ class WeatherService:
 
         return []
 
+    async def get_from_platform_parcel_api(
+        self,
+        entity_id: str,
+        tenant_id: str,
+        start_date: date,
+        end_date: date,
+    ) -> Optional[List[WeatherData]]:
+        """
+        Get weather data from the platform's canonical parcel weather endpoint.
+
+        This endpoint applies spatial downscaling (altitude, aspect, slope)
+        and returns corrected observations for the exact parcel location.
+        It is the preferred source — use it whenever a parcel entity_id is available.
+        """
+        try:
+            client = await self._get_client()
+            response = await client.get(
+                f"{ENTITY_MANAGER_URL}/api/weather/parcel/{entity_id}",
+                params={
+                    "source": "OPEN-METEO",
+                    "data_type": "HISTORY",
+                    "limit": 72,
+                },
+                headers={"X-Tenant-ID": tenant_id},
+                timeout=self.timeout,
+            )
+
+            if response.status_code == 200:
+                data = response.json()
+                observations = data.get("observations", [])
+                if not observations:
+                    logger.debug("Platform parcel API returned empty observations")
+                    return None
+
+                weather_list = []
+                for obs in observations:
+                    weather_list.append(WeatherData(
+                        date=date.fromisoformat(obs["observed_at"][:10]),
+                        temperature_max=obs.get("temp_max") or obs.get("temp_avg", 0),
+                        temperature_min=obs.get("temp_min") or obs.get("temp_avg", 0),
+                        temperature_mean=obs.get("temp_avg", 0),
+                        precipitation=obs.get("precip_mm", 0),
+                        precipitation_hours=0,
+                        evapotranspiration=obs.get("eto_mm", 0),
+                        soil_moisture_0_10cm=obs.get("soil_moisture_0_10cm"),
+                        soil_moisture_10_40cm=obs.get("soil_moisture_10_40cm"),
+                        wind_speed_max=obs.get("wind_speed_ms", 0),
+                        shortwave_radiation=(obs.get("solar_rad_w_m2") or 0) * 0.0864,
+                        data_source="platform_parcel_api",
+                    ))
+                logger.info(
+                    f"Got {len(weather_list)} days from platform parcel API"
+                    f" (downscaling={data.get('downscaling', 'unknown')})"
+                )
+                return weather_list
+
+            logger.debug(
+                f"Platform parcel API returned {response.status_code}"
+            )
+
+        except Exception as e:
+            logger.debug(f"Platform parcel API not available: {e}")
+
+        return None
+
     async def get_weather_with_sensors(
         self,
         latitude: float,
@@ -313,7 +379,10 @@ class WeatherService:
         """
         Get combined weather data from all available sources.
 
-        Merges data from Weather Module, IoT sensors, and Open-Meteo.
+        Priority order:
+        1. Platform parcel API (corrected, downscaled) — NEW
+        2. Weather Module (timeseries-reader) — legacy
+        3. Open-Meteo direct — last resort
 
         Args:
             latitude, longitude: Location
@@ -334,21 +403,29 @@ class WeatherService:
             }
         }
 
-        # 1. Try Weather Module first
-        weather = await self.get_from_weather_module(
-            latitude, longitude, start_date, end_date, tenant_id
+        # 1. PRIMARY: Platform parcel API with spatial downscaling
+        weather = await self.get_from_platform_parcel_api(
+            entity_id, tenant_id, start_date, end_date
         )
         if weather:
             result["weather_data"] = [w.to_dict() for w in weather]
-            result["sources_used"].append("weather_module")
+            result["sources_used"].append("platform_parcel_api")
         else:
-            # 2. Fallback to Open-Meteo
-            weather = await self.get_historical_weather(
-                latitude, longitude, start_date, end_date
+            # 2. FALLBACK: Weather Module (timeseries-reader)
+            weather = await self.get_from_weather_module(
+                latitude, longitude, start_date, end_date, tenant_id
             )
             if weather:
                 result["weather_data"] = [w.to_dict() for w in weather]
-                result["sources_used"].append("open_meteo")
+                result["sources_used"].append("weather_module")
+            else:
+                # 3. LAST RESORT: Open-Meteo direct
+                weather = await self.get_historical_weather(
+                    latitude, longitude, start_date, end_date
+                )
+                if weather:
+                    result["weather_data"] = [w.to_dict() for w in weather]
+                    result["sources_used"].append("open_meteo")
 
         # 3. Get IoT soil sensor data
         sensors = await self.get_soil_sensors_data(entity_id, tenant_id)
