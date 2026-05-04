@@ -204,6 +204,7 @@ const VegetationLayerControl: React.FC = () => {
 
   return (
     <SlotShell
+      moduleId="vegetation-prime"
       title="Vegetación"
       icon={<Leaf className="w-4 h-4" />}
       collapsible
