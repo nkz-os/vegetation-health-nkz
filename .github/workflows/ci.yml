@@ -19,19 +19,18 @@ jobs:
     - name: Set up Node.js
       uses: actions/setup-node@v4
       with:
-        node-version: '20'
-        cache: 'npm'
-    
+        node-version: '22'
+
+    - name: Install pnpm
+      uses: pnpm/action-setup@v4
+      with:
+        version: 9
+
     - name: Install dependencies
-      run: |
-        # Update package.json to use npm SDK instead of local path
-        sed -i 's|"file:../nekazari-public/packages/sdk"|"@nekazari/sdk@^1.0.3"|' package.json
-        # Remove package-lock.json to force regeneration with npm SDK
-        rm -f package-lock.json
-        npm install
-    
+      run: pnpm install --frozen-lockfile
+
     - name: Type check
-      run: npm run typecheck
-    
+      run: pnpm run typecheck
+
     - name: Build
-      run: npm run build
+      run: pnpm run build
