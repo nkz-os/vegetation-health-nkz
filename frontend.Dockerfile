@@ -5,17 +5,20 @@
 # =============================================================================
 
 # Stage 1: Build
-FROM node:20-alpine AS builder
+FROM node:22-alpine AS builder
 
 WORKDIR /app
 
+# Install pnpm
+RUN corepack enable && corepack prepare pnpm@9 --activate
+
 # Install dependencies first (better caching)
-COPY package*.json ./
-RUN npm ci --quiet
+COPY pnpm-lock.yaml package.json ./
+RUN pnpm install --frozen-lockfile
 
 # Copy source and build
 COPY . .
-RUN npm run build
+RUN pnpm run build
 
 # Stage 2: Production
 FROM nginx:alpine
