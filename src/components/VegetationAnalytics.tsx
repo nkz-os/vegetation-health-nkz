@@ -13,6 +13,7 @@ import { useVegetationApi } from '../services/api';
 import { SetupWizard } from './pages/SetupWizard';
 import { IndexPillSelector } from './widgets/IndexPillSelector';
 import { useAuth } from '../hooks/useAuth';
+import { useJobPolling } from '../hooks/useJobPolling';
 import { useTranslation } from '@nekazari/sdk';
 import type { VegetationJob, CustomFormula, CropSeason } from '../types';
 import {
@@ -21,7 +22,6 @@ import {
 } from 'lucide-react';
 
 // Main indices the user can browse after analysis
-const MAIN_INDICES = ['NDVI', 'EVI', 'SAVI', 'GNDVI', 'NDRE'] as const;
 const AVAILABLE_BANDS = ['B02', 'B03', 'B04', 'B05', 'B06', 'B07', 'B08', 'B8A', 'B11', 'B12'] as const;
 
 export const VegetationAnalytics: React.FC = () => {
@@ -37,11 +37,15 @@ export const VegetationAnalytics: React.FC = () => {
   const { isAuthenticated } = useAuth();
   const api = useVegetationApi();
 
+  // Shared analysis hook (replaces inline polling)
+  const {
+    startAnalysis,
+    isAnalyzing,
+    analysisError: analyzeError,
+    analysisProgress: analyzeProgress,
+  } = useJobPolling();
+
   // Local state
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [analyzeError, setAnalyzeError] = useState<string | null>(null);
-  const [analysisJobId, setAnalysisJobId] = useState<string | null>(null);
-  const [analyzeProgress, setAnalyzeProgress] = useState<string>('');
   const [jobs, setJobs] = useState<VegetationJob[]>([]);
   const [loadingJobs, setLoadingJobs] = useState(false);
   const [loadingResults, setLoadingResults] = useState(false);
@@ -174,110 +178,29 @@ export const VegetationAnalytics: React.FC = () => {
 
   useEffect(() => { loadJobs(); }, [loadJobs]);
 
-  // Poll for job completion during analysis
-  useEffect(() => {
-    if (!analysisJobId || !selectedEntityId) return;
-
-    const poll = async () => {
-      try {
-        const details = await api.getJobDetails(analysisJobId);
-        const status = details?.job?.status;
-
-        if (status === 'completed') {
-          setAnalyzeProgress(t('calculations.status.completed'));
-          // Download done — now wait for calculation jobs to finish
-          // Poll for results
-          const data = await api.getEntityResults(selectedEntityId);
-          const activeCount = data.active_jobs || 0;
-
-          if (activeCount === 0 && data.has_results) {
-            // All done!
-            setIndexResults(data.indices);
-            setIsAnalyzing(false);
-            setAnalysisJobId(null);
-            setAnalyzeProgress('');
-            // Select NDVI by default
-            if (data.indices['NDVI']) {
-              setSelectedIndex('NDVI');
-              setActiveJobId(data.indices['NDVI'].job_id);
-            } else {
-              const first = Object.keys(data.indices)[0];
-              if (first) {
-                setSelectedIndex(first as any);
-                setActiveJobId(data.indices[first].job_id);
-              }
-            }
-            loadJobs();
-            return;
-          }
-
-          if (data.has_results) {
-            // Some results available, show partial
-            setIndexResults(data.indices);
-            setAnalyzeProgress(`${Object.keys(data.indices).length}/${MAIN_INDICES.length} ${t('analytics.indexSelector').toLowerCase()}...`);
-          } else {
-            setAnalyzeProgress(t('analyticsPage.processingHistoric'));
-          }
-        } else if (status === 'failed') {
-          setAnalyzeError(details?.job?.error_message || t('errors.calculationFailed'));
-          setIsAnalyzing(false);
-          setAnalysisJobId(null);
-          loadJobs();
-          return;
-        } else {
-          setAnalyzeProgress(details?.job?.progress_message || t('common.loading'));
-        }
-      } catch {
-        // Transient error, keep polling
-      }
-    };
-
-    const intervalId = setInterval(poll, 3000);
-    poll(); // First poll immediately
-
-    return () => clearInterval(intervalId);
-  }, [analysisJobId, selectedEntityId]);
-
   // Handle crop season selection
   const handleSeasonChange = (seasonId: string) => {
     setSelectedSeasonId(seasonId);
   };
 
-  // Handle "Analyze" button click
+  // Handle "Analyze" button click — delegates to shared hook
   const handleAnalyze = async () => {
     if (!selectedEntityId) return;
-    setIsAnalyzing(true);
-    setAnalyzeError(null);
-    setAnalyzeProgress(t('analyticsPage.processingHistoricDesc'));
 
     // Derive date range from selected crop season
-    let start_date: string;
-    let end_date: string;
+    let start_date: string | undefined;
+    let end_date: string | undefined;
     if (selectedSeasonId) {
       const season = cropSeasons.find(s => s.id === selectedSeasonId);
-      start_date = season?.start_date || '';
-      const d = new Date();
-      end_date = season?.end_date || d.toISOString().split('T')[0];
-    } else {
-      const d = new Date();
-      d.setDate(d.getDate() - 30);
-      start_date = d.toISOString().split('T')[0];
-      end_date = new Date().toISOString().split('T')[0];
+      start_date = season?.start_date || undefined;
+      end_date = season?.end_date || undefined;
     }
 
-    try {
-      const result = await api.analyzeParcel({
-        entity_id: selectedEntityId,
-        start_date,
-        end_date,
-        custom_formulas: selectedCustomFormulaIds,
-      });
-      setAnalysisJobId(result.job_id);
-    } catch (err: any) {
-      const msg = err?.response?.data?.detail || err?.message || t('errors.serverError');
-      setAnalyzeError(typeof msg === 'string' ? msg : JSON.stringify(msg));
-      setIsAnalyzing(false);
-    }
+    await startAnalysis({
+      startDate: start_date,
+      endDate: end_date,
+      customFormulaIds: selectedCustomFormulaIds.length > 0 ? selectedCustomFormulaIds : undefined,
+    });
   };
 
   const handleCreateAndAttachFormula = async () => {
@@ -360,8 +283,8 @@ export const VegetationAnalytics: React.FC = () => {
       URL.revokeObjectURL(url);
     } catch (err) {
       console.error('[Vegetation] Export failed:', err);
-      setAnalyzeError(t('prescription.exportError'));
-      setTimeout(() => setAnalyzeError(null), 5000);
+      setCustomError(t('prescription.exportError'));
+      setTimeout(() => setCustomError(null), 5000);
     } finally { setExportingFormat(null); }
   };
 
@@ -576,7 +499,7 @@ export const VegetationAnalytics: React.FC = () => {
       {/* Link to unified viewer */}
       {hasResults && (
         <a
-          href={`/module/vegetation?entityId=${encodeURIComponent(selectedEntityId)}&tab=analysis`}
+          href={`/entities?selectedEntity=${encodeURIComponent(selectedEntityId)}`}
           className="flex items-center justify-center gap-2 w-full py-3 bg-slate-800 text-white rounded-xl text-sm font-medium hover:bg-slate-900 transition-colors"
         >
           🗺 {t('analyticsPage.openInViewer')}

@@ -191,7 +191,7 @@ const DashboardContent: React.FC = () => {
                       }
 
                       // NDVI health badge: green ≥ 0.6, yellow 0.3-0.6, red < 0.3
-                      const latestNdvi = parcel.vegetationIndex?.value ?? parcel.ndvi?.value ?? null;
+                      const latestNdvi = parcel.latestNDVI?.value ?? parcel.vegetationIndex?.value ?? parcel.ndvi?.value ?? null;
                       const healthColor = latestNdvi === null ? 'bg-slate-300' :
                         latestNdvi >= 0.6 ? 'bg-emerald-500' :
                           latestNdvi >= 0.3 ? 'bg-amber-400' : 'bg-red-500';
