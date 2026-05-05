@@ -18,7 +18,7 @@ const NKZ_EXTERNALS: Record<string, string> = {
   '@nekazari/design-tokens': '__NKZ_DESIGN_TOKENS__',
   '@nekazari/sdk': '__NKZ_SDK__',
   '@nekazari/ui-kit': '__NKZ_UI__',
-  '@nekazari/viewer-kit': '__NKZ_VIEWER_KIT__',
+  '@nekazari/viewer-kit': '__NKZ_VIEWER__',
 };
 
 export default defineConfig({
