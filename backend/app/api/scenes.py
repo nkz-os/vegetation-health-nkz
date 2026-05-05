@@ -575,16 +575,31 @@ async def get_scene_stats(
 
 @router.get("/capabilities")
 async def get_capabilities(current_user: dict = Depends(require_auth)):
-    """Return module capabilities for graceful degradation in frontend."""
+    """Return module capabilities based on actual configuration state."""
+    import os
+
+    client_id = os.getenv("COPERNICUS_CLIENT_ID", "")
+    has_secret = bool(os.getenv("COPERNICUS_CLIENT_SECRET"))
+    copernicus_available = bool(client_id and has_secret)
+
+    n8n_available = bool(os.getenv("N8N_WEBHOOK_URL"))
+
+    # Check if ISOXML export dependencies are installed
+    try:
+        import fiona  # noqa: F401
+        isobus_available = True
+    except ImportError:
+        isobus_available = False
+
     return {
-        "n8n_available": False,
-        "intelligence_available": False,
-        "isobus_available": False,
+        "copernicus_available": copernicus_available,
+        "n8n_available": n8n_available,
+        "isobus_available": isobus_available,
         "features": {
-            "predictions": False,
-            "alerts_webhook": True,
-            "export_isoxml": False,
-            "send_to_cloud": False,
+            "alerts_webhook": n8n_available,
+            "export_isoxml": isobus_available,
+            "sentinel_ingest": copernicus_available,
+            "index_calculation": copernicus_available,
         },
     }
 

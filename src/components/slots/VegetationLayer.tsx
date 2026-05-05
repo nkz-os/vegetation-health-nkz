@@ -33,6 +33,7 @@ export const VegetationLayer: React.FC<VegetationLayerProps> = ({ viewer }) => {
     selectedDate, setSelectedSceneId, setSelectedDate,
     layerOpacity,
     layerVisible,
+    entityDataStatus,
   } = useVegetationContext();
   const api = useVegetationApi();
   const layerRef = useRef<any>(null);
@@ -56,7 +57,10 @@ export const VegetationLayer: React.FC<VegetationLayerProps> = ({ viewer }) => {
         let keys = Object.keys(data.indices || {});
 
         if (!sceneToUse && keys.length > 0) {
-          const pivotKey = keys.includes('NDVI') ? 'NDVI' : keys[0];
+          const preferredKey = entityDataStatus?.available_indices?.[0] || 'NDVI';
+          const pivotKey = keys.includes(preferredKey) ? preferredKey
+            : keys.includes('NDVI') ? 'NDVI'
+            : keys[0];
           const pivot = data.indices![pivotKey];
           if (pivot?.scene_id && pivot.sensing_date) {
             sceneToUse = pivot.scene_id;

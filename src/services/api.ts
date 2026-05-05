@@ -95,9 +95,16 @@ export class VegetationApiClient {
   }
 
   /** Phase 6: Sparse timeline — lightweight availability metadata (§12.8.1). */
+  async getEntityDataStatus(entityId: string): Promise<import('../types').EntityDataStatus> {
+    const response = await this.client.get(
+      `/entities/${encodeURIComponent(entityId)}/data-status`
+    );
+    return response as any;
+  }
+
   async getScenesAvailable(
     entityId: string,
-    indexType: string,
+    indexType?: string,
     startDate?: string,
     endDate?: string
   ): Promise<{
@@ -113,7 +120,8 @@ export class VegetationApiClient {
       mean_value: number | null;
     }>;
   }> {
-    const params = new URLSearchParams({ index_type: indexType });
+    const params = new URLSearchParams();
+    if (indexType) params.append('index_type', indexType);
     if (startDate) params.append('start_date', startDate);
     if (endDate) params.append('end_date', endDate);
     const response = await this.client.get(

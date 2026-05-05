@@ -153,20 +153,29 @@ def upsert_vegetation_index_entity(
         url = f"{ORION_URL}/ngsi-ld/v1/entities"
         response = requests.post(url, json=entity, headers=headers, timeout=10)
 
+        result = None
+
         if response.status_code in (201, 204):
             logger.info("Created VegetationIndex entity %s", entity_id)
-            return entity_id
+            result = entity_id
 
-        if response.status_code == 409:
+        elif response.status_code == 409:
             # Entity already exists — PATCH attributes
             logger.debug("VegetationIndex %s already exists, updating...", entity_id)
-            return _patch_vegetation_index(entity_id, entity, headers)
+            result = _patch_vegetation_index(entity_id, entity, headers)
+        else:
+            logger.error(
+                "Failed to create VegetationIndex entity: %s - %s",
+                response.status_code, response.text,
+            )
 
-        logger.error(
-            "Failed to create VegetationIndex entity: %s - %s",
-            response.status_code, response.text,
-        )
-        return None
+        # After successful VegetationIndex upsert, update the AgriParcel
+        if result:
+            _patch_agriparcel_with_index(
+                parcel_id, entity_id, statistics, observed_at, headers
+            )
+
+        return result
 
     except Exception as e:
         logger.error("Error upserting VegetationIndex entity: %s", e, exc_info=True)
@@ -207,6 +216,48 @@ def _patch_vegetation_index(
     except Exception as e:
         logger.error("Error patching VegetationIndex entity: %s", e, exc_info=True)
         return None
+
+
+def _patch_agriparcel_with_index(
+    parcel_id: str,
+    vegetation_index_id: str,
+    statistics: Dict[str, Any],
+    observed_at: str,
+    headers: Dict[str, str],
+) -> None:
+    """PATCH the AgriParcel entity with latest NDVI summary and back-reference."""
+    try:
+        ndvi_value = round(float(statistics.get("mean", 0)), 4)
+    except (TypeError, ValueError):
+        ndvi_value = 0.0
+
+    parcel_patch = {
+        "latestNDVI": {
+            "type": "Property",
+            "value": ndvi_value,
+            "observedAt": observed_at,
+        },
+        "refVegetationIndex": {
+            "type": "Relationship",
+            "object": vegetation_index_id,
+        },
+    }
+
+    try:
+        url = f"{ORION_URL}/ngsi-ld/v1/entities/{parcel_id}/attrs"
+        resp = requests.patch(url, json=parcel_patch, headers=headers, timeout=10)
+        if resp.status_code in (204, 207):
+            logger.debug(
+                "Patched AgriParcel %s with latestNDVI=%s from %s",
+                parcel_id, ndvi_value, vegetation_index_id,
+            )
+        else:
+            logger.warning(
+                "Failed to PATCH AgriParcel %s: %s — %s",
+                parcel_id, resp.status_code, resp.text,
+            )
+    except Exception as e:
+        logger.warning("Error patching AgriParcel %s: %s", parcel_id, e)
 
 
 def query_vegetation_index_entities(

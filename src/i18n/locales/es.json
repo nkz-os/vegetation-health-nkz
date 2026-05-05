@@ -317,7 +317,10 @@
         "authRequired": "Autenticación requerida",
         "permissionDenied": "Permiso denegado",
         "networkError": "Error de conexión",
-        "serverError": "Error del servidor"
+        "serverError": "Error del servidor",
+        "noScenesFound": "No hay imágenes de satélite disponibles para estas fechas. Prueba un rango más amplio o espera al siguiente pase de Sentinel-2 (cada 5 días).",
+        "noCredentials": "Credenciales de Copernicus no configuradas. Contacta con tu administrador.",
+        "noGeometry": "Esta parcela no tiene geometría definida."
     },
     "layerControl": {
         "title": "Capas de Vegetación",
@@ -338,7 +341,18 @@
         "configure": "Configurar",
         "vra": "VRA",
         "active": "Activa",
-        "inactive": "Inactiva"
+        "inactive": "Inactiva",
+        "dataAvailable": "Datos disponibles",
+        "noData": "Sin datos de vegetación para esta parcela",
+        "clickAnalyze": "Pulsa Analizar para comenzar",
+        "scenesCount": "Escenas",
+        "latestNdvi": "Último NDVI: {{value}}",
+        "selectIndex": "Selecciona un índice para ver datos",
+        "indexNotAvailable": "Sin datos para este índice",
+        "cancelAnalysis": "Cancelar",
+        "analysisInProgress": "Análisis en curso...",
+        "noLayerLoaded": "Sin capa cargada — ejecuta un análisis",
+        "createSeason": "Nueva"
     },
     "monitoring": {
         "activate": "Activar monitoreo",
@@ -364,7 +378,12 @@
         "label": "Vegetación",
         "show": "Mostrar capa",
         "hide": "Ocultar capa",
-        "noData": "Sin datos"
+        "noData": "Sin datos",
+        "dataAvailable": "Datos disponibles"
+    },
+    "usage": {
+        "jobsToday": "{{count}}/{{limit}} trabajos hoy",
+        "nearLimit": "Límite diario de trabajos cercano"
     },
     "cloudCover": {
         "highWarning": "Alta cobertura de nubes - puede afectar la precisión"

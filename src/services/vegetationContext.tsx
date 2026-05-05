@@ -1,5 +1,8 @@
 import React, { createContext, useContext, useState, ReactNode, useCallback, useEffect, useRef, useSyncExternalStore } from 'react';
 import { useViewerOptional } from '@nekazari/sdk';
+import type { EntityDataStatus } from '../types';
+import { useVegetationApi } from './api';
+
 interface DateRange {
   startDate: Date | null;
   endDate: Date | null;
@@ -42,6 +45,9 @@ interface SharedState {
   selectedDate: Date | null;
   layerOpacity: number; // 0-100
   layerVisible: boolean;
+  entityDataStatus: EntityDataStatus | null;
+  entityDataStatusLoading: boolean;
+  entityName: string | null;
 }
 
 interface VegetationStore {
@@ -64,6 +70,9 @@ function getStore(): VegetationStore {
         selectedDate: null,
         layerOpacity: 75,
         layerVisible: true,
+        entityDataStatus: null,
+        entityDataStatusLoading: false,
+        entityName: null,
       },
       _listeners: new Set(),
       _version: 0,
@@ -105,6 +114,9 @@ interface VegetationContextType {
   indexResults: Record<string, IndexResult>;
   layerOpacity: number;
   layerVisible: boolean;
+  entityDataStatus: EntityDataStatus | null;
+  entityDataStatusLoading: boolean;
+  entityName: string | null;
   setSelectedEntityId: (id: string | null) => void;
   setSelectedSceneId: (id: string | null) => void;
   setSelectedIndex: (index: string | null) => void;
@@ -225,6 +237,67 @@ export const VegetationProvider: React.FC<{ children: ReactNode }> = ({ children
     };
   }, []);
 
+  // ==========================================================================
+  // Load data-status on entity selection (Phase 2.2)
+  // ==========================================================================
+  const api = useVegetationApi();
+
+  useEffect(() => {
+    if (!selectedEntityId) {
+      updateStore({
+        entityDataStatus: null,
+        entityDataStatusLoading: false,
+        entityName: null,
+      });
+      return;
+    }
+
+    let cancelled = false;
+    updateStore({ entityDataStatusLoading: true });
+
+    api.getEntityDataStatus(selectedEntityId)
+      .then((status) => {
+        if (cancelled) return;
+
+        updateStore({
+          entityDataStatus: status,
+          entityDataStatusLoading: false,
+          entityName: status.name || null,
+        });
+
+        // Auto-select defaults if data exists and nothing is selected yet
+        if (status.has_any_data) {
+          const snapshot = getStoreSnapshot();
+
+          if (!snapshot.selectedIndex && status.available_indices.length > 0) {
+            updateStore({ selectedIndex: status.available_indices[0] });
+          }
+
+          if (!snapshot.selectedDate && status.latest_sensing_date) {
+            updateStore({ selectedDate: new Date(status.latest_sensing_date) });
+          }
+        } else {
+          // Clear stale results when entity has no data
+          updateStore({
+            indexResults: {},
+            activeJobId: null,
+            activeRasterPath: null,
+            selectedSceneId: null,
+          });
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          updateStore({
+            entityDataStatus: null,
+            entityDataStatusLoading: false,
+          });
+        }
+      });
+
+    return () => { cancelled = true; };
+  }, [selectedEntityId]);
+
   const resetContext = useCallback(() => {
     setSelectedEntityIdLocal(null);
     setSelectedGeometry(null);
@@ -237,6 +310,9 @@ export const VegetationProvider: React.FC<{ children: ReactNode }> = ({ children
       selectedDate: null,
       layerOpacity: 75,
       layerVisible: true,
+      entityDataStatus: null,
+      entityDataStatusLoading: false,
+      entityName: null,
     });
     setDateRange({
       startDate: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000),
@@ -258,6 +334,9 @@ export const VegetationProvider: React.FC<{ children: ReactNode }> = ({ children
         indexResults: sharedState.indexResults,
         layerOpacity: sharedState.layerOpacity,
         layerVisible: sharedState.layerVisible,
+        entityDataStatus: sharedState.entityDataStatus,
+        entityDataStatusLoading: sharedState.entityDataStatusLoading,
+        entityName: sharedState.entityName,
         setSelectedEntityId,
         setSelectedSceneId,
         setSelectedIndex,

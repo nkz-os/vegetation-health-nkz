@@ -317,7 +317,10 @@
         "authRequired": "Authentication required",
         "permissionDenied": "Permission denied",
         "networkError": "Connection error",
-        "serverError": "Server error"
+        "serverError": "Server error",
+        "noScenesFound": "No satellite imagery available for these dates. Try a wider date range or wait for the next Sentinel-2 pass (every 5 days).",
+        "noCredentials": "Copernicus credentials not configured. Contact your administrator.",
+        "noGeometry": "This parcel has no geometry defined."
     },
     "layerControl": {
         "title": "Vegetation Layers",
@@ -338,7 +341,18 @@
         "configure": "Configure",
         "vra": "VRA",
         "active": "Active",
-        "inactive": "Inactive"
+        "inactive": "Inactive",
+        "dataAvailable": "Data available",
+        "noData": "No vegetation data for this parcel",
+        "clickAnalyze": "Click Analyze to start",
+        "scenesCount": "Scenes",
+        "latestNdvi": "Latest NDVI: {{value}}",
+        "selectIndex": "Select an index to view data",
+        "indexNotAvailable": "No data for this index",
+        "cancelAnalysis": "Cancel",
+        "analysisInProgress": "Analysis in progress...",
+        "noLayerLoaded": "No layer loaded — run an analysis",
+        "createSeason": "New"
     },
     "monitoring": {
         "activate": "Activate monitoring",
@@ -364,7 +378,12 @@
         "label": "Vegetation",
         "show": "Show layer",
         "hide": "Hide layer",
-        "noData": "No data"
+        "noData": "No data",
+        "dataAvailable": "Data available"
+    },
+    "usage": {
+        "jobsToday": "{{count}}/{{limit}} jobs today",
+        "nearLimit": "Daily job limit approaching"
     },
     "cloudCover": {
         "highWarning": "High cloud cover - may affect accuracy"

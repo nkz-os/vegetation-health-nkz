@@ -341,6 +341,25 @@ export interface CropRecommendation {
   recommendations?: string[];
 }
 
+export interface EntityDataStatus {
+  entity_id: string;
+  name?: string | null;
+  has_any_data: boolean;
+  available_indices: string[];
+  total_scenes: number;
+  date_range: { first: string; last: string } | null;
+  latest_ndvi: number | null;
+  latest_sensing_date: string | null;
+  active_crop_seasons: Array<{
+    id: string;
+    crop_type: string;
+    start_date: string;
+    end_date?: string | null;
+    monitoring_enabled: boolean;
+  }>;
+  active_jobs_count: number;
+}
+
 export interface CropSeason {
   id: string;
   entity_id: string;

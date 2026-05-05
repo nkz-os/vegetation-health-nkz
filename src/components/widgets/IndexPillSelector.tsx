@@ -43,6 +43,8 @@ interface IndexPillSelectorProps {
   selectedIndex: string;
   onIndexChange: (index: string) => void;
   customIndexOptions?: CustomIndexOption[];
+  /** Indices that have data available. Unavailable pills render dimmed with tooltip. */
+  availableIndices?: string[];
   /** Flat row without group labels — for bottom-panel slots */
   compact?: boolean;
   className?: string;
@@ -52,6 +54,7 @@ export const IndexPillSelector: React.FC<IndexPillSelectorProps> = ({
   selectedIndex,
   onIndexChange,
   customIndexOptions = [],
+  availableIndices,
   compact = false,
   className = '',
 }) => {
@@ -63,21 +66,26 @@ export const IndexPillSelector: React.FC<IndexPillSelectorProps> = ({
   const renderPill = (value: string, shortLabel: string, colorClass?: string) => {
     const isSelected = selectedIndex === value;
     const isCustom = value.startsWith('custom:');
+    const isAvailable = !availableIndices || availableIndices.includes(value);
+
     return (
       <button
         key={value}
-        onClick={() => onIndexChange(value)}
+        onClick={() => isAvailable && onIndexChange(value)}
+        disabled={!isAvailable}
         className={`
           relative px-3 py-1.5 rounded-full text-xs font-semibold transition-all whitespace-nowrap
-          ${isSelected
-            ? (isCustom ? 'bg-purple-600 text-white shadow-md' : 'bg-green-600 text-white shadow-md')
-            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+          ${!isAvailable
+            ? 'bg-slate-50 text-slate-300 cursor-not-allowed'
+            : isSelected
+              ? (isCustom ? 'bg-purple-600 text-white shadow-md' : 'bg-green-600 text-white shadow-md')
+              : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
           }
         `}
-        title={shortLabel}
+        title={isAvailable ? shortLabel : `${shortLabel} — ${t('layerControl.indexNotAvailable', 'No data available')}`}
       >
         {!isSelected && colorClass && !isCustom && (
-          <span className={`inline-block w-1.5 h-1.5 rounded-full ${colorClass} mr-1.5 align-middle opacity-60`} />
+          <span className={`inline-block w-1.5 h-1.5 rounded-full ${colorClass} mr-1.5 align-middle ${isAvailable ? 'opacity-60' : 'opacity-20'}`} />
         )}
         {isSelected && !isCustom && (
           <span className="inline-block w-1.5 h-1.5 rounded-full bg-white mr-1.5 align-middle" />

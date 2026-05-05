@@ -33,6 +33,7 @@ export const TimelineWidget: React.FC<TimelineWidgetProps> = ({ entityId }) => {
     setActiveRasterPath,
     dateRange,
     indexResults,
+    entityDataStatus,
   } = useVegetationContext();
 
   const api = useVegetationApi();
@@ -64,8 +65,12 @@ export const TimelineWidget: React.FC<TimelineWidgetProps> = ({ entityId }) => {
     setError(null);
 
     try {
-      const startStr = dateRange?.startDate?.toISOString().split('T')[0];
-      const endStr = dateRange?.endDate?.toISOString().split('T')[0];
+      // Prefer actual data range from data-status, fall back to context dateRange
+      const dataDateRange = entityDataStatus?.date_range;
+      const startStr = dataDateRange?.first
+        || dateRange?.startDate?.toISOString().split('T')[0];
+      const endStr = dataDateRange?.last
+        || dateRange?.endDate?.toISOString().split('T')[0];
       const response = await api.getScenesAvailable(
         effectiveEntityId,
         selectedIndex || 'NDVI',
