@@ -102,7 +102,17 @@ async def create_crop_season(
         db.commit()
     except IntegrityError as exc:
         db.rollback()
-        if "uq_entity_crop_period" in str(exc.orig):
+        err_text = str(exc.orig)
+        if "vegetation_crop_seasons_no_overlap" in err_text:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    f"This season overlaps an existing one on the same parcel. "
+                    f"Two crop seasons cannot share calendar days. Pick non-conflicting dates "
+                    f"or close/delete the conflicting season first."
+                ),
+            ) from exc
+        if "uq_entity_crop_period" in err_text:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=(
