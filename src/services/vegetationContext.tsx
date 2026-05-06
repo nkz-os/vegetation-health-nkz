@@ -48,6 +48,9 @@ interface SharedState {
   entityDataStatus: EntityDataStatus | null;
   entityDataStatusLoading: boolean;
   entityName: string | null;
+  /** Active crop season id chosen in the viewer slot or detail page; scopes
+   *  the timeline / map to that season window when set. */
+  selectedSeasonId: string | null;
 }
 
 interface VegetationStore {
@@ -73,6 +76,7 @@ function getStore(): VegetationStore {
         entityDataStatus: null,
         entityDataStatusLoading: false,
         entityName: null,
+        selectedSeasonId: null,
       },
       _listeners: new Set(),
       _version: 0,
@@ -117,6 +121,7 @@ interface VegetationContextType {
   entityDataStatus: EntityDataStatus | null;
   entityDataStatusLoading: boolean;
   entityName: string | null;
+  selectedSeasonId: string | null;
   setSelectedEntityId: (id: string | null) => void;
   setSelectedSceneId: (id: string | null) => void;
   setSelectedIndex: (index: string | null) => void;
@@ -127,6 +132,7 @@ interface VegetationContextType {
   setIndexResults: (results: Record<string, IndexResult>) => void;
   setLayerOpacity: (opacity: number) => void;
   setLayerVisible: (visible: boolean) => void;
+  setSelectedSeasonId: (id: string | null) => void;
   resetContext: () => void;
 }
 
@@ -175,6 +181,10 @@ export const VegetationProvider: React.FC<{ children: ReactNode }> = ({ children
 
   const setLayerVisible = useCallback((visible: boolean) => {
     updateStore({ layerVisible: visible });
+  }, []);
+
+  const setSelectedSeasonId = useCallback((id: string | null) => {
+    updateStore({ selectedSeasonId: id });
   }, []);
 
   // Wrapper for setSelectedEntityId (local + clear shared state on change)
@@ -337,6 +347,7 @@ export const VegetationProvider: React.FC<{ children: ReactNode }> = ({ children
         entityDataStatus: sharedState.entityDataStatus,
         entityDataStatusLoading: sharedState.entityDataStatusLoading,
         entityName: sharedState.entityName,
+        selectedSeasonId: sharedState.selectedSeasonId,
         setSelectedEntityId,
         setSelectedSceneId,
         setSelectedIndex,
@@ -347,6 +358,7 @@ export const VegetationProvider: React.FC<{ children: ReactNode }> = ({ children
         setIndexResults,
         setLayerOpacity,
         setLayerVisible,
+        setSelectedSeasonId,
         resetContext,
       }}
     >

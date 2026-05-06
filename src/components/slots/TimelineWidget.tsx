@@ -27,6 +27,7 @@ export const TimelineWidget: React.FC<TimelineWidgetProps> = ({ entityId }) => {
     selectedIndex,
     selectedDate,
     selectedEntityId,
+    selectedSeasonId,
     setSelectedIndex,
     setSelectedDate,
     setSelectedSceneId,
@@ -65,11 +66,18 @@ export const TimelineWidget: React.FC<TimelineWidgetProps> = ({ entityId }) => {
     setError(null);
 
     try {
-      // Prefer actual data range from data-status, fall back to context dateRange
+      // Prefer the selected crop season window when set; otherwise fall
+      // back to the parcel's full data range, then to the context dateRange.
+      // This keeps the timeline focused on what the user actually picked.
+      const activeSeason = selectedSeasonId
+        ? entityDataStatus?.active_crop_seasons?.find((s) => s.id === selectedSeasonId)
+        : null;
       const dataDateRange = entityDataStatus?.date_range;
-      const startStr = dataDateRange?.first
+      const startStr = activeSeason?.start_date
+        || dataDateRange?.first
         || dateRange?.startDate?.toISOString().split('T')[0];
-      const endStr = dataDateRange?.last
+      const endStr = activeSeason?.end_date
+        || dataDateRange?.last
         || dateRange?.endDate?.toISOString().split('T')[0];
       const response = await api.getScenesAvailable(
         effectiveEntityId,
@@ -109,7 +117,7 @@ export const TimelineWidget: React.FC<TimelineWidgetProps> = ({ entityId }) => {
     } finally {
       setLoading(false);
     }
-  }, [effectiveEntityId, selectedIndex, api, dateRange?.startDate, dateRange?.endDate, setSelectedDate, setSelectedSceneId]);
+  }, [effectiveEntityId, selectedIndex, selectedSeasonId, api, dateRange?.startDate, dateRange?.endDate, setSelectedDate, setSelectedSceneId, entityDataStatus?.active_crop_seasons, entityDataStatus?.date_range]);
 
   // Initial load
   useEffect(() => {
