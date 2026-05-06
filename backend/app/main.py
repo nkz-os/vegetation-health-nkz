@@ -26,6 +26,7 @@ from app.api.sync import router as sync_router
 from app.api.custom_formulas import router as custom_formulas_router
 from app.api.crop_seasons import router as crop_seasons_router
 from app.api.export import router as export_router
+from app.api.parcels import router as parcels_router
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -83,6 +84,7 @@ app.include_router(sync_router)
 app.include_router(custom_formulas_router)
 app.include_router(crop_seasons_router)
 app.include_router(export_router)
+app.include_router(parcels_router)
 
 if __name__ == "__main__":
     import uvicorn

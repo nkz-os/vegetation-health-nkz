@@ -19,3 +19,4 @@ class VegetationCropSeason(BaseModel, TenantMixin):
     label = Column(Text, nullable=True)
     monitoring_enabled = Column(Boolean, nullable=False, default=False)
     is_active = Column(Boolean, nullable=False, default=True)
+    deleted_at = Column(DateTime(timezone=True), nullable=True)
