@@ -95,15 +95,27 @@ async def calculate_index_endpoint(
     db.commit()
     db.refresh(job)
 
-    calculate_vegetation_index.delay(
-        job_id=str(job.id),
-        tenant_id=tenant_id,
-        scene_id=request.scene_id,
-        index_type=request.index_type,
-        formula=request.formula,
-        start_date=request.start_date,
-        end_date=request.end_date,
-    )
+    try:
+        async_result = calculate_vegetation_index.delay(
+            job_id=str(job.id),
+            tenant_id=tenant_id,
+            scene_id=request.scene_id,
+            index_type=request.index_type,
+            formula=request.formula,
+            start_date=request.start_date,
+            end_date=request.end_date,
+        )
+        job.celery_task_id = async_result.id
+        db.commit()
+    except Exception as exc:
+        logger.exception("Failed to enqueue calculate task for job %s", job.id)
+        job.status = "failed"
+        job.error_message = f"Could not enqueue Celery task: {exc}"
+        db.commit()
+        raise HTTPException(
+            status_code=503,
+            detail="Job queue unavailable, please retry shortly.",
+        ) from exc
 
     logger.info("Calculate job %s dispatched for tenant %s", job.id, tenant_id)
     return {"job_id": str(job.id), "message": "Calculation started"}
@@ -115,6 +127,15 @@ class AnalyzeRequest(BaseModel):
     end_date: Optional[str] = None
     indices: Optional[list] = None  # defaults to all main indices
     custom_formulas: Optional[List[str]] = None
+    local_cloud_threshold: Optional[float] = Field(
+        None,
+        ge=0,
+        le=100,
+        description="Max acceptable cloud coverage (%) over the parcel polygon. "
+                    "Below this, the scene is processed; above, it's skipped. "
+                    "Server default: 30 (recommended). Suggested: 10 strict (clear-sky regions), "
+                    "30 balanced (default), 50 permissive (Atlantic/Cantabrian climate).",
+    )
 
 
 @router.post("/analyze")
@@ -257,27 +278,45 @@ async def analyze_parcel(
         # Pick the scene with lowest cloud cover in each window
         best = sorted(window['scenes'], key=lambda s: s.get('cloud_cover', 100))[0]
 
+        job_parameters = {
+            "scene_id": best['id'],
+            "bbox": bbox,
+            "bounds": geometry,
+            "entity_id": entity_id,
+            "cloud_coverage_threshold": 60,
+            "calculate_indices": indices,
+            "calculate_custom_formulas": custom_formula_specs,
+        }
+        if request.local_cloud_threshold is not None:
+            job_parameters["local_cloud_threshold"] = float(request.local_cloud_threshold)
+
         job = VegetationJob(
             tenant_id=tenant_id,
             job_type="download",
             entity_id=entity_id,
             entity_type="AgriParcel",
-            parameters={
-                "scene_id": best['id'],
-                "bbox": bbox,
-                "bounds": geometry,
-                "entity_id": entity_id,
-                "cloud_coverage_threshold": 60,
-                "calculate_indices": indices,
-                "calculate_custom_formulas": custom_formula_specs,
-            },
+            parameters=job_parameters,
             created_by=current_user.get("user_id"),
         )
         db.add(job)
         db.commit()
         db.refresh(job)
 
-        download_sentinel2_scene.delay(str(job.id), tenant_id, job.parameters)
+        try:
+            async_result = download_sentinel2_scene.delay(
+                str(job.id), tenant_id, job.parameters
+            )
+            job.celery_task_id = async_result.id
+            db.commit()
+        except Exception as exc:
+            logger.exception("Failed to enqueue download task for job %s", job.id)
+            job.status = "failed"
+            job.error_message = f"Could not enqueue Celery task: {exc}"
+            db.commit()
+            raise HTTPException(
+                status_code=503,
+                detail="Job queue unavailable, please retry shortly.",
+            ) from exc
         job_ids.append(str(job.id))
 
     logger.info(

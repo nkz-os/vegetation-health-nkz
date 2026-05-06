@@ -8,6 +8,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database import get_db_with_tenant
@@ -81,6 +82,12 @@ async def create_crop_season(
     """Assign a crop season to a parcel."""
     tenant_id = current_user["tenant_id"]
 
+    if data.end_date and data.end_date < data.start_date:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="end_date must be on or after start_date",
+        )
+
     season = VegetationCropSeason(
         tenant_id=tenant_id,
         entity_id=entity_id,
@@ -91,7 +98,23 @@ async def create_crop_season(
         monitoring_enabled=data.monitoring_enabled,
     )
     db.add(season)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        if "uq_entity_crop_period" in str(exc.orig):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    f"A crop season for '{data.crop_type}' starting on "
+                    f"{data.start_date.isoformat()} already exists for this parcel. "
+                    "Edit the existing one or pick a different start date."
+                ),
+            ) from exc
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Could not create crop season due to a database constraint.",
+        ) from exc
     db.refresh(season)
 
     logger.info(
@@ -132,7 +155,20 @@ async def update_crop_season(
     for key, value in updates.items():
         setattr(season, key, value)
 
-    db.commit()
+    if season.end_date and season.start_date and season.end_date < season.start_date:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="end_date must be on or after start_date",
+        )
+
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Update conflicts with an existing crop season for this parcel.",
+        ) from exc
     db.refresh(season)
     return {"season": _serialize(season)}
 

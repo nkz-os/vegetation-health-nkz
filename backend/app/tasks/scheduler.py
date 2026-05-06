@@ -2,12 +2,12 @@
 Periodic tasks for scheduling vegetation updates.
 """
 import logging
-from datetime import datetime, timedelta
-from sqlalchemy import or_
+from datetime import datetime, timedelta, timezone
+from sqlalchemy import or_, and_
 
 from app.celery_app import celery_app
 from app.database import get_db_session
-from app.models import VegetationSubscription
+from app.models import VegetationSubscription, VegetationJob
 from app.tasks.download_tasks import download_sentinel2_scene
 from app.tasks.processing_tasks import calculate_vegetation_index
 
@@ -209,11 +209,53 @@ def check_and_process_entity(self, subscription_id, start_date, end_date):
         
         if triggered_count > 0:
             logger.info("Triggered %d downloads for subscription %s", triggered_count, subscription_id)
-            
+
         # Update status to active after queuing initial batch
         if sub.status == 'syncing':
             sub.status = 'active'
             db.commit()
 
+    finally:
+        db.close()
+
+
+@celery_app.task(name="vegetation.reap_stuck_jobs")
+def reap_stuck_jobs():
+    """Mark orphaned/zombie jobs as failed.
+
+    - 'pending' with NULL celery_task_id older than 10 minutes → never enqueued.
+    - 'running' with no progress update for >1 hour → worker died mid-task.
+    """
+    db = next(get_db_session())
+    try:
+        now = datetime.now(timezone.utc)
+        orphan_cutoff = now - timedelta(minutes=10)
+        zombie_cutoff = now - timedelta(hours=1)
+
+        orphans = db.query(VegetationJob).filter(
+            VegetationJob.status == "pending",
+            VegetationJob.celery_task_id.is_(None),
+            VegetationJob.created_at < orphan_cutoff,
+        ).all()
+        for job in orphans:
+            job.status = "failed"
+            job.error_message = "Reaped: pending without celery_task_id (never enqueued)"
+            job.completed_at = now
+
+        zombies = db.query(VegetationJob).filter(
+            VegetationJob.status == "running",
+            VegetationJob.updated_at < zombie_cutoff,
+        ).all()
+        for job in zombies:
+            job.status = "failed"
+            job.error_message = "Reaped: stuck in 'running' >1h with no progress update"
+            job.completed_at = now
+
+        if orphans or zombies:
+            db.commit()
+            logger.warning(
+                "Reaper: failed %d orphan(s) and %d zombie(s)",
+                len(orphans), len(zombies),
+            )
     finally:
         db.close()
