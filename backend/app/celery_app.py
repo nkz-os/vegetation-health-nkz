@@ -26,6 +26,10 @@ celery_app.conf.update(
     task_soft_time_limit=3300,  # 30 min warning
     worker_prefetch_multiplier=1,
     worker_max_tasks_per_child=50,
+    # Durability: do not lose in-flight messages on worker restart
+    task_acks_late=True,
+    task_reject_on_worker_lost=True,
+    broker_connection_retry_on_startup=True,
 )
 
 # Periodic tasks
@@ -37,6 +41,10 @@ celery_app.conf.beat_schedule = {
     'vegetation.cleanup_global_cache': {
         'task': 'vegetation.cleanup_global_cache',
         'schedule': crontab(hour=3, minute=0),  # Daily at 3 AM
+    },
+    'vegetation.reap_stuck_jobs': {
+        'task': 'vegetation.reap_stuck_jobs',
+        'schedule': crontab(minute='*/15'),  # Every 15 minutes
     },
 }
 

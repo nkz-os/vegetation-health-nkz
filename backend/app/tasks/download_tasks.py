@@ -125,7 +125,11 @@ def download_sentinel2_scene(self, job_id: str, tenant_id: str, parameters: Dict
             self.update_state(state='PROGRESS', meta={'progress': 15, 'message': 'Fetching scene item'})
             best_scene = copernicus_client.get_scene_item(preset_scene_id)
             scene_id = best_scene['id']
-            local_threshold = float(os.getenv('LOCAL_CLOUD_THRESHOLD_PCT', '10'))
+            local_threshold = float(
+                parameters.get('local_cloud_threshold')
+                if parameters.get('local_cloud_threshold') is not None
+                else os.getenv('LOCAL_CLOUD_THRESHOLD_PCT', '30')
+            )
             self.update_state(state='PROGRESS', meta={'progress': 18, 'message': 'SCL validation (micro filter)'})
             import tempfile
             from app.services.scl_validation import compute_local_cloud_pct
@@ -179,7 +183,14 @@ def download_sentinel2_scene(self, job_id: str, tenant_id: str, parameters: Dict
                         job.mark_completed({
                             'skipped_due_to_clouds': True,
                             'local_cloud_pct': round(local_cloud_pct, 2),
-                            'message': f'Scene skipped: local cloud {local_cloud_pct:.1f}% > {local_threshold}%',
+                            'local_cloud_threshold': local_threshold,
+                            'scene_id': scene_id,
+                            'sensing_date': best_scene.get('sensing_date'),
+                            'message': (
+                                f'Scene skipped: local cloud {local_cloud_pct:.1f}% > '
+                                f'threshold {local_threshold:.0f}%. '
+                                f'Retry with a higher tolerance to use this scene.'
+                            ),
                         })
                         db.commit()
                         return
@@ -476,14 +487,24 @@ def download_sentinel2_scene(self, job_id: str, tenant_id: str, parameters: Dict
                     )
                     db.add(calc_job)
                     db.commit()
-                    
+
                     logger.info(f"Auto-triggering calculation for {index_type} (Job {calc_job_id})")
-                    calculate_vegetation_index.delay(
-                        job_id=calc_job_id,
-                        tenant_id=tenant_id,
-                        scene_id=str(scene.id),
-                        index_type=index_type
-                    )
+                    try:
+                        async_result = calculate_vegetation_index.delay(
+                            job_id=calc_job_id,
+                            tenant_id=tenant_id,
+                            scene_id=str(scene.id),
+                            index_type=index_type
+                        )
+                        calc_job.celery_task_id = async_result.id
+                        db.commit()
+                    except Exception as enq_exc:
+                        logger.exception(
+                            "Failed to enqueue calc job %s (%s)", calc_job_id, index_type
+                        )
+                        calc_job.status = 'failed'
+                        calc_job.error_message = f"Could not enqueue Celery task: {enq_exc}"
+                        db.commit()
             except Exception as e:
                 logger.error(f"Failed to trigger automated calculation: {e}")
 
@@ -533,13 +554,23 @@ def download_sentinel2_scene(self, job_id: str, tenant_id: str, parameters: Dict
                         formula_name or formula_id or "custom",
                         calc_job_id,
                     )
-                    calculate_vegetation_index.delay(
-                        job_id=calc_job_id,
-                        tenant_id=tenant_id,
-                        scene_id=str(scene.id),
-                        index_type='CUSTOM',
-                        formula=formula_expression,
-                    )
+                    try:
+                        async_result = calculate_vegetation_index.delay(
+                            job_id=calc_job_id,
+                            tenant_id=tenant_id,
+                            scene_id=str(scene.id),
+                            index_type='CUSTOM',
+                            formula=formula_expression,
+                        )
+                        calc_job.celery_task_id = async_result.id
+                        db.commit()
+                    except Exception as enq_exc:
+                        logger.exception(
+                            "Failed to enqueue custom calc job %s", calc_job_id
+                        )
+                        calc_job.status = 'failed'
+                        calc_job.error_message = f"Could not enqueue Celery task: {enq_exc}"
+                        db.commit()
             except Exception as e:
                 logger.error(f"Failed to trigger custom formula calculations: {e}")
         
