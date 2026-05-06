@@ -111,6 +111,8 @@ spec:
               value: "INFO"
             - name: SQL_ECHO
               value: "false"
+            - name: LOCAL_CLOUD_THRESHOLD_PCT
+              value: "30"
           resources:
             requests:
               memory: "1Gi"
