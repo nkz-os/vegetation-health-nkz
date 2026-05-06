@@ -8,13 +8,15 @@ one call. Also owns the hard-delete cascade for jobs.
 
 import logging
 import os
+import uuid as uuid_mod
 from typing import Any, Dict, List, Optional
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import desc, func
 from sqlalchemy.orm import Session
 
+from app.celery_app import celery_app
 from app.database import get_db_with_tenant
 from app.middleware.auth import require_auth
 from app.models import (
@@ -23,6 +25,7 @@ from app.models import (
     VegetationJob,
     VegetationScene,
 )
+from app.services.storage import create_storage_service, generate_tenant_bucket_name
 
 logger = logging.getLogger(__name__)
 
@@ -246,3 +249,192 @@ async def get_parcel_overview(
         "recent_skips": recent_skips,
         "active_jobs_count": active_jobs_count,
     }
+
+
+# ── Hard delete cascade ────────────────────────────────────────────────
+
+
+def _delete_raster_safely(raster_path: str, tenant_id: str) -> None:
+    """Best-effort delete of a raster file from MinIO. NoSuchKey is fine."""
+    try:
+        bucket = os.getenv("VEGETATION_COG_BUCKET") or generate_tenant_bucket_name(tenant_id)
+        storage = create_storage_service(
+            storage_type=os.getenv("STORAGE_TYPE", "s3"),
+            default_bucket=bucket,
+        )
+        storage.delete_file(raster_path, bucket)
+    except Exception as exc:
+        # NoSuchKey, transient S3 issue, missing creds — do not break the
+        # transactional cleanup; the file is either gone or will be GC'd later.
+        logger.debug("Raster delete failed for %s: %s", raster_path, exc)
+
+
+async def _delete_orion_entity_if_orphan(
+    entity_id: str, tenant_id: str, db: Session
+) -> None:
+    """Drop the per-parcel VegetationIndex entity from Orion-LD ONLY when no
+    completed calc_index jobs remain for this parcel.
+
+    Per fiware_integration._entity_id_for_parcel, there is exactly one
+    VegetationIndex entity per parcel; it is PATCH-updated on each analysis.
+    We only DELETE it when the parcel has truly nothing left to surface,
+    otherwise we'd lie about the entity having been wiped.
+    """
+    remaining = (
+        db.query(func.count(VegetationJob.id))
+        .filter(
+            VegetationJob.tenant_id == tenant_id,
+            VegetationJob.entity_id == entity_id,
+            VegetationJob.job_type == "calculate_index",
+            VegetationJob.status == "completed",
+            VegetationJob.deleted_at.is_(None),
+        )
+        .scalar()
+    ) or 0
+    if remaining > 0:
+        return
+
+    parcel_short = entity_id.split(":")[-1] if ":" in entity_id else entity_id
+    veg_entity_id = f"urn:ngsi-ld:VegetationIndex:{tenant_id}:{parcel_short}"
+    orion_url = os.getenv("FIWARE_CONTEXT_BROKER_URL", "http://orion-ld-service:1026")
+    headers = {"Accept": "application/json", "NGSILD-Tenant": tenant_id}
+    try:
+        async with httpx.AsyncClient(timeout=4) as client:
+            resp = await client.delete(
+                f"{orion_url}/ngsi-ld/v1/entities/{veg_entity_id}", headers=headers
+            )
+            if resp.status_code in (204, 404):
+                logger.info(
+                    "Orion-LD VegetationIndex %s: %s (parcel cleaned)",
+                    veg_entity_id, resp.status_code,
+                )
+            else:
+                logger.warning(
+                    "Orion-LD entity DELETE returned %s for %s: %s",
+                    resp.status_code, veg_entity_id, resp.text[:200],
+                )
+    except Exception as exc:
+        logger.warning("Orion-LD DELETE %s failed: %s", veg_entity_id, exc)
+
+
+def _hard_delete_one(db: Session, tenant_id: str, job: VegetationJob) -> int:
+    """Cascade-delete a single job + its raster + cache. For download jobs,
+    recurse into calc_index children that share the same scene_id. Returns
+    the number of rows deleted (counting the recursion).
+
+    Idempotent: if the raster or row is already gone, that's fine.
+    """
+    # 1. Cancel Celery if the task is still in-flight.
+    if job.status in ("pending", "running") and job.celery_task_id:
+        try:
+            celery_app.control.revoke(job.celery_task_id, terminate=True)
+        except Exception as exc:
+            logger.debug("Celery revoke failed for %s: %s", job.celery_task_id, exc)
+
+    deleted = 1
+
+    # 2. Cascade for download jobs: each download produces N calc_index
+    #    children that reference the same scene UUID in their result.
+    if job.job_type == "download":
+        scene_uuid = (job.result or {}).get("scene_id")
+        if scene_uuid:
+            children = (
+                db.query(VegetationJob)
+                .filter(
+                    VegetationJob.tenant_id == tenant_id,
+                    VegetationJob.entity_id == job.entity_id,
+                    VegetationJob.job_type == "calculate_index",
+                    VegetationJob.id != job.id,
+                )
+                .all()
+            )
+            for c in children:
+                cr = c.result or {}
+                cp = c.parameters or {}
+                # Match either by canonical scene UUID or by scene_product_id;
+                # the latter covers calc_index jobs that ran before the result
+                # was committed (race window).
+                if (
+                    cr.get("scene_id") == scene_uuid
+                    or cp.get("scene_id") == scene_uuid
+                ):
+                    deleted += _hard_delete_one(db, tenant_id, c)
+
+    # 3. Drop the raster file from MinIO if the job produced one.
+    raster_path = (job.result or {}).get("raster_path")
+    if raster_path:
+        _delete_raster_safely(raster_path, tenant_id)
+
+    # 4. Drop the matching cache row(s) for calc_index jobs.
+    if job.job_type == "calculate_index":
+        result = job.result or {}
+        scene_uuid = result.get("scene_id")
+        idx_type = result.get("index_type")
+        if scene_uuid and idx_type:
+            try:
+                scene_uuid_obj = uuid_mod.UUID(scene_uuid)
+                db.query(VegetationIndexCache).filter(
+                    VegetationIndexCache.tenant_id == tenant_id,
+                    VegetationIndexCache.entity_id == job.entity_id,
+                    VegetationIndexCache.scene_id == scene_uuid_obj,
+                    VegetationIndexCache.index_type == idx_type,
+                ).delete(synchronize_session=False)
+            except (ValueError, TypeError):
+                pass
+
+    # 5. Delete the job row itself.
+    db.delete(job)
+    return deleted
+
+
+@router.delete("/{entity_id}/jobs/{job_id}", status_code=204)
+async def delete_parcel_job(
+    entity_id: str,
+    job_id: str,
+    current_user: dict = Depends(require_auth),
+    db: Session = Depends(get_db_with_tenant),
+):
+    """Hard-delete a job and everything it produced.
+
+    Steps (each is best-effort + idempotent):
+      1. Revoke Celery task if running.
+      2. For 'download' jobs: cascade into matching calc_index children.
+      3. Delete the raster file from MinIO (NoSuchKey → ignored).
+      4. Delete vegetation_indices_cache rows tied to this job.
+      5. Delete the row from vegetation_jobs.
+      6. If the parcel has zero remaining completed calc_index jobs, also
+         DELETE the per-parcel VegetationIndex entity from Orion-LD.
+
+    Returns 204 even when the job did not exist (idempotent).
+    """
+    tenant_id = current_user["tenant_id"]
+    try:
+        job_uuid = uuid_mod.UUID(job_id)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Invalid job_id (expected UUID)")
+
+    job = (
+        db.query(VegetationJob)
+        .filter(
+            VegetationJob.id == job_uuid,
+            VegetationJob.tenant_id == tenant_id,
+            VegetationJob.entity_id == entity_id,
+        )
+        .first()
+    )
+    if not job:
+        # Idempotent: caller may be retrying after a transient error.
+        return Response(status_code=204)
+
+    deleted = _hard_delete_one(db, tenant_id, job)
+    db.commit()
+
+    # Best-effort entity cleanup (does not block the user's success path).
+    if job.entity_id:
+        await _delete_orion_entity_if_orphan(job.entity_id, tenant_id, db)
+
+    logger.info(
+        "Hard-deleted %d vegetation_jobs row(s) starting from %s (tenant=%s, parcel=%s)",
+        deleted, job_id, tenant_id, entity_id,
+    )
+    return Response(status_code=204)

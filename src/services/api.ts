@@ -110,6 +110,13 @@ export class VegetationApiClient {
     return response as any;
   }
 
+  /** Hard-delete a job for a parcel (cascades raster + cache + entity). 204. */
+  async deleteParcelJob(entityId: string, jobId: string): Promise<void> {
+    await this.client.delete(
+      `/parcels/${encodeURIComponent(entityId)}/jobs/${encodeURIComponent(jobId)}`
+    );
+  }
+
   async getScenesAvailable(
     entityId: string,
     indexType?: string,
