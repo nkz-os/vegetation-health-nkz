@@ -66,6 +66,7 @@ export const VegetationAnalytics: React.FC = () => {
   const [cropSeasons, setCropSeasons] = useState<CropSeason[]>([]);
   const [selectedSeasonId, setSelectedSeasonId] = useState<string>('');
   const [loadingSeasons, setLoadingSeasons] = useState(false);
+  const [localCloudThreshold, setLocalCloudThreshold] = useState<number>(30);
 
   const effectiveIndex = selectedIndex || 'NDVI';
 
@@ -200,6 +201,7 @@ export const VegetationAnalytics: React.FC = () => {
       startDate: start_date,
       endDate: end_date,
       customFormulaIds: selectedCustomFormulaIds.length > 0 ? selectedCustomFormulaIds : undefined,
+      localCloudThreshold,
     });
   };
 
@@ -380,6 +382,33 @@ export const VegetationAnalytics: React.FC = () => {
               <><Satellite className="w-4 h-4" />{t('configPanel.analyzeFirstTime')}</>
             )}
           </button>
+        </div>
+
+        {/* Local cloud tolerance — controls how strict we are with cloud-covered scenes */}
+        <div className="border-t border-slate-100 pt-3">
+          <div className="flex items-center justify-between mb-1">
+            <label htmlFor="cloud-threshold" className="text-xs font-medium text-slate-600">
+              {t('analyticsPage.cloudTolerance', 'Cloud tolerance over parcel')}
+            </label>
+            <span className="text-xs font-mono text-emerald-700">{localCloudThreshold}%</span>
+          </div>
+          <input
+            id="cloud-threshold"
+            type="range"
+            min={5}
+            max={80}
+            step={5}
+            value={localCloudThreshold}
+            onChange={(e) => setLocalCloudThreshold(Number(e.target.value))}
+            disabled={isAnalyzing}
+            className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-emerald-600 disabled:opacity-50"
+          />
+          <p className="text-[10px] text-slate-500 mt-1">
+            {t(
+              'analyticsPage.cloudToleranceHint',
+              '10% strict (clear-sky regions) · 30% balanced (recommended) · 50% permissive (Atlantic / Cantabrian climate)',
+            )}
+          </p>
         </div>
 
         {/* Custom formulas — always visible, compact */}

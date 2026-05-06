@@ -176,6 +176,35 @@ async def get_entity_data_status(
         .scalar()
     ) or 0
 
+    # Recent download jobs that completed but were skipped because of clouds.
+    # Surface this so the UI can tell the user why no layer is showing,
+    # instead of looking like the analysis silently failed.
+    recent_skips_q = (
+        db.query(VegetationJob)
+        .filter(
+            VegetationJob.tenant_id == tenant_id,
+            VegetationJob.entity_id == entity_id,
+            VegetationJob.job_type == "download",
+            VegetationJob.status == "completed",
+        )
+        .order_by(VegetationJob.completed_at.desc())
+        .limit(10)
+        .all()
+    )
+    recent_cloud_skips = [
+        {
+            "job_id": str(j.id),
+            "completed_at": j.completed_at.isoformat() if j.completed_at else None,
+            "scene_id": (j.result or {}).get("scene_id"),
+            "sensing_date": (j.result or {}).get("sensing_date"),
+            "local_cloud_pct": (j.result or {}).get("local_cloud_pct"),
+            "local_cloud_threshold": (j.result or {}).get("local_cloud_threshold"),
+            "message": (j.result or {}).get("message"),
+        }
+        for j in recent_skips_q
+        if (j.result or {}).get("skipped_due_to_clouds")
+    ]
+
     # Resolve entity name from Orion-LD
     name = await _resolve_entity_name(entity_id, tenant_id)
 
@@ -190,6 +219,7 @@ async def get_entity_data_status(
         "latest_sensing_date": latest_sensing_date,
         "active_crop_seasons": active_crop_seasons,
         "active_jobs_count": active_jobs_count,
+        "recent_cloud_skips": recent_cloud_skips,
     }
 
 

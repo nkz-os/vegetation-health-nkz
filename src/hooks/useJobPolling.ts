@@ -14,6 +14,7 @@ interface UseJobPollingResult {
     startDate?: string;
     endDate?: string;
     customFormulaIds?: string[];
+    localCloudThreshold?: number;
   }) => Promise<void>;
   cancelAnalysis: () => Promise<void>;
   isAnalyzing: boolean;
@@ -80,6 +81,7 @@ export function useJobPolling(): UseJobPollingResult {
     startDate?: string;
     endDate?: string;
     customFormulaIds?: string[];
+    localCloudThreshold?: number;
   }) => {
     if (!selectedEntityId) return;
 
@@ -103,6 +105,7 @@ export function useJobPolling(): UseJobPollingResult {
         start_date: options?.startDate,
         end_date: options?.endDate,
         custom_formulas: options?.customFormulaIds,
+        local_cloud_threshold: options?.localCloudThreshold,
       });
 
       if (cancelledRef.current) return;
