@@ -4,7 +4,12 @@ import { VegetationProvider, useVegetationContext } from './services/vegetationC
 
 import { useTranslation } from '@nekazari/sdk';
 
-import { VegetationAnalytics } from './components/VegetationAnalytics';
+// VegetationAnalytics is the legacy detail view; ParcelDetail is the new
+// season-centric one wired into the route below. The legacy import stays
+// available for the next slices that still need bits of its logic.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+import { VegetationAnalytics as _LegacyVegetationAnalytics } from './components/VegetationAnalytics';
+import { ParcelDetail } from './components/ParcelDetail';
 import { useVegetationApi } from './services/api';
 import { Leaf, ChevronRight } from 'lucide-react';
 
@@ -271,9 +276,10 @@ const DashboardContent: React.FC = () => {
         </div>
       </div>
 
-      {/* Content Area — single view */}
+      {/* Content Area — single view (S1: read-only ParcelDetail; legacy
+          VegetationAnalytics retained but unused while new flow ramps up). */}
       <div className="flex-1 overflow-auto bg-slate-50">
-        <VegetationAnalytics />
+        <ParcelDetail />
       </div>
     </div>
   );
