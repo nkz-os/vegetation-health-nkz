@@ -24,7 +24,11 @@ import {
   Plus,
   Play,
   Sprout,
+  Map as MapIcon,
+  Download,
+  Beaker,
 } from 'lucide-react';
+import type { CustomFormula } from '../types';
 import { useTranslation } from '@nekazari/sdk';
 import { useVegetationApi } from '../services/api';
 import { useVegetationContext } from '../services/vegetationContext';
@@ -499,6 +503,327 @@ const NewSeasonForm: React.FC<NewSeasonFormProps> = ({ entityId, onCreated }) =>
   );
 };
 
+// ─── Advanced section ─────────────────────────────────────────────────────
+interface AdvancedSectionProps {
+  entityId: string;
+  defaultIndex: string | null;
+  onAction: () => void;
+}
+
+const AdvancedSection: React.FC<AdvancedSectionProps> = ({ entityId, defaultIndex, onAction }) => {
+  const { t } = useTranslation();
+  const api = useVegetationApi();
+  const [open, setOpen] = useState(false);
+
+  // ─── VRA Zoning ────────────────────────────────────────────────────────
+  const [vraSource, setVraSource] = useState<string>(defaultIndex || 'NDVI');
+  const [vraBusy, setVraBusy] = useState(false);
+  const [vraMsg, setVraMsg] = useState<{ type: 'ok' | 'error'; text: string } | null>(null);
+
+  const handleVra = async () => {
+    setVraBusy(true);
+    setVraMsg(null);
+    try {
+      const res = await api.calculateIndex({
+        entity_id: entityId,
+        index_type: 'VRA_ZONES' as any,
+      });
+      setVraMsg({
+        type: 'ok',
+        text: t('parcelDetail.vraDispatched', 'Zoning job dispatched (id {{id}})', {
+          id: res.job_id.slice(0, 8),
+        }),
+      });
+      onAction();
+    } catch (err: any) {
+      setVraMsg({
+        type: 'error',
+        text: err?.response?.data?.detail || err?.message || String(err),
+      });
+    } finally {
+      setVraBusy(false);
+    }
+  };
+
+  // ─── Custom formulas ───────────────────────────────────────────────────
+  const [formulas, setFormulas] = useState<CustomFormula[]>([]);
+  const [loadingFormulas, setLoadingFormulas] = useState(false);
+  const [formulaName, setFormulaName] = useState('');
+  const [formulaExpr, setFormulaExpr] = useState('');
+  const [formulaBusy, setFormulaBusy] = useState(false);
+  const [formulaMsg, setFormulaMsg] = useState<{ type: 'ok' | 'error'; text: string } | null>(null);
+
+  const loadFormulas = useCallback(async () => {
+    setLoadingFormulas(true);
+    try {
+      const r = await api.listCustomFormulas();
+      setFormulas(r.items);
+    } catch {
+      // Silent: tenant may not have any
+    } finally {
+      setLoadingFormulas(false);
+    }
+  }, [api]);
+
+  useEffect(() => {
+    if (open) loadFormulas();
+  }, [open, loadFormulas]);
+
+  const handleCreateFormula = async () => {
+    if (!formulaName.trim() || !formulaExpr.trim()) {
+      setFormulaMsg({ type: 'error', text: t('parcelDetail.formulaFieldsRequired', 'Name and expression are required.') });
+      return;
+    }
+    setFormulaBusy(true);
+    setFormulaMsg(null);
+    try {
+      await api.createCustomFormula({ name: formulaName.trim(), formula: formulaExpr.trim() });
+      setFormulaName('');
+      setFormulaExpr('');
+      setFormulaMsg({ type: 'ok', text: t('parcelDetail.formulaCreated', 'Custom formula created.') });
+      await loadFormulas();
+    } catch (err: any) {
+      setFormulaMsg({
+        type: 'error',
+        text: err?.response?.data?.detail || err?.message || String(err),
+      });
+    } finally {
+      setFormulaBusy(false);
+    }
+  };
+
+  const handleDeleteFormula = async (id: string) => {
+    try {
+      await api.deleteCustomFormula(id);
+      await loadFormulas();
+    } catch (err: any) {
+      setFormulaMsg({
+        type: 'error',
+        text: err?.response?.data?.detail || err?.message || String(err),
+      });
+    }
+  };
+
+  // ─── Export ────────────────────────────────────────────────────────────
+  const [exportBusy, setExportBusy] = useState<string | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
+
+  const downloadBlob = (blob: Blob, filename: string) => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleExport = async (format: 'geojson' | 'shapefile' | 'csv') => {
+    setExportBusy(format);
+    setExportError(null);
+    try {
+      const short = entityId.split(':').pop() || 'parcel';
+      const ext = format === 'shapefile' ? 'zip' : format;
+      let blob: Blob;
+      if (format === 'geojson') blob = await api.exportPrescriptionGeojson(entityId);
+      else if (format === 'shapefile') blob = await api.exportPrescriptionShapefile(entityId);
+      else blob = await api.exportPrescriptionCsv(entityId);
+      downloadBlob(blob, `prescription_${short}.${ext}`);
+    } catch (err: any) {
+      setExportError(
+        err?.response?.data?.detail || err?.message ||
+          t('parcelDetail.exportError', 'Export failed (a VRA result is required first).'),
+      );
+    } finally {
+      setExportBusy(null);
+    }
+  };
+
+  return (
+    <div className="border border-slate-200 rounded-xl overflow-hidden bg-white">
+      <button
+        onClick={() => setOpen(!open)}
+        className="w-full flex items-center gap-3 px-4 py-3 hover:bg-slate-50 transition-colors text-left"
+      >
+        {open ? <ChevronDown className="w-4 h-4 text-slate-400" /> : <ChevronRight className="w-4 h-4 text-slate-400" />}
+        <div className="flex-1 min-w-0">
+          <h3 className="font-semibold text-slate-700 text-sm">
+            {t('parcelDetail.advancedTitle', 'Advanced')}
+          </h3>
+          <p className="text-[11px] text-slate-500">
+            {t('parcelDetail.advancedHint', 'VRA zoning, custom formulas and exports — for power users.')}
+          </p>
+        </div>
+      </button>
+
+      {open && (
+        <div className="border-t border-slate-100 p-4 space-y-5 bg-slate-50/40">
+          {/* VRA */}
+          <div>
+            <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1.5 flex items-center gap-1.5">
+              <MapIcon className="w-3.5 h-3.5" />
+              {t('parcelDetail.vraTitle', 'VRA zoning')}
+            </h4>
+            <p className="text-[11px] text-slate-500 mb-2">
+              {t(
+                'parcelDetail.vraHint',
+                'Splits the parcel into prescription zones based on the chosen index. Run this once you have a recent computed index for the parcel.',
+              )}
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="text-xs text-slate-600">{t('parcelDetail.vraSourceLabel', 'Source index')}:</label>
+              <select
+                value={vraSource}
+                onChange={(e) => setVraSource(e.target.value)}
+                disabled={vraBusy}
+                className="text-xs px-2 py-1 border border-slate-300 rounded-lg bg-white"
+              >
+                {STANDARD_INDICES.map((idx) => (
+                  <option key={idx} value={idx}>{idx}</option>
+                ))}
+              </select>
+              <button
+                onClick={handleVra}
+                disabled={vraBusy}
+                className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-emerald-600 text-white font-semibold hover:bg-emerald-700 disabled:opacity-50"
+              >
+                {vraBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Beaker className="w-3.5 h-3.5" />}
+                {t('parcelDetail.vraGenerate', 'Generate zones')}
+              </button>
+            </div>
+            {vraMsg && (
+              <p
+                className={`text-xs mt-2 px-2 py-1 rounded ${
+                  vraMsg.type === 'ok'
+                    ? 'text-emerald-700 bg-emerald-50 border border-emerald-200'
+                    : 'text-rose-700 bg-rose-50 border border-rose-200'
+                }`}
+              >
+                {vraMsg.text}
+              </p>
+            )}
+          </div>
+
+          {/* Custom formulas */}
+          <div>
+            <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1.5 flex items-center gap-1.5">
+              <Beaker className="w-3.5 h-3.5" />
+              {t('parcelDetail.customFormulasTitle', 'Custom formulas')}
+            </h4>
+            <p className="text-[11px] text-slate-500 mb-2">
+              {t(
+                'parcelDetail.customFormulasHint',
+                'Define your own band-based formula (e.g. (B08-B11)/(B08+B11) for NDMI). Custom formulas are tenant-wide and can be opted into per analysis.',
+              )}
+            </p>
+            {loadingFormulas ? (
+              <p className="text-xs text-slate-400 italic">{t('parcelDetail.loadingFormulas', 'Loading…')}</p>
+            ) : formulas.length === 0 ? (
+              <p className="text-xs text-slate-400 italic mb-2">
+                {t('parcelDetail.formulasEmpty', 'No custom formulas yet.')}
+              </p>
+            ) : (
+              <ul className="space-y-1 mb-2">
+                {formulas.map((f) => (
+                  <li
+                    key={f.id}
+                    className="flex items-center gap-2 px-2 py-1.5 bg-white border border-slate-200 rounded-lg text-xs"
+                  >
+                    <span className="font-medium text-slate-700">{f.name}</span>
+                    <span className="font-mono text-[11px] text-slate-500 truncate flex-1">{f.formula}</span>
+                    {!f.is_validated && (
+                      <span className="text-[10px] text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded">
+                        {t('parcelDetail.formulaInvalid', 'invalid')}
+                      </span>
+                    )}
+                    <button
+                      onClick={() => handleDeleteFormula(f.id)}
+                      className="p-1 text-slate-400 hover:text-rose-600 rounded"
+                      title={t('parcelDetail.deleteFormula', 'Delete formula')}
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-1">
+              <input
+                type="text"
+                value={formulaName}
+                onChange={(e) => setFormulaName(e.target.value)}
+                placeholder={t('parcelDetail.formulaNamePlaceholder', 'Name (e.g. NDMI)') as string}
+                disabled={formulaBusy}
+                className="text-xs px-2 py-1.5 border border-slate-300 rounded-lg"
+              />
+              <input
+                type="text"
+                value={formulaExpr}
+                onChange={(e) => setFormulaExpr(e.target.value)}
+                placeholder={t('parcelDetail.formulaExprPlaceholder', '(B08-B11)/(B08+B11)') as string}
+                disabled={formulaBusy}
+                className="text-xs px-2 py-1.5 border border-slate-300 rounded-lg sm:col-span-1 font-mono"
+              />
+              <button
+                onClick={handleCreateFormula}
+                disabled={formulaBusy}
+                className="inline-flex items-center justify-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-slate-700 text-white font-semibold hover:bg-slate-800 disabled:opacity-50"
+              >
+                {formulaBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+                {t('parcelDetail.addFormula', 'Add formula')}
+              </button>
+            </div>
+            {formulaMsg && (
+              <p
+                className={`text-xs mt-2 px-2 py-1 rounded ${
+                  formulaMsg.type === 'ok'
+                    ? 'text-emerald-700 bg-emerald-50 border border-emerald-200'
+                    : 'text-rose-700 bg-rose-50 border border-rose-200'
+                }`}
+              >
+                {formulaMsg.text}
+              </p>
+            )}
+          </div>
+
+          {/* Export */}
+          <div>
+            <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1.5 flex items-center gap-1.5">
+              <Download className="w-3.5 h-3.5" />
+              {t('parcelDetail.exportTitle', 'Export VRA prescription')}
+            </h4>
+            <p className="text-[11px] text-slate-500 mb-2">
+              {t(
+                'parcelDetail.exportHint',
+                'Downloads the most recent VRA zoning result. Generate a VRA above first if you have not already.',
+              )}
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              {(['geojson', 'shapefile', 'csv'] as const).map((fmt) => (
+                <button
+                  key={fmt}
+                  onClick={() => handleExport(fmt)}
+                  disabled={exportBusy !== null}
+                  className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+                >
+                  {exportBusy === fmt ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+                  {fmt.toUpperCase()}
+                </button>
+              ))}
+            </div>
+            {exportError && (
+              <p className="text-xs mt-2 px-2 py-1 rounded text-rose-700 bg-rose-50 border border-rose-200">
+                {exportError}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 interface SeasonBlockProps {
   season: ParcelSeasonCard;
   entityId: string;
@@ -584,6 +909,7 @@ export const ParcelDetail: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [reloadTick, setReloadTick] = useState(0);
+  const [quota, setQuota] = useState<{ used: number; limit: number; plan: string } | null>(null);
 
   const refetch = useCallback(() => setReloadTick((t) => t + 1), []);
 
@@ -624,6 +950,21 @@ export const ParcelDetail: React.FC = () => {
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
+      });
+    // Daily quota — non-blocking; 'usage/current' can fail on misconfigured
+    // tenants without breaking the page.
+    api
+      .getCurrentUsage()
+      .then((u) => {
+        if (cancelled) return;
+        setQuota({
+          used: u.frequency.used_jobs_today,
+          limit: u.frequency.limit_jobs_today,
+          plan: u.plan,
+        });
+      })
+      .catch(() => {
+        /* ignore */
       });
     return () => {
       cancelled = true;
@@ -682,7 +1023,24 @@ export const ParcelDetail: React.FC = () => {
           <h1 className="text-xl font-bold text-slate-800 truncate">{parcelLabel}</h1>
           <p className="text-xs text-slate-500 break-all">{overview.parcel.entity_id}</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          {quota && quota.limit > 0 && (
+            <span
+              className={`inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full border ${
+                quota.used >= quota.limit
+                  ? 'text-rose-700 bg-rose-50 border-rose-200'
+                  : quota.used >= quota.limit * 0.8
+                    ? 'text-amber-700 bg-amber-50 border-amber-200'
+                    : 'text-slate-600 bg-slate-50 border-slate-200'
+              }`}
+              title={t('parcelDetail.quotaTooltip', 'Plan: {{plan}}', { plan: quota.plan })}
+            >
+              {t('parcelDetail.quotaLabel', '{{used}}/{{limit}} jobs today', {
+                used: quota.used,
+                limit: quota.limit,
+              })}
+            </span>
+          )}
           {overview.active_jobs_count > 0 && (
             <span className="inline-flex items-center gap-1 text-[11px] text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full">
               <Loader2 className="w-3 h-3 animate-spin" />
@@ -796,6 +1154,15 @@ export const ParcelDetail: React.FC = () => {
           </div>
         </section>
       )}
+
+      {/* Advanced (collapsed by default) — VRA, custom formulas, export */}
+      <section>
+        <AdvancedSection
+          entityId={overview.parcel.entity_id}
+          defaultIndex={overview.current_state?.index_type || null}
+          onAction={refetch}
+        />
+      </section>
     </div>
   );
 };
