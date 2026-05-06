@@ -13,11 +13,25 @@
  */
 
 import React, { useCallback, useEffect, useState } from 'react';
-import { Loader2, ExternalLink, AlertTriangle, ChevronDown, ChevronRight, Info, Trash2 } from 'lucide-react';
+import {
+  Loader2,
+  ExternalLink,
+  AlertTriangle,
+  ChevronDown,
+  ChevronRight,
+  Info,
+  Trash2,
+  Plus,
+  Play,
+  Sprout,
+} from 'lucide-react';
 import { useTranslation } from '@nekazari/sdk';
 import { useVegetationApi } from '../services/api';
 import { useVegetationContext } from '../services/vegetationContext';
 import type { ParcelOverview, ParcelSeasonCard, ParcelJobCard } from '../types';
+
+const STANDARD_INDICES = ['NDVI', 'EVI', 'SAVI', 'GNDVI', 'NDRE'] as const;
+const COMMON_CROP_TYPES = ['wheat', 'barley', 'corn', 'sunflower', 'vineyard', 'olive', 'other'] as const;
 
 const fmtDate = (iso: string | null) => {
   if (!iso) return '—';
@@ -144,12 +158,355 @@ const JobRow: React.FC<JobRowProps> = ({ job, onDelete }) => {
   );
 };
 
-interface SeasonBlockProps {
-  season: ParcelSeasonCard;
-  onDelete: (jobId: string) => Promise<void>;
+// ─── Analyze-in-season form ────────────────────────────────────────────────
+interface AnalyzeFormProps {
+  entityId: string;
+  seasonId: string;
+  onLaunched: () => void;
 }
 
-const SeasonBlock: React.FC<SeasonBlockProps> = ({ season, onDelete }) => {
+const AnalyzeInSeasonForm: React.FC<AnalyzeFormProps> = ({ entityId, seasonId, onLaunched }) => {
+  const { t } = useTranslation();
+  const api = useVegetationApi();
+  const [open, setOpen] = useState(false);
+  const [selected, setSelected] = useState<string[]>([...STANDARD_INDICES]);
+  const [threshold, setThreshold] = useState<number>(30);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+
+  const toggle = (idx: string) =>
+    setSelected((prev) => (prev.includes(idx) ? prev.filter((x) => x !== idx) : [...prev, idx]));
+
+  const handleSubmit = async () => {
+    if (selected.length === 0) {
+      setError(t('parcelDetail.analyzeNoIndex', 'Pick at least one index to compute.'));
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const res = await api.analyzeInSeason(entityId, seasonId, {
+        indices: selected,
+        local_cloud_threshold: threshold,
+      });
+      setSuccess(
+        t('parcelDetail.analyzeSuccess', '{{n}} job(s) dispatched, {{s}} scenes found.', {
+          n: res.job_ids.length,
+          s: res.scenes_found,
+        }),
+      );
+      onLaunched();
+      setTimeout(() => setOpen(false), 1500);
+    } catch (err: any) {
+      setError(err?.response?.data?.detail || err?.message || String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!open) {
+    return (
+      <button
+        onClick={() => setOpen(true)}
+        className="w-full mt-2 inline-flex items-center justify-center gap-2 text-xs font-medium px-3 py-2 rounded-lg border border-dashed border-emerald-300 text-emerald-700 hover:bg-emerald-50 transition-colors"
+      >
+        <Play className="w-3.5 h-3.5" />
+        {t('parcelDetail.analyzeOpen', 'Analyze in this season')}
+      </button>
+    );
+  }
+
+  return (
+    <div className="mt-2 bg-white border border-slate-200 rounded-lg p-3 space-y-3">
+      <p className="text-[11px] text-slate-500">
+        {t(
+          'parcelDetail.analyzeHint',
+          'Searches Sentinel-2 scenes inside the season window and dispatches one download job per dekadal window. Each download triggers index calculations for the selected indices.',
+        )}
+      </p>
+
+      {/* Index selector */}
+      <div>
+        <p className="text-[11px] font-medium text-slate-600 mb-1.5">
+          {t('parcelDetail.analyzeIndices', 'Indices to compute')}
+        </p>
+        <div className="flex flex-wrap gap-1.5">
+          {STANDARD_INDICES.map((idx) => {
+            const on = selected.includes(idx);
+            return (
+              <button
+                key={idx}
+                onClick={() => toggle(idx)}
+                disabled={busy}
+                className={`px-2.5 py-1 rounded-full text-xs font-semibold border transition-colors ${
+                  on
+                    ? 'bg-emerald-600 text-white border-emerald-600'
+                    : 'bg-white text-slate-600 border-slate-300 hover:border-emerald-400'
+                }`}
+              >
+                {idx}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Cloud tolerance slider */}
+      <div>
+        <div className="flex items-center justify-between mb-1">
+          <label className="text-[11px] font-medium text-slate-600">
+            {t('parcelDetail.analyzeCloudTolerance', 'Cloud tolerance over parcel')}
+          </label>
+          <span className="text-[11px] font-mono text-emerald-700">{threshold}%</span>
+        </div>
+        <input
+          type="range"
+          min={5}
+          max={80}
+          step={5}
+          value={threshold}
+          onChange={(e) => setThreshold(Number(e.target.value))}
+          disabled={busy}
+          className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-emerald-600"
+        />
+        <p className="text-[10px] text-slate-500 mt-0.5">
+          {t(
+            'parcelDetail.analyzeCloudHint',
+            '10% strict · 30% balanced (default) · 50% permissive (Atlantic climate).',
+          )}
+        </p>
+      </div>
+
+      {error && (
+        <p className="text-xs text-rose-600 bg-rose-50 border border-rose-200 rounded p-2">{error}</p>
+      )}
+      {success && (
+        <p className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded p-2">
+          {success}
+        </p>
+      )}
+
+      <div className="flex items-center gap-2 justify-end">
+        <button
+          onClick={() => setOpen(false)}
+          disabled={busy}
+          className="text-xs px-3 py-1.5 rounded-lg text-slate-500 hover:bg-slate-100"
+        >
+          {t('parcelDetail.cancel', 'Cancel')}
+        </button>
+        <button
+          onClick={handleSubmit}
+          disabled={busy || selected.length === 0}
+          className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-emerald-600 text-white font-semibold hover:bg-emerald-700 disabled:opacity-50"
+        >
+          {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
+          {busy
+            ? t('parcelDetail.analyzeSubmitting', 'Dispatching…')
+            : t('parcelDetail.analyzeSubmit', 'Launch analysis')}
+        </button>
+      </div>
+    </div>
+  );
+};
+
+// ─── New season form ───────────────────────────────────────────────────────
+interface NewSeasonFormProps {
+  entityId: string;
+  onCreated: () => void;
+}
+
+const NewSeasonForm: React.FC<NewSeasonFormProps> = ({ entityId, onCreated }) => {
+  const { t } = useTranslation();
+  const api = useVegetationApi();
+  const [open, setOpen] = useState(false);
+  const [cropType, setCropType] = useState<string>('wheat');
+  const [startDate, setStartDate] = useState<string>('');
+  const [endDate, setEndDate] = useState<string>('');
+  const [label, setLabel] = useState<string>('');
+  const [monitoring, setMonitoring] = useState<boolean>(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const reset = () => {
+    setCropType('wheat');
+    setStartDate('');
+    setEndDate('');
+    setLabel('');
+    setMonitoring(false);
+    setError(null);
+  };
+
+  const handleSubmit = async () => {
+    if (!startDate) {
+      setError(t('parcelDetail.seasonStartRequired', 'Start date is required.'));
+      return;
+    }
+    if (endDate && endDate < startDate) {
+      setError(t('parcelDetail.seasonDateOrder', 'End date must be on or after start date.'));
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await api.createCropSeason(entityId, {
+        crop_type: cropType,
+        start_date: startDate,
+        end_date: endDate || null,
+        label: label.trim() || null,
+        monitoring_enabled: monitoring,
+      });
+      reset();
+      setOpen(false);
+      onCreated();
+    } catch (err: any) {
+      const status = err?.response?.status;
+      const detail = err?.response?.data?.detail || err?.message || String(err);
+      setError(
+        status === 409
+          ? t(
+              'parcelDetail.seasonConflict',
+              'This season overlaps an existing one. Adjust the dates or remove the conflicting season.',
+            ) + ` (${detail})`
+          : detail,
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!open) {
+    return (
+      <button
+        onClick={() => setOpen(true)}
+        className="w-full inline-flex items-center justify-center gap-2 text-xs font-medium px-3 py-2.5 rounded-xl border border-dashed border-emerald-300 text-emerald-700 hover:bg-emerald-50 transition-colors"
+      >
+        <Plus className="w-4 h-4" />
+        {t('parcelDetail.newSeason', 'New crop season')}
+      </button>
+    );
+  }
+
+  return (
+    <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-3">
+      <div className="flex items-center gap-2">
+        <Sprout className="w-4 h-4 text-emerald-600" />
+        <h3 className="text-sm font-semibold text-slate-700">
+          {t('parcelDetail.newSeasonTitle', 'New crop season')}
+        </h3>
+      </div>
+      <p className="text-[11px] text-slate-500">
+        {t(
+          'parcelDetail.newSeasonHint',
+          'Pick a crop and a date range. Two seasons cannot overlap on the same parcel — pick non-conflicting dates.',
+        )}
+      </p>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+        <div>
+          <label className="block text-[11px] font-medium text-slate-600 mb-0.5">
+            {t('parcelDetail.cropTypeLabel', 'Crop')}
+          </label>
+          <select
+            value={cropType}
+            onChange={(e) => setCropType(e.target.value)}
+            disabled={busy}
+            className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg bg-white"
+          >
+            {COMMON_CROP_TYPES.map((c) => (
+              <option key={c} value={c}>
+                {t(`cropSeason.${c}`, c)}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="block text-[11px] font-medium text-slate-600 mb-0.5">
+            {t('parcelDetail.labelLabel', 'Label (optional)')}
+          </label>
+          <input
+            type="text"
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            placeholder={t('parcelDetail.labelPlaceholder', 'e.g. Wheat 2025') as string}
+            disabled={busy}
+            className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg"
+          />
+        </div>
+        <div>
+          <label className="block text-[11px] font-medium text-slate-600 mb-0.5">
+            {t('parcelDetail.startDateLabel', 'Start date')}
+          </label>
+          <input
+            type="date"
+            value={startDate}
+            onChange={(e) => setStartDate(e.target.value)}
+            disabled={busy}
+            className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg"
+          />
+        </div>
+        <div>
+          <label className="block text-[11px] font-medium text-slate-600 mb-0.5">
+            {t('parcelDetail.endDateLabel', 'End date (optional)')}
+          </label>
+          <input
+            type="date"
+            value={endDate}
+            onChange={(e) => setEndDate(e.target.value)}
+            disabled={busy}
+            className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg"
+          />
+        </div>
+      </div>
+
+      <label className="inline-flex items-center gap-2 text-xs text-slate-600">
+        <input
+          type="checkbox"
+          checked={monitoring}
+          onChange={(e) => setMonitoring(e.target.checked)}
+          disabled={busy}
+          className="accent-emerald-600"
+        />
+        {t('parcelDetail.monitoringLabel', 'Enable continuous monitoring (auto-process new scenes)')}
+      </label>
+
+      {error && (
+        <p className="text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded p-2">{error}</p>
+      )}
+
+      <div className="flex items-center gap-2 justify-end">
+        <button
+          onClick={() => {
+            reset();
+            setOpen(false);
+          }}
+          disabled={busy}
+          className="text-xs px-3 py-1.5 rounded-lg text-slate-500 hover:bg-slate-100"
+        >
+          {t('parcelDetail.cancel', 'Cancel')}
+        </button>
+        <button
+          onClick={handleSubmit}
+          disabled={busy}
+          className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-emerald-600 text-white font-semibold hover:bg-emerald-700 disabled:opacity-50"
+        >
+          {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+          {busy ? t('parcelDetail.creating', 'Creating…') : t('parcelDetail.createSeason', 'Create season')}
+        </button>
+      </div>
+    </div>
+  );
+};
+
+interface SeasonBlockProps {
+  season: ParcelSeasonCard;
+  entityId: string;
+  onDelete: (jobId: string) => Promise<void>;
+  onLaunched: () => void;
+}
+
+const SeasonBlock: React.FC<SeasonBlockProps> = ({ season, entityId, onDelete, onLaunched }) => {
   const { t } = useTranslation();
   const [open, setOpen] = useState(true);
   return (
@@ -193,6 +550,15 @@ const SeasonBlock: React.FC<SeasonBlockProps> = ({ season, onDelete }) => {
                 <JobRow key={j.id} job={j} onDelete={onDelete} />
               ))}
             </ul>
+          )}
+          {season.is_active && (
+            <div className="px-3 pt-1 pb-3">
+              <AnalyzeInSeasonForm
+                entityId={entityId}
+                seasonId={season.id}
+                onLaunched={onLaunched}
+              />
+            </div>
           )}
         </div>
       )}
@@ -392,14 +758,24 @@ export const ParcelDetail: React.FC = () => {
           hint={t('parcelDetail.seasonsHint', 'Every analysis belongs to a crop season. Seasons cannot overlap on the same parcel.')}
         />
         {overview.seasons.length === 0 ? (
-          <div className="bg-slate-50 border border-dashed border-slate-300 rounded-xl p-4 text-center text-sm text-slate-500">
-            {t('parcelDetail.seasonsEmpty', 'No active crop season. Create one to start analysing this parcel.')}
+          <div className="space-y-3">
+            <div className="bg-slate-50 border border-dashed border-slate-300 rounded-xl p-4 text-center text-sm text-slate-500">
+              {t('parcelDetail.seasonsEmpty', 'No active crop season. Create one to start analysing this parcel.')}
+            </div>
+            <NewSeasonForm entityId={overview.parcel.entity_id} onCreated={refetch} />
           </div>
         ) : (
           <div className="space-y-2">
             {overview.seasons.map((s) => (
-              <SeasonBlock key={s.id} season={s} onDelete={handleDeleteJob} />
+              <SeasonBlock
+                key={s.id}
+                season={s}
+                entityId={overview.parcel.entity_id}
+                onDelete={handleDeleteJob}
+                onLaunched={refetch}
+              />
             ))}
+            <NewSeasonForm entityId={overview.parcel.entity_id} onCreated={refetch} />
           </div>
         )}
       </section>
