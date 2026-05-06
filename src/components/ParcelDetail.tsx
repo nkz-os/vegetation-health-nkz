@@ -12,8 +12,8 @@
  * custom formulas + advanced/VRA + export (S4-5).
  */
 
-import React, { useEffect, useState } from 'react';
-import { Loader2, ExternalLink, AlertTriangle, ChevronDown, ChevronRight, Info } from 'lucide-react';
+import React, { useCallback, useEffect, useState } from 'react';
+import { Loader2, ExternalLink, AlertTriangle, ChevronDown, ChevronRight, Info, Trash2 } from 'lucide-react';
 import { useTranslation } from '@nekazari/sdk';
 import { useVegetationApi } from '../services/api';
 import { useVegetationContext } from '../services/vegetationContext';
@@ -45,8 +45,34 @@ const StatusPill: React.FC<{ status: string }> = ({ status }) => {
   return <span className={`inline-block px-2 py-0.5 rounded-full text-[11px] font-medium ${cls}`}>{label}</span>;
 };
 
-const JobRow: React.FC<{ job: ParcelJobCard }> = ({ job }) => {
+interface JobRowProps {
+  job: ParcelJobCard;
+  onDelete: (jobId: string) => Promise<void>;
+}
+
+const JobRow: React.FC<JobRowProps> = ({ job, onDelete }) => {
   const { t } = useTranslation();
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const handleDelete = async () => {
+    setBusy(true);
+    try {
+      await onDelete(job.id);
+    } finally {
+      setBusy(false);
+      setConfirming(false);
+    }
+  };
+
+  const cascadeWarning =
+    job.type === 'download'
+      ? t(
+          'parcelDetail.deleteCascadeWarning',
+          'This will also delete every index calculated from the same scene.',
+        )
+      : '';
+
   return (
     <li className="flex items-start gap-3 py-2 px-3 rounded-lg hover:bg-slate-50 border border-transparent hover:border-slate-100">
       <div className="shrink-0 w-1 self-stretch rounded-full bg-slate-200" />
@@ -77,16 +103,53 @@ const JobRow: React.FC<{ job: ParcelJobCard }> = ({ job }) => {
         {job.error_message && (
           <p className="text-[11px] text-rose-600 mt-1 truncate">{job.error_message}</p>
         )}
+        {confirming && (
+          <div className="mt-2 flex items-center gap-2 bg-rose-50 border border-rose-200 rounded-lg px-2 py-1.5 text-[11px]">
+            <span className="text-rose-700">
+              {t('parcelDetail.deleteConfirm', 'Delete this job and its raster?')}
+              {cascadeWarning && <> {cascadeWarning}</>}
+            </span>
+            <button
+              onClick={handleDelete}
+              disabled={busy}
+              className="px-2 py-0.5 rounded bg-rose-600 text-white font-semibold disabled:opacity-50"
+            >
+              {busy ? t('parcelDetail.deleting', 'Deleting…') : t('parcelDetail.deleteYes', 'Delete')}
+            </button>
+            <button
+              onClick={() => setConfirming(false)}
+              disabled={busy}
+              className="px-2 py-0.5 rounded text-rose-700 hover:bg-rose-100"
+            >
+              {t('parcelDetail.deleteCancel', 'Cancel')}
+            </button>
+          </div>
+        )}
       </div>
-      <div className="shrink-0 text-[11px] text-slate-400 text-right">
-        <div>{fmtDate(job.created_at)}</div>
-        {job.created_by && <div className="truncate max-w-[120px]">{job.created_by}</div>}
+      <div className="shrink-0 flex items-start gap-2">
+        <div className="text-[11px] text-slate-400 text-right">
+          <div>{fmtDate(job.created_at)}</div>
+          {job.created_by && <div className="truncate max-w-[120px]">{job.created_by}</div>}
+        </div>
+        <button
+          onClick={() => setConfirming(true)}
+          disabled={confirming || busy}
+          className="p-1.5 text-slate-300 hover:text-rose-600 hover:bg-rose-50 rounded transition-colors disabled:opacity-30"
+          title={t('parcelDetail.deleteTooltip', 'Delete this job (irreversible)')}
+        >
+          <Trash2 className="w-3.5 h-3.5" />
+        </button>
       </div>
     </li>
   );
 };
 
-const SeasonBlock: React.FC<{ season: ParcelSeasonCard }> = ({ season }) => {
+interface SeasonBlockProps {
+  season: ParcelSeasonCard;
+  onDelete: (jobId: string) => Promise<void>;
+}
+
+const SeasonBlock: React.FC<SeasonBlockProps> = ({ season, onDelete }) => {
   const { t } = useTranslation();
   const [open, setOpen] = useState(true);
   return (
@@ -127,7 +190,7 @@ const SeasonBlock: React.FC<{ season: ParcelSeasonCard }> = ({ season }) => {
           ) : (
             <ul className="divide-y divide-slate-100">
               {season.jobs.map((j) => (
-                <JobRow key={j.id} job={j} />
+                <JobRow key={j.id} job={j} onDelete={onDelete} />
               ))}
             </ul>
           )}
@@ -154,6 +217,26 @@ export const ParcelDetail: React.FC = () => {
   const [overview, setOverview] = useState<ParcelOverview | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [reloadTick, setReloadTick] = useState(0);
+
+  const refetch = useCallback(() => setReloadTick((t) => t + 1), []);
+
+  const handleDeleteJob = useCallback(
+    async (jobId: string) => {
+      if (!selectedEntityId) return;
+      try {
+        await api.deleteParcelJob(selectedEntityId, jobId);
+        refetch();
+      } catch (err: any) {
+        window.alert(
+          t('parcelDetail.deleteFailed', 'Could not delete: {{msg}}', {
+            msg: err?.message || String(err),
+          }),
+        );
+      }
+    },
+    [api, selectedEntityId, refetch, t],
+  );
 
   useEffect(() => {
     if (!selectedEntityId) {
@@ -179,7 +262,7 @@ export const ParcelDetail: React.FC = () => {
     return () => {
       cancelled = true;
     };
-  }, [selectedEntityId, api]);
+  }, [selectedEntityId, api, reloadTick]);
 
   if (!selectedEntityId) {
     return (
@@ -315,7 +398,7 @@ export const ParcelDetail: React.FC = () => {
         ) : (
           <div className="space-y-2">
             {overview.seasons.map((s) => (
-              <SeasonBlock key={s.id} season={s} />
+              <SeasonBlock key={s.id} season={s} onDelete={handleDeleteJob} />
             ))}
           </div>
         )}
@@ -331,7 +414,7 @@ export const ParcelDetail: React.FC = () => {
           <div className="border border-slate-200 rounded-xl bg-white">
             <ul className="divide-y divide-slate-100">
               {overview.legacy_jobs.map((j) => (
-                <JobRow key={j.id} job={j} />
+                <JobRow key={j.id} job={j} onDelete={handleDeleteJob} />
               ))}
             </ul>
           </div>
