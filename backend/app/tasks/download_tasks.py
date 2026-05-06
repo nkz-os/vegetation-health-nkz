@@ -223,7 +223,11 @@ def download_sentinel2_scene(self, job_id: str, tenant_id: str, parameters: Dict
             self.update_state(state='PROGRESS', meta={'progress': 30, 'message': f'Found scene {scene_id}'})
         
         # Determine which bands to download (SCL for cloud masking; rest for indices)
-        required_bands = ['B02', 'B03', 'B04', 'B08', 'B8A', 'B11', 'B12', 'SCL']
+        # Bands needed to compute the standard indices we expose:
+        # NDVI=(B08,B04), EVI=(B08,B04,B02), SAVI=(B08,B04),
+        # GNDVI=(B03,B08), NDRE=(B05,B08) and B8A as a NIR fallback,
+        # plus B11/B12 for moisture indices and SCL for cloud masking.
+        required_bands = ['B02', 'B03', 'B04', 'B05', 'B08', 'B8A', 'B11', 'B12', 'SCL']
         
         # =============================================================================
         # HYBRID CACHE LOGIC: Check global cache first, then download if needed

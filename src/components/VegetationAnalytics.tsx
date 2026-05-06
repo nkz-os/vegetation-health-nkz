@@ -33,6 +33,7 @@ export const VegetationAnalytics: React.FC = () => {
     setActiveJobId,
     setActiveRasterPath,
     indexResults, setIndexResults,
+    entityDataStatus,
   } = useVegetationContext();
   const { isAuthenticated } = useAuth();
   const api = useVegetationApi();
@@ -184,9 +185,23 @@ export const VegetationAnalytics: React.FC = () => {
     setSelectedSeasonId(seasonId);
   };
 
-  // Handle "Analyze" button click — delegates to shared hook
+  // Handle "Analyze" button click — delegates to shared hook.
+  // Surfaces visible feedback for every silent-no-op path so the user is
+  // never left clicking a dead button.
   const handleAnalyze = async () => {
-    if (!selectedEntityId) return;
+    if (!selectedEntityId) {
+      window.alert(
+        t(
+          'analyticsPage.errorNoParcelSelected',
+          'No parcel selected. Open a parcel from the unified viewer first.',
+        ),
+      );
+      return;
+    }
+    if (isAnalyzing) {
+      // Should be unreachable (button is disabled) but defensive.
+      return;
+    }
 
     // Derive date range from selected crop season
     let start_date: string | undefined;
@@ -197,12 +212,20 @@ export const VegetationAnalytics: React.FC = () => {
       end_date = season?.end_date || undefined;
     }
 
-    await startAnalysis({
-      startDate: start_date,
-      endDate: end_date,
-      customFormulaIds: selectedCustomFormulaIds.length > 0 ? selectedCustomFormulaIds : undefined,
-      localCloudThreshold,
-    });
+    try {
+      await startAnalysis({
+        startDate: start_date,
+        endDate: end_date,
+        customFormulaIds: selectedCustomFormulaIds.length > 0 ? selectedCustomFormulaIds : undefined,
+        localCloudThreshold,
+      });
+    } catch (err: any) {
+      window.alert(
+        t('analyticsPage.errorAnalyzeFailed', 'Analysis could not be started: {{msg}}', {
+          msg: err?.message || String(err),
+        }),
+      );
+    }
   };
 
   const handleCreateAndAttachFormula = async () => {
@@ -357,6 +380,39 @@ export const VegetationAnalytics: React.FC = () => {
           {t('cropSeason.newSeason')}
         </button>
       </div>
+
+      {/* Recent cloud-skip banner — surface the silent skips so users know
+          why no layer is rendered and what to do about it. */}
+      {(() => {
+        const skips = entityDataStatus?.recent_cloud_skips || [];
+        const lastSkip = skips[0];
+        const hasIndices = Object.keys(indexResults).length > 0;
+        if (!lastSkip || hasIndices) return null;
+        return (
+          <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-xl p-3 text-sm">
+            <span className="shrink-0 inline-flex items-center justify-center w-7 h-7 rounded-full bg-amber-100 text-amber-700">⚠</span>
+            <div className="flex-1">
+              <p className="font-semibold text-amber-900">
+                {t('analyticsPage.cloudSkipTitle', 'Last scene was discarded due to clouds')}
+              </p>
+              <p className="text-amber-800 mt-0.5">
+                {lastSkip.local_cloud_pct != null && lastSkip.local_cloud_threshold != null ? (
+                  <>
+                    {t('analyticsPage.cloudSkipDetail', 'Cloud cover over the parcel was {{pct}}% (threshold {{thr}}%).', {
+                      pct: Math.round(lastSkip.local_cloud_pct),
+                      thr: Math.round(lastSkip.local_cloud_threshold),
+                    })}
+                    {' '}
+                    <strong>{t('analyticsPage.cloudSkipHint', 'Raise the cloud-tolerance slider below and analyze again.')}</strong>
+                  </>
+                ) : (
+                  lastSkip.message || t('analyticsPage.cloudSkipFallback', 'No usable scenes were found.')
+                )}
+              </p>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Analyze + Index pills */}
       <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-3">

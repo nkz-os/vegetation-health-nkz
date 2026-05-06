@@ -528,17 +528,19 @@ def calculate_vegetation_index(
             db.commit()
         raise
     finally:
-        # Clean up temporary files
+        # Clean up temporary files. ONLY the job-specific indices dir is safe
+        # to wipe here — the tenant-level processing dir (/tmp/vegetation_processing/<tenant>)
+        # is shared by concurrent calc_index tasks for the same scene, and
+        # erasing it caused 'Band file not found: B08.tif' races between
+        # NDVI/EVI/SAVI/GNDVI/NDRE running on the same worker. Bands accumulate
+        # under /tmp until the pod recycles (worker_max_tasks_per_child=50).
         import shutil
-        for tmp_dir in [
-            Path(f"/tmp/vegetation_processing/{tenant_id}"),
-            Path(f"/tmp/vegetation_indices/{tenant_id}/{job_id}"),
-        ]:
-            if tmp_dir.exists():
-                try:
-                    shutil.rmtree(tmp_dir, ignore_errors=True)
-                except Exception as cleanup_err:
-                    logger.debug("Temp cleanup failed for %s: %s", tmp_dir, cleanup_err)
+        job_indices_dir = Path(f"/tmp/vegetation_indices/{tenant_id}/{job_id}")
+        if job_indices_dir.exists():
+            try:
+                shutil.rmtree(job_indices_dir, ignore_errors=True)
+            except Exception as cleanup_err:
+                logger.debug("Temp cleanup failed for %s: %s", job_indices_dir, cleanup_err)
         db.close()
 
 

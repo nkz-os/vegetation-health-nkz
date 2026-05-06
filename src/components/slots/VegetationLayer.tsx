@@ -212,6 +212,19 @@ export const VegetationLayer: React.FC<VegetationLayerProps> = ({ viewer }) => {
       const layer = viewer.imageryLayers.addImageryProvider(provider);
       layer.alpha = (layerOpacity ?? 75) / 100;
       layerRef.current = layer;
+
+      // Fly the camera to the parcel extent so the user actually SEES the
+      // newly-loaded layer instead of staring at a globe view with no clue
+      // a layer exists somewhere in Spain.
+      try {
+        const rect = Cesium.Rectangle.fromDegrees(west, south, east, north);
+        viewer.camera.flyTo({
+          destination: rect,
+          duration: 1.2,
+        });
+      } catch (_) {
+        /* viewer destroyed mid-flight */
+      }
     } catch (err) {
       console.error('[VegetationLayer] Error creating imagery layer:', err);
     }
