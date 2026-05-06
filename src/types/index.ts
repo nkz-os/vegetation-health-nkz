@@ -358,6 +358,15 @@ export interface EntityDataStatus {
     monitoring_enabled: boolean;
   }>;
   active_jobs_count: number;
+  recent_cloud_skips?: Array<{
+    job_id: string;
+    completed_at: string | null;
+    scene_id: string | null;
+    sensing_date: string | null;
+    local_cloud_pct: number | null;
+    local_cloud_threshold: number | null;
+    message: string | null;
+  }>;
 }
 
 export interface CropSeason {
