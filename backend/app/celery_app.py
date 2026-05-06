@@ -5,6 +5,7 @@ Celery application configuration for Vegetation Prime module.
 import os
 from celery import Celery
 from celery.schedules import crontab
+from kombu import Queue
 
 # Create Celery app
 celery_app = Celery(
@@ -13,6 +14,11 @@ celery_app = Celery(
     backend=os.getenv('CELERY_RESULT_BACKEND', 'redis://localhost:6379/0'),
     include=['app.tasks']
 )
+
+# Dedicated queue: do NOT use the default 'celery' queue, since other Celery
+# apps in the cluster (e.g. intelligence-worker) share the same broker and
+# would silently consume + discard our 'vegetation.*' tasks as unregistered.
+VEGETATION_QUEUE = 'vegetation'
 
 # Celery configuration
 celery_app.conf.update(
@@ -30,6 +36,11 @@ celery_app.conf.update(
     task_acks_late=True,
     task_reject_on_worker_lost=True,
     broker_connection_retry_on_startup=True,
+    # Queue isolation
+    task_default_queue=VEGETATION_QUEUE,
+    task_queues=(Queue(VEGETATION_QUEUE, routing_key=f'{VEGETATION_QUEUE}.#'),),
+    task_default_exchange=VEGETATION_QUEUE,
+    task_default_routing_key=f'{VEGETATION_QUEUE}.default',
 )
 
 # Periodic tasks
