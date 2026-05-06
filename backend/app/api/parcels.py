@@ -13,9 +13,11 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Response, status
+from pydantic import BaseModel, Field
 from sqlalchemy import desc, func
 from sqlalchemy.orm import Session
 
+from app.api.scenes import _dispatch_analyze_for_parcel, _resolve_custom_formula_specs
 from app.celery_app import celery_app
 from app.database import get_db_with_tenant
 from app.middleware.auth import require_auth
@@ -385,6 +387,86 @@ def _hard_delete_one(db: Session, tenant_id: str, job: VegetationJob) -> int:
     # 5. Delete the job row itself.
     db.delete(job)
     return deleted
+
+
+class SeasonAnalyzeRequest(BaseModel):
+    """Body for POST /parcels/{eid}/seasons/{sid}/analyze.
+
+    Date range is *not* part of the request: it is derived from the season
+    itself so a season-bound analysis cannot accidentally process scenes
+    outside the campaign window.
+    """
+    indices: Optional[List[str]] = None
+    custom_formulas: Optional[List[str]] = None
+    local_cloud_threshold: Optional[float] = Field(None, ge=0, le=100)
+
+
+@router.post("/{entity_id}/seasons/{season_id}/analyze")
+async def analyze_in_season(
+    entity_id: str,
+    season_id: str,
+    request: SeasonAnalyzeRequest,
+    current_user: dict = Depends(require_auth),
+    db: Session = Depends(get_db_with_tenant),
+):
+    """Launch an analysis bound to a specific crop season.
+
+    Validates that the season belongs to the parcel + tenant and is not
+    soft-deleted, then dispatches the same pipeline as /analyze but pins
+    every resulting download job to crop_season_id and constrains the
+    Copernicus search to the season's date range. End-date defaults to
+    today when the season is open-ended.
+    """
+    tenant_id = current_user["tenant_id"]
+
+    try:
+        season_uuid = uuid_mod.UUID(season_id)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Invalid season_id (expected UUID)")
+
+    season = (
+        db.query(VegetationCropSeason)
+        .filter(
+            VegetationCropSeason.id == season_uuid,
+            VegetationCropSeason.tenant_id == tenant_id,
+            VegetationCropSeason.entity_id == entity_id,
+            VegetationCropSeason.deleted_at.is_(None),
+        )
+        .first()
+    )
+    if not season:
+        raise HTTPException(
+            status_code=404,
+            detail="Crop season not found for this parcel.",
+        )
+    if not season.is_active:
+        raise HTTPException(
+            status_code=409,
+            detail="Crop season is not active. Reactivate it before launching analyses.",
+        )
+
+    from datetime import date as _date_type
+    start_date_iso = season.start_date.isoformat() if season.start_date else None
+    end_date_iso = (
+        season.end_date.isoformat() if season.end_date else _date_type.today().isoformat()
+    )
+
+    custom_formula_specs = _resolve_custom_formula_specs(
+        db, tenant_id, request.custom_formulas or []
+    )
+
+    return await _dispatch_analyze_for_parcel(
+        db=db,
+        tenant_id=tenant_id,
+        entity_id=entity_id,
+        user_id=current_user.get("user_id"),
+        indices=request.indices,
+        custom_formula_specs=custom_formula_specs,
+        start_date=start_date_iso,
+        end_date=end_date_iso,
+        local_cloud_threshold=request.local_cloud_threshold,
+        crop_season_id=str(season.id),
+    )
 
 
 @router.delete("/{entity_id}/jobs/{job_id}", status_code=204)

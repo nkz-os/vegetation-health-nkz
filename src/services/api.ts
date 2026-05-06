@@ -117,6 +117,32 @@ export class VegetationApiClient {
     );
   }
 
+  /** Launch an analysis bound to a specific crop season. */
+  async analyzeInSeason(
+    entityId: string,
+    seasonId: string,
+    body: {
+      indices?: string[];
+      custom_formulas?: string[];
+      local_cloud_threshold?: number;
+    },
+  ): Promise<{
+    job_id: string | null;
+    job_ids: string[];
+    message: string;
+    indices: string[];
+    windows: number;
+    scenes_found: number;
+    date_range: { start: string; end: string };
+    crop_season_id: string;
+  }> {
+    return (await this.client.post(
+      `/parcels/${encodeURIComponent(entityId)}/seasons/${encodeURIComponent(seasonId)}/analyze`,
+      body,
+    )) as any;
+  }
+
+
   async getScenesAvailable(
     entityId: string,
     indexType?: string,
@@ -459,7 +485,8 @@ export class VegetationApiClient {
       crop_type: string;
       start_date: string;
       end_date?: string | null;
-      monitoring_enabled: boolean;
+      label?: string | null;
+      monitoring_enabled?: boolean;
     }
   ): Promise<{ id: string; message: string }> {
     const response = await this.client.post(

@@ -138,70 +138,75 @@ class AnalyzeRequest(BaseModel):
     )
 
 
-@router.post("/analyze")
-async def analyze_parcel(
-    request: AnalyzeRequest,
-    current_user: dict = Depends(require_auth),
-    db: Session = Depends(get_db_with_tenant),
-):
-    """One-click parcel analysis: download best scene + calculate all indices.
+def _resolve_custom_formula_specs(
+    db: Session, tenant_id: str, custom_formula_ids: List[str]
+) -> List[Dict[str, Any]]:
+    """Validate and serialise tenant-scoped custom formulas. Raises 404/422."""
+    if not custom_formula_ids:
+        return []
+    valid_ids = []
+    for formula_id in custom_formula_ids:
+        try:
+            valid_ids.append(uuid_mod.UUID(formula_id))
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=422, detail=f"Invalid custom formula id: {formula_id}"
+            ) from exc
 
-    This is the main entry point for the simplified frontend flow.
-    Creates a download job that chains into index calculations for all
-    requested indices (default: NDVI, EVI, SAVI, GNDVI, NDRE).
+    formula_rows = (
+        db.query(VegetationCustomFormula)
+        .filter(
+            VegetationCustomFormula.tenant_id == tenant_id,
+            VegetationCustomFormula.id.in_(valid_ids),
+        )
+        .all()
+    )
+    found_ids = {str(row.id) for row in formula_rows}
+    missing = [fid for fid in custom_formula_ids if fid not in found_ids]
+    if missing:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Custom formulas not found for tenant: {', '.join(missing)}",
+        )
+    return [
+        {
+            "formula_id": str(row.id),
+            "formula_name": row.name,
+            "formula_expression": row.formula,
+            "index_key": f"custom:{str(row.id)}",
+        }
+        for row in formula_rows
+    ]
+
+
+async def _dispatch_analyze_for_parcel(
+    *,
+    db: Session,
+    tenant_id: str,
+    entity_id: str,
+    user_id: Optional[str],
+    indices: Optional[List[str]],
+    custom_formula_specs: List[Dict[str, Any]],
+    start_date: Optional[str],
+    end_date: Optional[str],
+    local_cloud_threshold: Optional[float],
+    crop_season_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Shared analyze pipeline: resolve geometry, search scenes, group into
+    dekadal windows, create one download job per window and dispatch the
+    Celery task. Optionally binds the resulting jobs to a crop_season_id.
+
+    Used by both the legacy POST /analyze and the new
+    POST /parcels/{id}/seasons/{sid}/analyze.
     """
     import os
     from datetime import date as date_type, timedelta
 
-    tenant_id = current_user["tenant_id"]
-    entity_id = request.entity_id
+    # Default date range: last 30 days when caller did not constrain it.
+    end_date_iso = end_date or date_type.today().isoformat()
+    start_date_iso = start_date or (date_type.today() - timedelta(days=30)).isoformat()
 
-    # Default date range: last 30 days
-    end_date = request.end_date or date_type.today().isoformat()
-    start_date = request.start_date or (
-        date_type.today() - timedelta(days=30)
-    ).isoformat()
-
-    # Default indices
-    indices = request.indices or ["NDVI", "EVI", "SAVI", "GNDVI", "NDRE"]
-
-    # Resolve requested custom formulas (tenant-scoped)
-    custom_formula_ids = request.custom_formulas or []
-    custom_formula_specs: List[Dict[str, Any]] = []
-    if custom_formula_ids:
-        valid_ids = []
-        for formula_id in custom_formula_ids:
-            try:
-                valid_ids.append(uuid_mod.UUID(formula_id))
-            except ValueError as exc:
-                raise HTTPException(status_code=422, detail=f"Invalid custom formula id: {formula_id}") from exc
-
-        formula_rows = (
-            db.query(VegetationCustomFormula)
-            .filter(
-                VegetationCustomFormula.tenant_id == tenant_id,
-                VegetationCustomFormula.id.in_(valid_ids),
-            )
-            .all()
-        )
-
-        found_ids = {str(row.id) for row in formula_rows}
-        missing = [formula_id for formula_id in custom_formula_ids if formula_id not in found_ids]
-        if missing:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Custom formulas not found for tenant: {', '.join(missing)}",
-            )
-
-        custom_formula_specs = [
-            {
-                "formula_id": str(row.id),
-                "formula_name": row.name,
-                "formula_expression": row.formula,
-                "index_key": f"custom:{str(row.id)}",
-            }
-            for row in formula_rows
-        ]
+    indices_list = indices or ["NDVI", "EVI", "SAVI", "GNDVI", "NDRE"]
 
     # Get parcel geometry from Orion-LD
     geometry = None
@@ -209,17 +214,11 @@ async def analyze_parcel(
     try:
         import httpx
 
-        orion_url = os.getenv(
-            "FIWARE_CONTEXT_BROKER_URL", "http://orion-ld-service:1026"
-        )
-        headers = {
-            "Accept": "application/json",
-            "NGSILD-Tenant": tenant_id,
-        }
+        orion_url = os.getenv("FIWARE_CONTEXT_BROKER_URL", "http://orion-ld-service:1026")
+        headers = {"Accept": "application/json", "NGSILD-Tenant": tenant_id}
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.get(
-                f"{orion_url}/ngsi-ld/v1/entities/{entity_id}",
-                headers=headers,
+                f"{orion_url}/ngsi-ld/v1/entities/{entity_id}", headers=headers
             )
             if resp.status_code == 200:
                 entity = resp.json()
@@ -228,7 +227,6 @@ async def analyze_parcel(
                 if geom and "coordinates" in geom:
                     geometry = geom
                     from shapely.geometry import shape as shp
-
                     geom_obj = shp(geom)
                     bbox = list(geom_obj.bounds)
     except Exception as exc:
@@ -240,7 +238,6 @@ async def analyze_parcel(
             detail="Could not determine parcel geometry. Ensure the parcel has a location in the context broker.",
         )
 
-    # Search ALL available scenes in the date range via Copernicus STAC
     from app.services.copernicus_client import CopernicusDataSpaceClient
     from app.services.platform_credentials import get_copernicus_credentials_with_fallback
     from app.services.temporal_utils import group_scenes_into_windows
@@ -248,21 +245,21 @@ async def analyze_parcel(
     creds = get_copernicus_credentials_with_fallback()
     if not creds:
         raise HTTPException(status_code=503, detail="Copernicus credentials not configured")
-
     copernicus = CopernicusDataSpaceClient()
-    copernicus.set_credentials(creds['client_id'], creds['client_secret'])
+    copernicus.set_credentials(creds["client_id"], creds["client_secret"])
 
     from shapely.geometry import shape as shp_fn
     geom_obj = shp_fn(geometry)
     intersects_geojson = geometry
-    if geom_obj.geom_type == 'MultiPolygon':
+    if geom_obj.geom_type == "MultiPolygon":
         largest = max(geom_obj.geoms, key=lambda g: g.area)
         intersects_geojson = largest.__geo_interface__
 
+    from datetime import date as _date_type
     all_scenes = copernicus.search_scenes(
         intersects=intersects_geojson,
-        start_date=date_type.fromisoformat(start_date),
-        end_date=date_type.fromisoformat(end_date),
+        start_date=_date_type.fromisoformat(start_date_iso),
+        end_date=_date_type.fromisoformat(end_date_iso),
         cloud_cover_lte=60,
         limit=50,
     )
@@ -270,25 +267,30 @@ async def analyze_parcel(
     if not all_scenes:
         raise HTTPException(status_code=404, detail="No scenes found in the selected date range")
 
-    # Group into dekadal (10-day) windows and pick best scene per window
-    windows = group_scenes_into_windows(all_scenes, date_key='sensing_date')
+    windows = group_scenes_into_windows(all_scenes, date_key="sensing_date")
 
-    job_ids = []
+    season_uuid = None
+    if crop_season_id:
+        try:
+            season_uuid = uuid_mod.UUID(crop_season_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="Invalid crop_season_id") from exc
+
+    job_ids: List[str] = []
     for window in windows:
-        # Pick the scene with lowest cloud cover in each window
-        best = sorted(window['scenes'], key=lambda s: s.get('cloud_cover', 100))[0]
+        best = sorted(window["scenes"], key=lambda s: s.get("cloud_cover", 100))[0]
 
         job_parameters = {
-            "scene_id": best['id'],
+            "scene_id": best["id"],
             "bbox": bbox,
             "bounds": geometry,
             "entity_id": entity_id,
             "cloud_coverage_threshold": 60,
-            "calculate_indices": indices,
+            "calculate_indices": indices_list,
             "calculate_custom_formulas": custom_formula_specs,
         }
-        if request.local_cloud_threshold is not None:
-            job_parameters["local_cloud_threshold"] = float(request.local_cloud_threshold)
+        if local_cloud_threshold is not None:
+            job_parameters["local_cloud_threshold"] = float(local_cloud_threshold)
 
         job = VegetationJob(
             tenant_id=tenant_id,
@@ -296,7 +298,8 @@ async def analyze_parcel(
             entity_id=entity_id,
             entity_type="AgriParcel",
             parameters=job_parameters,
-            created_by=current_user.get("user_id"),
+            created_by=user_id,
+            crop_season_id=season_uuid,
         )
         db.add(job)
         db.commit()
@@ -320,19 +323,48 @@ async def analyze_parcel(
         job_ids.append(str(job.id))
 
     logger.info(
-        "Multi-scene analysis: %d windows dispatched for entity %s (scenes: %d, indices: %s)",
-        len(windows), entity_id, len(all_scenes), indices,
+        "Multi-scene analysis: %d windows dispatched for entity %s (scenes: %d, indices: %s, season: %s)",
+        len(windows), entity_id, len(all_scenes), indices_list, crop_season_id,
     )
     return {
         "job_id": job_ids[0] if job_ids else None,
         "job_ids": job_ids,
         "message": f"Analysis started: {len(windows)} date windows, {len(all_scenes)} scenes found",
-        "indices": indices,
+        "indices": indices_list,
         "custom_formulas": custom_formula_specs,
         "windows": len(windows),
         "scenes_found": len(all_scenes),
-        "date_range": {"start": start_date, "end": end_date},
+        "date_range": {"start": start_date_iso, "end": end_date_iso},
+        "crop_season_id": crop_season_id,
     }
+
+
+@router.post("/analyze")
+async def analyze_parcel(
+    request: AnalyzeRequest,
+    current_user: dict = Depends(require_auth),
+    db: Session = Depends(get_db_with_tenant),
+):
+    """Legacy one-shot analyze (no season binding). Kept for the unified
+    viewer slot path. The module page uses the season-bound endpoint
+    POST /api/vegetation/parcels/{eid}/seasons/{sid}/analyze instead.
+    """
+    tenant_id = current_user["tenant_id"]
+    custom_formula_specs = _resolve_custom_formula_specs(
+        db, tenant_id, request.custom_formulas or []
+    )
+    return await _dispatch_analyze_for_parcel(
+        db=db,
+        tenant_id=tenant_id,
+        entity_id=request.entity_id,
+        user_id=current_user.get("user_id"),
+        indices=request.indices,
+        custom_formula_specs=custom_formula_specs,
+        start_date=request.start_date,
+        end_date=request.end_date,
+        local_cloud_threshold=request.local_cloud_threshold,
+        crop_season_id=None,
+    )
 
 
 @router.get("/results/{entity_id}")
