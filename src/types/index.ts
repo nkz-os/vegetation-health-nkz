@@ -341,6 +341,70 @@ export interface CropRecommendation {
   recommendations?: string[];
 }
 
+export interface ParcelJobCard {
+  id: string;
+  type: 'download' | 'calculate_index' | 'process' | 'calculation' | string;
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled' | 'skipped' | string;
+  indices: string[];
+  scene_product_id: string | null;
+  sensing_date: string | null;
+  local_cloud_pct: number | null;
+  local_cloud_threshold: number | null;
+  raster_path: string | null;
+  index_type: string | null;
+  stats_mean: number | null;
+  error_message: string | null;
+  created_at: string | null;
+  completed_at: string | null;
+  created_by: string | null;
+  crop_season_id: string | null;
+}
+
+export interface ParcelSeasonCard {
+  id: string;
+  crop_type: string;
+  label: string | null;
+  start_date: string | null;
+  end_date: string | null;
+  is_active: boolean;
+  monitoring_enabled: boolean;
+  jobs: ParcelJobCard[];
+  stats: {
+    jobs_total: number;
+    jobs_completed: number;
+    jobs_failed: number;
+    jobs_skipped: number;
+  };
+}
+
+export interface ParcelOverview {
+  parcel: {
+    entity_id: string;
+    name: string | null;
+    location: any | null;
+  };
+  seasons: ParcelSeasonCard[];
+  legacy_jobs: ParcelJobCard[];
+  current_state: {
+    index_type: string | null;
+    sensing_date: string | null;
+    stats_mean: number | null;
+    raster_path: string | null;
+    job_id: string;
+  } | null;
+  available_indices: string[];
+  recent_skips: Array<{
+    job_id: string;
+    completed_at: string | null;
+    scene_id: string | null;
+    sensing_date: string | null;
+    local_cloud_pct: number | null;
+    local_cloud_threshold: number | null;
+    message: string | null;
+  }>;
+  active_jobs_count: number;
+}
+
 export interface EntityDataStatus {
   entity_id: string;
   name?: string | null;

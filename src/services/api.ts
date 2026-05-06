@@ -102,6 +102,14 @@ export class VegetationApiClient {
     return response as any;
   }
 
+  /** Single round-trip overview for the parcel detail page. */
+  async getParcelOverview(entityId: string): Promise<import('../types').ParcelOverview> {
+    const response = await this.client.get(
+      `/parcels/${encodeURIComponent(entityId)}/overview`
+    );
+    return response as any;
+  }
+
   async getScenesAvailable(
     entityId: string,
     indexType?: string,
