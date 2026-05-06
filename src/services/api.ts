@@ -360,6 +360,12 @@ export class VegetationApiClient {
     end_date?: string;
     indices?: string[];
     custom_formulas?: string[];
+    /**
+     * Max acceptable cloud coverage (%) over the parcel polygon.
+     * Range 0-100. Server default: 30. Suggested: 10 (strict, clear-sky regions),
+     * 30 (balanced, default), 50 (permissive, Atlantic/Cantabrian climate).
+     */
+    local_cloud_threshold?: number;
   }): Promise<{
     job_id: string;
     message: string;
