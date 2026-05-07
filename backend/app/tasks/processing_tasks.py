@@ -72,19 +72,41 @@ def _decrement_and_cleanup_bands(scene_product_id: str) -> bool:
     return False
 
 
-def _check_idempotency(tenant_id: str, parcel_id: str, index_type: str, sensing_date_str: str) -> bool:
-    """Check if this calculation was already done recently (Redis SETNX, TTL 24h).
+def _idempotency_key(tenant_id: str, parcel_id: str, index_type: str, sensing_date_str: str) -> str:
+    return f"vegetation:calc:{tenant_id}:{parcel_id}:{index_type}:{sensing_date_str}"
 
-    Returns True if already calculated (should skip), False if new.
+
+def _check_idempotency(tenant_id: str, parcel_id: str, index_type: str, sensing_date_str: str) -> bool:
+    """Atomically claim the slot for this (tenant, parcel, index, date)
+    calculation in Redis (SETNX, TTL 24h). Two workers racing on the same
+    key cannot both proceed — only one wins.
+
+    Returns True if a previous run already claimed this slot (caller must
+    skip), False when the claim is fresh and the caller should compute.
+
+    The caller is responsible for releasing the key on failure via
+    _release_idempotency, otherwise a single failed run would lock out
+    retries for 24h.
     """
     try:
-        key = f"vegetation:calc:{tenant_id}:{parcel_id}:{index_type}:{sensing_date_str}"
+        key = _idempotency_key(tenant_id, parcel_id, index_type, sensing_date_str)
         r = _get_redis()
-        was_set = r.set(key, "1", nx=True, ex=86400)  # 24h TTL
-        return not was_set  # If not set → already exists → skip
+        was_set = r.set(key, "1", nx=True, ex=86400)
+        return not was_set
     except Exception as e:
         logger.debug("Redis idempotency check failed, proceeding: %s", e)
         return False
+
+
+def _release_idempotency(tenant_id: str, parcel_id: str, index_type: str, sensing_date_str: str) -> None:
+    """Release a previously-claimed idempotency slot. Called after a failed
+    calc_index so the next retry can compute again, and from the DELETE
+    cascade so users can re-run an analysis they explicitly removed."""
+    try:
+        key = _idempotency_key(tenant_id, parcel_id, index_type, sensing_date_str)
+        _get_redis().delete(key)
+    except Exception as e:
+        logger.debug("Redis idempotency release failed (non-fatal): %s", e)
 
 
 def _extract_formula_bands(formula: str) -> List[str]:
@@ -526,6 +548,24 @@ def calculate_vegetation_index(
         if job:
             job.mark_failed(str(e), str(e.__traceback__))
             db.commit()
+            # Release the Redis idempotency lock so the user can retry without
+            # waiting 24h. Without this, a single failure would mark every
+            # subsequent calc_index for the same (tenant,parcel,index,date)
+            # as 'skipped:true' until the TTL expires (root cause of the
+            # 11/11-skipped NDRE the audit surfaced 2026-05-07).
+            try:
+                params = job.parameters or {}
+                idx_for_lock = params.get('index_type') or (job.result or {}).get('index_type')
+                sensing_for_lock = (
+                    (job.result or {}).get('sensing_date')
+                    or params.get('sensing_date')
+                )
+                if idx_for_lock and sensing_for_lock and job.entity_id:
+                    _release_idempotency(
+                        tenant_id, job.entity_id, idx_for_lock, sensing_for_lock,
+                    )
+            except Exception:
+                pass
         raise
     finally:
         # Clean up temporary files. ONLY the job-specific indices dir is safe

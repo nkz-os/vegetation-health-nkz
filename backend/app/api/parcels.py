@@ -386,7 +386,9 @@ def _hard_delete_one(db: Session, tenant_id: str, job: VegetationJob) -> int:
     if raster_path:
         _delete_raster_safely(raster_path, tenant_id)
 
-    # 4. Drop the matching cache row(s) for calc_index jobs.
+    # 4. Drop the matching cache row(s) for calc_index jobs (kept for
+    # backwards compatibility; the cache table is no longer written by the
+    # current worker, but legacy rows may still exist).
     if job.job_type == "calculate_index":
         result = job.result or {}
         scene_uuid = result.get("scene_id")
@@ -402,6 +404,17 @@ def _hard_delete_one(db: Session, tenant_id: str, job: VegetationJob) -> int:
                 ).delete(synchronize_session=False)
             except (ValueError, TypeError):
                 pass
+        # Also release the Redis idempotency lock so a fresh re-analysis
+        # for the same (tenant, parcel, index, sensing_date) is allowed
+        # immediately. Without this, deleting a calc_index job and
+        # relaunching would surface 'skipped' for up to 24h.
+        sensing = result.get("sensing_date") or (job.parameters or {}).get("sensing_date")
+        if idx_type and sensing and job.entity_id:
+            try:
+                from app.tasks.processing_tasks import _release_idempotency
+                _release_idempotency(tenant_id, job.entity_id, idx_type, sensing)
+            except Exception as exc:
+                logger.debug("Idempotency lock release failed (non-fatal): %s", exc)
 
     # 5. Delete the job row itself.
     db.delete(job)
