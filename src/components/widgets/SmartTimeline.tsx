@@ -219,16 +219,29 @@ export const SmartTimeline: React.FC<SmartTimelineProps> = ({
         </div>
       </div>
 
-      {/* Sparse timeline */}
+      {/* Sparse timeline.
+          When >12 ticks fit in the container, shrink the gap. When >24,
+          flip to horizontal scroll so each tick keeps a usable >=20px
+          touch target on tablet (audit #17). Below 12 ticks we keep the
+          original justify-between layout.
+       */}
       <div
         ref={containerRef}
-        className="relative px-4 py-6"
+        className={`relative px-4 py-6 ${sortedStats.length > 24 ? 'overflow-x-auto' : ''}`}
       >
         {/* Baseline */}
         <div className="absolute left-4 right-4 top-1/2 h-0.5 bg-slate-200 -translate-y-1/2" />
 
         {/* Tick marks */}
-        <div className="flex items-center justify-between relative">
+        <div
+          className={`flex items-center relative ${
+            sortedStats.length > 24
+              ? 'gap-3 min-w-max'
+              : sortedStats.length > 12
+                ? 'gap-1.5 justify-between'
+                : 'justify-between'
+          }`}
+        >
           {sortedStats.map((tick) => {
             const isSelected = tickDate(tick) === selectedDate;
             const color = getTickColor(tick.mean_value);
