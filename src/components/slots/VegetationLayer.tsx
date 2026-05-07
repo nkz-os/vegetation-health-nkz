@@ -118,10 +118,22 @@ export const VegetationLayer: React.FC<VegetationLayerProps> = ({ viewer }) => {
 
   // Cesium layer management
   useEffect(() => {
-    if (!viewer) return;
+    if (!viewer) {
+      console.debug('[VegetationLayer] effect skipped: no viewer prop', {
+        selectedIndex, hasRasterPath: !!activeRasterPath, hasJobId: !!activeJobId,
+      });
+      return;
+    }
 
     const Cesium = (window as any).Cesium;
-    if (!Cesium) return;
+    if (!Cesium) {
+      console.debug('[VegetationLayer] effect skipped: window.Cesium not loaded');
+      return;
+    }
+    console.debug('[VegetationLayer] effect running', {
+      selectedIndex, activeJobId, activeRasterPath: activeRasterPath?.slice(0, 60),
+      selectedEntityId: selectedEntityId?.slice(-30),
+    });
 
     // Clean up previous layers
     if (layerRef.current) {
@@ -178,7 +190,12 @@ export const VegetationLayer: React.FC<VegetationLayerProps> = ({ viewer }) => {
       || (selectedIndex && indexResults?.[selectedIndex]?.job_id)
       || null;
 
-    if ((!rasterPath && !jobId) || !selectedIndex || !selectedEntityId) return;
+    if ((!rasterPath && !jobId) || !selectedIndex || !selectedEntityId) {
+      console.debug('[VegetationLayer] missing required state, no layer', {
+        rasterPath: !!rasterPath, jobId: !!jobId, selectedIndex, selectedEntityId: !!selectedEntityId,
+      });
+      return;
+    }
 
     // Build tile URL and bounds key
     const apiBase = window.location.origin;
@@ -198,14 +215,17 @@ export const VegetationLayer: React.FC<VegetationLayerProps> = ({ viewer }) => {
     // Fetch COG bounds if not cached
     const cached = tileBounds[boundsKey];
     if (!cached) {
+      console.debug('[VegetationLayer] fetching bounds', boundsUrl);
       fetch(boundsUrl)
         .then(r => r.ok ? r.json() : null)
         .then(data => {
+          console.debug('[VegetationLayer] bounds resolved', data);
           if (data?.bounds) {
             setTileBounds(prev => ({ ...prev, [boundsKey]: data }));
           }
         })
-        .catch(() => {
+        .catch((err) => {
+          console.warn('[VegetationLayer] bounds fetch failed, using fallback', err);
           setTileBounds(prev => ({ ...prev, [boundsKey]: { bounds: [-180, -90, 180, 90], minzoom: 10, maxzoom: 18 } }));
         });
       return;
@@ -225,6 +245,11 @@ export const VegetationLayer: React.FC<VegetationLayerProps> = ({ viewer }) => {
       const layer = viewer.imageryLayers.addImageryProvider(provider);
       layer.alpha = (layerOpacity ?? 75) / 100;
       layerRef.current = layer;
+      console.info('[VegetationLayer] imagery provider mounted', {
+        index: selectedIndex, bounds: cached.bounds, minzoom: cached.minzoom, maxzoom: cached.maxzoom,
+        sampleTileUrl: tileUrl.replace('{z}', String(cached.minzoom || 13))
+                              .replace('{x}', '4048').replace('{y}', '3021'),
+      });
 
       // Fly the camera to the parcel extent so the user actually SEES the
       // newly-loaded layer instead of staring at a globe view with no clue
