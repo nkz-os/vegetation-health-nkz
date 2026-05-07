@@ -234,12 +234,13 @@ def calculate_vegetation_index(
                 raise ValueError("entity_id is required for VRA zoning")
 
             n_zones = (job.parameters or {}).get('n_zones', 3)
+            source_index = (job.parameters or {}).get('source_index', 'NDVI')
             from app.jobs.zoning_algorithm import ZoningAlgorithm
             zoning = ZoningAlgorithm(tenant_id=tenant_id)
             result = zoning.execute(
                 parcel_id=entity_id,
                 scene_id="",
-                parameters={"n_zones": n_zones},
+                parameters={"n_zones": n_zones, "source_index": source_index},
             )
 
             if result.get('status') == 'error':

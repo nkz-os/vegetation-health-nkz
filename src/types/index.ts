@@ -109,6 +109,9 @@ export interface IndexCalculationParams {
   // Temporal composite options
   start_date?: string;
   end_date?: string;
+  // VRA zoning
+  source_index?: string;
+  n_zones?: number;
 }
 
 // Slot component props
@@ -358,6 +361,9 @@ export interface ParcelJobCard {
   completed_at: string | null;
   created_by: string | null;
   crop_season_id: string | null;
+  zones_created: number | null;
+  zoning_source: string | null;
+  is_vra: boolean;
 }
 
 export interface ParcelSeasonCard {
