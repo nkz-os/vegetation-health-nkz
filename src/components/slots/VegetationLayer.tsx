@@ -10,6 +10,7 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 
+import { useViewerOptional } from '@nekazari/sdk';
 import { useVegetationContext } from '../../services/vegetationContext';
 import { useVegetationApi } from '../../services/api';
 
@@ -19,11 +20,9 @@ interface TileBounds {
   maxzoom: number;
 }
 
-interface VegetationLayerProps {
-  viewer?: any; // Injected by CesiumMap
-}
-
-export const VegetationLayer: React.FC<VegetationLayerProps> = ({ viewer }) => {
+export const VegetationLayer: React.FC = () => {
+  const viewerCtx = useViewerOptional();
+  const viewer = viewerCtx?.cesiumViewer;
   const {
     selectedIndex, setSelectedIndex,
     activeJobId, setActiveJobId,
@@ -119,7 +118,7 @@ export const VegetationLayer: React.FC<VegetationLayerProps> = ({ viewer }) => {
   // Cesium layer management
   useEffect(() => {
     if (!viewer) {
-      console.debug('[VegetationLayer] effect skipped: no viewer prop', {
+      console.debug('[VegetationLayer] effect skipped: no cesium viewer yet', {
         selectedIndex, hasRasterPath: !!activeRasterPath, hasJobId: !!activeJobId,
       });
       return;
@@ -322,10 +321,10 @@ export const VegetationLayer: React.FC<VegetationLayerProps> = ({ viewer }) => {
         isTransitioning ? 'scale-110 opacity-100' : 'scale-100 opacity-80'
       }`}
     >
-      <div className="bg-black/70 text-white px-4 py-1.5 rounded-full text-sm font-medium backdrop-blur-sm flex items-center gap-2 shadow-lg">
+      <div className="bg-slate-900 text-white px-4 py-1.5 rounded-full text-sm font-medium flex items-center gap-2 shadow-lg border border-slate-700">
         <span className={`w-2 h-2 rounded-full ${isTransitioning ? 'bg-emerald-400 animate-pulse' : 'bg-emerald-500'}`} />
         <span>{selectedIndex}</span>
-        <span className="text-white/50">·</span>
+        <span className="text-slate-400">·</span>
         <span>{dateLabel}</span>
       </div>
     </div>,
