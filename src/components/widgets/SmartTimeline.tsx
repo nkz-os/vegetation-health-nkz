@@ -167,7 +167,7 @@ export const SmartTimeline: React.FC<SmartTimelineProps> = ({
   // Loading state
   if (isLoading && sortedStats.length === 0) {
     return (
-      <div className="bg-white/95 backdrop-blur-sm rounded-xl border border-slate-200/50 p-6">
+      <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 p-6">
         <div className="flex items-center justify-center h-20">
           <div className="animate-pulse flex items-center gap-2 text-slate-500">
             <Calendar className="w-5 h-5" />
@@ -181,7 +181,7 @@ export const SmartTimeline: React.FC<SmartTimelineProps> = ({
   // Error state
   if (hasError && sortedStats.length === 0) {
     return (
-      <div className="bg-white/95 backdrop-blur-sm rounded-xl border border-slate-200/50 p-6">
+      <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 p-6">
         <div className="flex items-center justify-center h-20 text-red-500">
           <AlertCircle className="w-5 h-5 mr-2" />
           <span className="text-sm">{internalError}</span>
@@ -193,7 +193,7 @@ export const SmartTimeline: React.FC<SmartTimelineProps> = ({
   // Empty state
   if (sortedStats.length === 0) {
     return (
-      <div className="bg-white/95 backdrop-blur-sm rounded-xl border border-slate-200/50 p-6">
+      <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 p-6">
         <div className="flex items-center justify-center h-20 text-slate-500">
           <CloudOff className="w-5 h-5 mr-2" />
           <span>{t('timeline.noDataAvailable')}</span>
@@ -203,17 +203,17 @@ export const SmartTimeline: React.FC<SmartTimelineProps> = ({
   }
 
   return (
-    <div className="bg-white/95 backdrop-blur-sm rounded-xl border border-slate-200/50 shadow-lg overflow-hidden">
+    <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 shadow-lg overflow-hidden">
       {/* Header */}
-      <div className="px-4 py-2.5 border-b border-slate-100">
+      <div className="px-4 py-2.5 border-b border-slate-100 dark:border-slate-700">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Calendar className="w-4 h-4 text-slate-500" />
-            <h3 className="text-sm font-semibold text-slate-700">
+            <Calendar className="w-4 h-4 text-slate-500 dark:text-slate-300" />
+            <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-100">
               {t('timeline.evolution', { index: indexType })}
             </h3>
           </div>
-          <span className="text-xs text-slate-400">
+          <span className="text-xs text-slate-400 dark:text-slate-500">
             {t('timelineWidget.scenesAvailable', { count: sortedStats.length })}
           </span>
         </div>
@@ -230,7 +230,7 @@ export const SmartTimeline: React.FC<SmartTimelineProps> = ({
         className={`relative px-4 py-6 ${sortedStats.length > 24 ? 'overflow-x-auto' : ''}`}
       >
         {/* Baseline */}
-        <div className="absolute left-4 right-4 top-1/2 h-0.5 bg-slate-200 -translate-y-1/2" />
+        <div className="absolute left-4 right-4 top-1/2 h-0.5 bg-slate-200 dark:bg-slate-700 -translate-y-1/2" />
 
         {/* Tick marks */}
         <div
@@ -273,7 +273,7 @@ export const SmartTimeline: React.FC<SmartTimelineProps> = ({
                 <span
                   className={`
                     mt-2 text-[10px] whitespace-nowrap transition-colors
-                    ${isSelected ? 'text-slate-800 font-semibold' : 'text-slate-400'}
+                    ${isSelected ? 'text-slate-800 dark:text-slate-100 font-semibold' : 'text-slate-400 dark:text-slate-500'}
                   `}
                 >
                   {formatDateShort(tickDate(tick))}
@@ -287,7 +287,7 @@ export const SmartTimeline: React.FC<SmartTimelineProps> = ({
       {/* Tooltip */}
       {tooltipItem && tooltipPos && (
         <div
-          className="absolute z-50 bg-white shadow-lg rounded-lg border border-slate-200 p-3 text-sm pointer-events-none"
+          className="absolute z-50 bg-white dark:bg-slate-900 shadow-lg rounded-lg border border-slate-200 dark:border-slate-700 p-3 text-sm pointer-events-none"
           style={{
             left: Math.min(tooltipPos.x, (containerRef.current?.offsetWidth ?? 400) - 180),
             top: tooltipPos.y - 10,
@@ -295,10 +295,10 @@ export const SmartTimeline: React.FC<SmartTimelineProps> = ({
             minWidth: 160,
           }}
         >
-          <p className="font-semibold text-slate-800 mb-1">
+          <p className="font-semibold text-slate-800 dark:text-slate-100 mb-1">
             {formatDateFull(tickDate(tooltipItem)!)}
           </p>
-          <div className="space-y-0.5 text-xs text-slate-600">
+          <div className="space-y-0.5 text-xs text-slate-600 dark:text-slate-300">
             <p>
               <span className="font-medium">{indexType}:</span>{' '}
               {tooltipItem.mean_value != null ? tooltipItem.mean_value.toFixed(4) : '-'}
@@ -307,7 +307,7 @@ export const SmartTimeline: React.FC<SmartTimelineProps> = ({
               <span className="font-medium">{t('timeline.clouds')}:</span>{' '}
               {tooltipItem.cloud_coverage != null ? `${tooltipItem.cloud_coverage.toFixed(1)}%` : '-'}
             </p>
-            <p className="text-[10px] text-slate-400 truncate max-w-[200px]">
+            <p className="text-[10px] text-slate-400 dark:text-slate-500 truncate max-w-[200px]">
               ID: {tooltipItem.scene_id}
             </p>
           </div>
@@ -315,7 +315,7 @@ export const SmartTimeline: React.FC<SmartTimelineProps> = ({
       )}
 
       {/* Legend */}
-      <div className="px-4 py-2 border-t border-slate-100 bg-slate-50/50 flex items-center gap-4 text-[10px] text-slate-500">
+      <div className="px-4 py-2 border-t border-slate-100 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 flex items-center gap-4 text-[10px] text-slate-500 dark:text-slate-300">
         <div className="flex items-center gap-1">
           <span className="w-2.5 h-2.5 rounded-full bg-green-500" />
           <span>{t('legend.high')} (&ge;0.6)</span>
