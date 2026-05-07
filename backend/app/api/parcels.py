@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, Field
-from sqlalchemy import desc, func
+from sqlalchemy import desc, func, or_
 from sqlalchemy.orm import Session
 
 from app.api.scenes import _dispatch_analyze_for_parcel, _resolve_custom_formula_specs
@@ -340,6 +340,12 @@ def _hard_delete_one(db: Session, tenant_id: str, job: VegetationJob) -> int:
     if job.job_type == "download":
         scene_uuid = (job.result or {}).get("scene_id")
         if scene_uuid:
+            # Filter children directly in the JSONB columns instead of
+            # bringing every calculate_index row for this parcel into
+            # memory. Two predicates cover both the canonical scene UUID
+            # in result.scene_id (post-success rows) and the scene UUID
+            # already pinned in parameters.scene_id at enqueue time
+            # (pre-success rows from the race window).
             children = (
                 db.query(VegetationJob)
                 .filter(
@@ -347,20 +353,15 @@ def _hard_delete_one(db: Session, tenant_id: str, job: VegetationJob) -> int:
                     VegetationJob.entity_id == job.entity_id,
                     VegetationJob.job_type == "calculate_index",
                     VegetationJob.id != job.id,
+                    or_(
+                        VegetationJob.result["scene_id"].astext == scene_uuid,
+                        VegetationJob.parameters["scene_id"].astext == scene_uuid,
+                    ),
                 )
                 .all()
             )
             for c in children:
-                cr = c.result or {}
-                cp = c.parameters or {}
-                # Match either by canonical scene UUID or by scene_product_id;
-                # the latter covers calc_index jobs that ran before the result
-                # was committed (race window).
-                if (
-                    cr.get("scene_id") == scene_uuid
-                    or cp.get("scene_id") == scene_uuid
-                ):
-                    deleted += _hard_delete_one(db, tenant_id, c)
+                deleted += _hard_delete_one(db, tenant_id, c)
 
     # 3. Drop the raster file from MinIO if the job produced one.
     raster_path = (job.result or {}).get("raster_path")
@@ -512,8 +513,16 @@ async def delete_parcel_job(
     db.commit()
 
     # Best-effort entity cleanup (does not block the user's success path).
+    # Wrapped so a transient httpx error after the DB delete still returns 204
+    # — the orphan entity in Orion-LD will be reaped on the next delete.
     if job.entity_id:
-        await _delete_orion_entity_if_orphan(job.entity_id, tenant_id, db)
+        try:
+            await _delete_orion_entity_if_orphan(job.entity_id, tenant_id, db)
+        except Exception as exc:
+            logger.warning(
+                "Orion-LD orphan cleanup failed (non-fatal) for parcel %s: %s",
+                job.entity_id, exc,
+            )
 
     logger.info(
         "Hard-deleted %d vegetation_jobs row(s) starting from %s (tenant=%s, parcel=%s)",

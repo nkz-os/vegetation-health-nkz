@@ -141,29 +141,18 @@
       "slots": {
         "layer-toggle": [
           {
-            "id": "vegetation-layer-control",
+            "id": "vegetation-prime-layer-toggle",
             "moduleId": "vegetation-prime",
-            "component": "VegetationLayerControl",
+            "component": "VegetationLayerToggle",
             "priority": 10
           }
         ],
         "context-panel": [
           {
-            "id": "vegetation-config",
+            "id": "vegetation-prime-layer-control",
             "moduleId": "vegetation-prime",
-            "component": "VegetationConfig",
-            "priority": 20,
-            "tab": "Capas",
-            "showWhen": {
-              "entityType": ["AgriParcel"]
-            }
-          },
-          {
-            "id": "vegetation-analytics",
-            "moduleId": "vegetation-prime",
-            "component": "VegetationAnalytics",
-            "priority": 30,
-            "tab": "Analisis",
+            "component": "VegetationLayerControl",
+            "priority": 10,
             "showWhen": {
               "entityType": ["AgriParcel"]
             }
