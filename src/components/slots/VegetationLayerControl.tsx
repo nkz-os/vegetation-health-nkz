@@ -111,7 +111,7 @@ const VegetationLayerControl: React.FC = () => {
   // ── Loading ────────────────────────────────────────────────────────────
   if (entityDataStatusLoading && !entityDataStatus) {
     return (
-      <SlotShell moduleId="vegetation-prime" title="Vegetation" icon={<Leaf className="w-4 h-4" />} collapsible accent={vegetationAccent}>
+      <SlotShell moduleId="vegetation-prime" title={t('layerControl.moduleTitle', 'Vegetation')} icon={<Leaf className="w-4 h-4" />} collapsible accent={vegetationAccent}>
         <div className="flex items-center justify-center py-nkz-section">
           <Spinner size="sm" />
         </div>
@@ -125,7 +125,7 @@ const VegetationLayerControl: React.FC = () => {
   return (
     <SlotShell
       moduleId="vegetation-prime"
-      title="Vegetation"
+      title={t('layerControl.moduleTitle', 'Vegetation')}
       icon={<Leaf className="w-4 h-4" />}
       collapsible
       accent={vegetationAccent}

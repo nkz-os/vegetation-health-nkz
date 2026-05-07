@@ -3,7 +3,7 @@ Crop seasons API — assign crop + date range to a parcel, toggle monitoring.
 """
 
 import logging
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -58,13 +58,14 @@ async def list_crop_seasons(
     current_user: dict = Depends(require_auth),
     db: Session = Depends(get_db_with_tenant),
 ):
-    """List all crop seasons for a parcel."""
+    """List all (non-soft-deleted) crop seasons for a parcel."""
     tenant_id = current_user["tenant_id"]
     seasons = (
         db.query(VegetationCropSeason)
         .filter(
             VegetationCropSeason.tenant_id == tenant_id,
             VegetationCropSeason.entity_id == entity_id,
+            VegetationCropSeason.deleted_at.is_(None),
         )
         .order_by(VegetationCropSeason.start_date.desc())
         .all()
@@ -155,6 +156,7 @@ async def update_crop_season(
             VegetationCropSeason.id == season_id,
             VegetationCropSeason.tenant_id == tenant_id,
             VegetationCropSeason.entity_id == entity_id,
+            VegetationCropSeason.deleted_at.is_(None),
         )
         .first()
     )
@@ -190,7 +192,13 @@ async def delete_crop_season(
     current_user: dict = Depends(require_auth),
     db: Session = Depends(get_db_with_tenant),
 ):
-    """Delete a crop season."""
+    """Soft-delete a crop season.
+
+    Soft delete is required because vegetation_jobs reference seasons via
+    ON DELETE SET NULL and the EXCLUDE constraint on overlap is gated by
+    `WHERE deleted_at IS NULL`. Hard-deleting would leave orphan jobs and
+    subtly change the constraint surface.
+    """
     tenant_id = current_user["tenant_id"]
     season = (
         db.query(VegetationCropSeason)
@@ -198,12 +206,15 @@ async def delete_crop_season(
             VegetationCropSeason.id == season_id,
             VegetationCropSeason.tenant_id == tenant_id,
             VegetationCropSeason.entity_id == entity_id,
+            VegetationCropSeason.deleted_at.is_(None),
         )
         .first()
     )
     if not season:
-        raise HTTPException(status_code=404, detail="Crop season not found")
+        # Idempotent: already deleted or never existed for this user.
+        return {"deleted": True, "id": season_id}
 
-    db.delete(season)
+    season.deleted_at = datetime.now(timezone.utc)
+    season.is_active = False
     db.commit()
     return {"deleted": True, "id": season_id}

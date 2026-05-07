@@ -87,13 +87,6 @@ export class VegetationApiClient {
     return response as unknown as { status: string };
   }
 
-  /** Phase 4: TiTiler proxy — get presigned tile URL template for Cesium. */
-  async getViewerUrl(sceneId: string, indexType: string): Promise<{ tileUrlTemplate: string; expiresAt: string }> {
-    const params = new URLSearchParams({ scene_id: sceneId, index_type: indexType });
-    const response = await this.client.get(`/viewer-url?${params.toString()}`);
-    return response as unknown as { tileUrlTemplate: string; expiresAt: string };
-  }
-
   /** Phase 6: Sparse timeline — lightweight availability metadata (§12.8.1). */
   async getEntityDataStatus(entityId: string): Promise<import('../types').EntityDataStatus> {
     const response = await this.client.get(

@@ -55,12 +55,12 @@ function getTickColor(meanValue: number | null): string {
 
 const formatDateShort = (dateStr: string): string => {
   const d = new Date(dateStr);
-  return d.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' });
+  return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
 };
 
 const formatDateFull = (dateStr: string): string => {
   const d = new Date(dateStr);
-  return d.toLocaleDateString('es-ES', { day: 'numeric', month: 'long', year: 'numeric' });
+  return d.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' });
 };
 
 export const SmartTimeline: React.FC<SmartTimelineProps> = ({
@@ -82,9 +82,6 @@ export const SmartTimeline: React.FC<SmartTimelineProps> = ({
   // Tooltip state
   const [tooltipItem, setTooltipItem] = useState<TickData | null>(null);
   const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null);
-
-  // Viewer URL loading
-  const [loadingSceneId, setLoadingSceneId] = useState<string | null>(null);
 
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -146,23 +143,14 @@ export const SmartTimeline: React.FC<SmartTimelineProps> = ({
     return () => { cancelled = true; };
   }, [entityId, indexType, api, externalStats, t]);
 
-  // Click handler: calls onDateSelect and loads viewer URL
-  const handleTickClick = useCallback(async (tick: TickData) => {
+  // Click handler: hands the chosen scene to the parent. The map layer
+  // (VegetationLayer) reads the new selectedSceneId/raster_path from the
+  // shared vegetationContext and rebuilds tiles via /tiles/render directly,
+  // so no extra fetch is required here.
+  const handleTickClick = useCallback((tick: TickData) => {
     if (!onDateSelect) return;
     onDateSelect(tickDate(tick), tick.scene_id);
-
-    // Load viewer URL for the map layer
-    setLoadingSceneId(tick.scene_id);
-    try {
-      await api.getViewerUrl(tick.scene_id, indexType);
-      // The response tileUrlTemplate would be used by the map layer.
-      // The context handles updating the active raster path.
-    } catch (err) {
-      console.error('[SmartTimeline] viewer URL error:', err);
-    } finally {
-      setLoadingSceneId(null);
-    }
-  }, [api, indexType, onDateSelect]);
+  }, [onDateSelect]);
 
   // Tooltip handlers
   const handleMouseEnter = useCallback((tick: TickData, e: React.MouseEvent) => {
@@ -244,7 +232,6 @@ export const SmartTimeline: React.FC<SmartTimelineProps> = ({
           {sortedStats.map((tick) => {
             const isSelected = tickDate(tick) === selectedDate;
             const color = getTickColor(tick.mean_value);
-            const isLoadingTick = loadingSceneId === tick.scene_id;
 
             return (
               <div
@@ -261,7 +248,6 @@ export const SmartTimeline: React.FC<SmartTimelineProps> = ({
                     relative z-10 w-4 h-4 rounded-full transition-all cursor-pointer
                     hover:scale-150 focus:outline-none focus:ring-2 focus:ring-emerald-400
                     ${isSelected ? 'ring-2 ring-white scale-150 shadow-md' : ''}
-                    ${isLoadingTick ? 'animate-pulse' : ''}
                   `}
                   style={{
                     backgroundColor: color,

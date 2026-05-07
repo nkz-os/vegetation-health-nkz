@@ -276,7 +276,10 @@ async def _dispatch_analyze_for_parcel(
         except ValueError as exc:
             raise HTTPException(status_code=422, detail="Invalid crop_season_id") from exc
 
-    job_ids: List[str] = []
+    # Stage 1: build all VegetationJob rows in memory and commit them in a
+    # single transaction. Avoids the per-iteration commit pattern that left
+    # the caller with a partial set of rows + 503 when window N failed.
+    pending_jobs: List[VegetationJob] = []
     for window in windows:
         best = sorted(window["scenes"], key=lambda s: s.get("cloud_cover", 100))[0]
 
@@ -292,35 +295,51 @@ async def _dispatch_analyze_for_parcel(
         if local_cloud_threshold is not None:
             job_parameters["local_cloud_threshold"] = float(local_cloud_threshold)
 
-        job = VegetationJob(
-            tenant_id=tenant_id,
-            job_type="download",
-            entity_id=entity_id,
-            entity_type="AgriParcel",
-            parameters=job_parameters,
-            created_by=user_id,
-            crop_season_id=season_uuid,
+        pending_jobs.append(
+            VegetationJob(
+                tenant_id=tenant_id,
+                job_type="download",
+                entity_id=entity_id,
+                entity_type="AgriParcel",
+                parameters=job_parameters,
+                created_by=user_id,
+                crop_season_id=season_uuid,
+            )
         )
-        db.add(job)
-        db.commit()
-        db.refresh(job)
 
+    db.add_all(pending_jobs)
+    db.commit()
+    for j in pending_jobs:
+        db.refresh(j)
+
+    # Stage 2: dispatch each Celery task. If any .delay() fails, mark every
+    # already-enqueued job (and the rest) as failed in a single follow-up
+    # commit so the response is consistent with the DB state.
+    job_ids: List[str] = []
+    enqueue_error: Optional[Exception] = None
+    for idx, job in enumerate(pending_jobs):
         try:
             async_result = download_sentinel2_scene.delay(
                 str(job.id), tenant_id, job.parameters
             )
             job.celery_task_id = async_result.id
-            db.commit()
+            job_ids.append(str(job.id))
         except Exception as exc:
             logger.exception("Failed to enqueue download task for job %s", job.id)
-            job.status = "failed"
-            job.error_message = f"Could not enqueue Celery task: {exc}"
-            db.commit()
-            raise HTTPException(
-                status_code=503,
-                detail="Job queue unavailable, please retry shortly.",
-            ) from exc
-        job_ids.append(str(job.id))
+            enqueue_error = exc
+            for k in range(idx, len(pending_jobs)):
+                pending_jobs[k].status = "failed"
+                pending_jobs[k].error_message = (
+                    f"Could not enqueue Celery task: {exc}"
+                )
+            break
+    db.commit()
+
+    if enqueue_error is not None:
+        raise HTTPException(
+            status_code=503,
+            detail="Job queue unavailable, please retry shortly.",
+        ) from enqueue_error
 
     logger.info(
         "Multi-scene analysis: %d windows dispatched for entity %s (scenes: %d, indices: %s, season: %s)",

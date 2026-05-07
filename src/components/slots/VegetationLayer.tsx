@@ -266,7 +266,7 @@ export const VegetationLayer: React.FC<VegetationLayerProps> = ({ viewer }) => {
   // Date badge — render over the Cesium canvas via portal
   const dateLabel = useMemo(() => {
     if (!selectedDate || !layerRef.current) return null;
-    return selectedDate.toLocaleDateString('es-ES', {
+    return selectedDate.toLocaleDateString(undefined, {
       day: '2-digit', month: 'short', year: 'numeric',
     });
   }, [selectedDate, layerRef.current]);

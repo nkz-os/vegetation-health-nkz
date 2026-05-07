@@ -177,6 +177,10 @@ const AnalyzeInSeasonForm: React.FC<AnalyzeFormProps> = ({ entityId, seasonId, o
   const [threshold, setThreshold] = useState<number>(30);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const closeTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+  }, []);
   const [success, setSuccess] = useState<string | null>(null);
 
   const toggle = (idx: string) =>
@@ -202,7 +206,8 @@ const AnalyzeInSeasonForm: React.FC<AnalyzeFormProps> = ({ entityId, seasonId, o
         }),
       );
       onLaunched();
-      setTimeout(() => setOpen(false), 1500);
+      if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = setTimeout(() => setOpen(false), 1500);
     } catch (err: any) {
       setError(err?.response?.data?.detail || err?.message || String(err));
     } finally {
@@ -910,6 +915,19 @@ export const ParcelDetail: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [reloadTick, setReloadTick] = useState(0);
   const [quota, setQuota] = useState<{ used: number; limit: number; plan: string } | null>(null);
+  const [flash, setFlash] = useState<{ kind: 'error' | 'info'; text: string } | null>(null);
+
+  // Inline toast — replaces window.alert() so we never block the Cesium
+  // render thread. Self-dismisses after 6s; manual close button below.
+  const flashTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showFlash = useCallback((kind: 'error' | 'info', text: string) => {
+    if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
+    setFlash({ kind, text });
+    flashTimerRef.current = setTimeout(() => setFlash(null), 6000);
+  }, []);
+  useEffect(() => () => {
+    if (flashTimerRef.current) clearTimeout(flashTimerRef.current);
+  }, []);
 
   const refetch = useCallback(() => setReloadTick((t) => t + 1), []);
 
@@ -920,14 +938,15 @@ export const ParcelDetail: React.FC = () => {
         await api.deleteParcelJob(selectedEntityId, jobId);
         refetch();
       } catch (err: any) {
-        window.alert(
+        showFlash(
+          'error',
           t('parcelDetail.deleteFailed', 'Could not delete: {{msg}}', {
             msg: err?.message || String(err),
           }),
         );
       }
     },
-    [api, selectedEntityId, refetch, t],
+    [api, selectedEntityId, refetch, t, showFlash],
   );
 
   useEffect(() => {
@@ -1017,6 +1036,29 @@ export const ParcelDetail: React.FC = () => {
 
   return (
     <div className="space-y-5 max-w-4xl mx-auto py-6 px-4">
+      {/* Inline toast — non-blocking replacement for window.alert */}
+      {flash && (
+        <div
+          role="status"
+          aria-live="polite"
+          className={`flex items-start gap-2 rounded-xl border px-3 py-2 text-sm ${
+            flash.kind === 'error'
+              ? 'bg-rose-50 border-rose-200 text-rose-800'
+              : 'bg-blue-50 border-blue-200 text-blue-800'
+          }`}
+        >
+          <span className="flex-1">{flash.text}</span>
+          <button
+            type="button"
+            onClick={() => setFlash(null)}
+            aria-label={t('parcelDetail.dismiss', 'Dismiss')}
+            className="opacity-60 hover:opacity-100"
+          >
+            ×
+          </button>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div className="min-w-0">
