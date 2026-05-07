@@ -19,7 +19,7 @@ interface SkeletonCardProps {
     rows?: number;
 }
 
-const shimmer = 'animate-pulse bg-slate-200/80 rounded';
+const shimmer = 'animate-pulse bg-slate-200 dark:bg-slate-700 rounded';
 
 const ChartSkeleton: React.FC = () => (
     <div className="space-y-3">
@@ -78,7 +78,7 @@ export const SkeletonCard: React.FC<SkeletonCardProps> = ({
     rows = 4,
 }) => {
     return (
-        <div className={`bg-white/90 backdrop-blur-md rounded-xl border border-slate-200/50 shadow-sm p-6 ${className}`}>
+        <div className={`bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm p-6 ${className}`}>
             {variant === 'chart' && <ChartSkeleton />}
             {variant === 'stats' && <StatsSkeleton />}
             {variant === 'table' && <TableSkeleton rows={rows} />}
