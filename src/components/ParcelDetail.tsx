@@ -702,7 +702,7 @@ const AdvancedSection: React.FC<AdvancedSectionProps> = ({ entityId, defaultInde
       </button>
 
       {open && (
-        <div className="border-t border-slate-100 p-4 space-y-5 bg-slate-50/40">
+        <div className="border-t border-slate-100 dark:border-slate-700 p-4 space-y-5 bg-slate-50 dark:bg-slate-800">
           {/* VRA */}
           <div>
             <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1.5 flex items-center gap-1.5">
@@ -909,7 +909,7 @@ const SeasonBlock: React.FC<SeasonBlockProps> = ({ season, entityId, onDelete, o
         )}
       </button>
       {open && (
-        <div className="border-t border-slate-100 px-3 py-2 bg-slate-50/40">
+        <div className="border-t border-slate-100 dark:border-slate-700 px-3 py-2 bg-slate-50 dark:bg-slate-800">
           {season.jobs.length === 0 ? (
             <p className="text-xs text-slate-400 italic px-3 py-2">
               {t('parcelDetail.seasonEmpty', 'No analyses in this season yet.')}

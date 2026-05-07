@@ -21,7 +21,7 @@ export const IndexInfoModal: React.FC<IndexInfoModalProps> = ({
 
     if (!info) {
         return (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
                 <div className="bg-white rounded-xl p-6 max-w-md">
                     <p className="text-slate-600">{t('indexInfo.unavailable')}</p>
                     <button onClick={onClose} className="mt-4 px-4 py-2 bg-slate-200 rounded-lg">{t('indexInfo.close')}</button>
@@ -32,7 +32,7 @@ export const IndexInfoModal: React.FC<IndexInfoModalProps> = ({
 
     return (
         <div
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/70"
             onClick={(e) => e.target === e.currentTarget && onClose()}
         >
             <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-hidden animate-in fade-in zoom-in-95 duration-200">
