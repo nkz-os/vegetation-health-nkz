@@ -410,7 +410,14 @@ async def get_entity_results(
         except ValueError as exc:
             raise HTTPException(status_code=422, detail="Invalid scene_id (expected UUID)") from exc
 
-    # Get ALL completed calculation jobs for this entity, newest first
+    # Pull only completed calc_index jobs that produced an actual raster.
+    # Filtering skipped:true / raster_path=null at SQL level (instead of
+    # post-hoc in Python) ensures the LIMIT does not silently drop the
+    # newest 'real' result per index when many recent rows are skipped
+    # — which is exactly what happened on the montiko parcel where the
+    # newest 50 completed rows were dominated by idempotency-skipped
+    # retries and the slot ended up with indexResults={} despite the
+    # parcel having 8 usable rasters per index.
     jobs = (
         db.query(VegetationJob)
         .filter(
@@ -418,9 +425,11 @@ async def get_entity_results(
             VegetationJob.entity_id == entity_id,
             VegetationJob.job_type == "calculate_index",
             VegetationJob.status == "completed",
+            VegetationJob.deleted_at.is_(None),
+            VegetationJob.result["raster_path"].astext.isnot(None),
         )
         .order_by(desc(VegetationJob.created_at))
-        .limit(200 if scene_id else 50)
+        .limit(500 if scene_id else 100)
         .all()
     )
 
@@ -436,8 +445,6 @@ async def get_entity_results(
         index_key = job.result.get("index_key") or index_type
         if not index_type or not index_key or index_key in results:
             continue  # already have a newer one
-        if job.result.get("skipped"):
-            continue
         stats = job.result.get("statistics", {})
         results[index_key] = {
             "job_id": str(job.id),
