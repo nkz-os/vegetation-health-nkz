@@ -39,7 +39,12 @@ router = APIRouter(prefix="/api/vegetation/parcels", tags=["parcels"])
 def _job_card(job: VegetationJob) -> Dict[str, Any]:
     """Compact job representation for the parcel detail UI."""
     result = job.result or {}
-    skipped = bool(result.get("skipped_due_to_clouds"))
+    # Two skip flags coexist: download-side scenes set 'skipped_due_to_clouds'
+    # when the SCL micro-validation rejects the scene; calc_index workers set
+    # 'skipped' when the index could not be produced (e.g. all-NaN raster
+    # after geometry mask). Either flag means the job is 'completed' but
+    # produced no usable artefact.
+    skipped = bool(result.get("skipped_due_to_clouds") or result.get("skipped"))
     indices = result.get("calculate_indices") or job.parameters.get("calculate_indices")
     if not indices and result.get("index_type"):
         indices = [result.get("index_type")]
@@ -184,6 +189,10 @@ async def get_parcel_overview(
     season_payload = [_season_card(s, season_jobs.get(str(s.id), [])) for s in seasons]
 
     # Current state: latest completed calc_index across the whole parcel
+    # Latest "real" calc_index — must have a raster_path. A calc_index can
+    # complete with skipped=true (all-NaN, mask collision, etc.) and that
+    # would otherwise mislead the UI into showing 'NDRE / —' as current
+    # state when really there is no usable raster for that index yet.
     latest = (
         db.query(VegetationJob)
         .filter(
@@ -192,6 +201,7 @@ async def get_parcel_overview(
             VegetationJob.job_type == "calculate_index",
             VegetationJob.status == "completed",
             VegetationJob.deleted_at.is_(None),
+            VegetationJob.result["raster_path"].astext.isnot(None),
         )
         .order_by(desc(VegetationJob.completed_at))
         .first()
@@ -206,14 +216,22 @@ async def get_parcel_overview(
             "job_id": str(latest.id),
         }
 
-    # Available indices across all completed work for this parcel
+    # Available indices = those that have at least one completed calc_index
+    # with a real raster_path. The vegetation_indices_cache table is dead in
+    # the FIWARE-canonical pipeline (Orion-LD is the source of truth, no
+    # direct writes from the worker), so we read from vegetation_jobs.result
+    # instead.
     available_indices = [
         r[0]
         for r in (
-            db.query(func.distinct(VegetationIndexCache.index_type))
+            db.query(func.distinct(VegetationJob.result["index_type"].astext))
             .filter(
-                VegetationIndexCache.tenant_id == tenant_id,
-                VegetationIndexCache.entity_id == entity_id,
+                VegetationJob.tenant_id == tenant_id,
+                VegetationJob.entity_id == entity_id,
+                VegetationJob.job_type == "calculate_index",
+                VegetationJob.status == "completed",
+                VegetationJob.deleted_at.is_(None),
+                VegetationJob.result["raster_path"].astext.isnot(None),
             )
             .all()
         )
