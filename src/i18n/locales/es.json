@@ -361,7 +361,8 @@
     "noDataYet": "Sin datos todavía — abre el detalle de la parcela para lanzar un análisis",
     "activeScene": "Escena activa",
     "openDetail": "Abrir detalle de parcela",
-    "clearSelection": "Quitar selección"
+    "clearSelection": "Quitar selección",
+    "moduleTitle": "Vegetación"
   },
   "monitoring": {
     "activate": "Activar monitoreo",
@@ -713,6 +714,11 @@
     "formulaCreated": "Fórmula personalizada creada.",
     "exportTitle": "Exportar prescripción VRA",
     "exportHint": "Descarga el último resultado de VRA. Genera primero un VRA arriba si no lo has hecho.",
-    "exportError": "Exportación fallida (necesita un resultado VRA previo)."
+    "exportError": "Exportación fallida (necesita un resultado VRA previo).",
+    "dismiss": "Cerrar",
+    "advancedBadgeVra": "VRA",
+    "advancedBadgeFormulas": "{{n}} personalizadas",
+    "advancedBadgeFormulasEmpty": "Fórmulas personalizadas",
+    "advancedBadgeExport": "Exportar"
   }
 }

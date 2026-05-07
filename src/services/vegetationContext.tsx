@@ -212,7 +212,10 @@ export const VegetationProvider: React.FC<{ children: ReactNode }> = ({ children
       if (hostEntityId) {
         setSelectedEntityIdLocal(hostEntityId);
         updateStore({ selectedSceneId: null });
-        if (!sharedState.selectedIndex) {
+        // Read the latest snapshot imperatively so this effect doesn't list
+        // selectedIndex as a dep (which would re-run after our own write
+        // and made the auditor flag a potential loop).
+        if (!getStoreSnapshot().selectedIndex) {
           updateStore({ selectedIndex: 'NDVI' });
         }
       } else {
@@ -220,7 +223,7 @@ export const VegetationProvider: React.FC<{ children: ReactNode }> = ({ children
         setSelectedGeometry(null);
       }
     }
-  }, [hostViewer?.selectedEntityId, sharedState.selectedIndex]);
+  }, [hostViewer?.selectedEntityId]);
 
   // Sync date from host viewer if available
   useEffect(() => {

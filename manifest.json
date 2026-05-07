@@ -117,7 +117,7 @@
   },
   "metadata": {
     "icon": "🌱",
-    "color": "#10B981",
+    "color": "#65A30D",
     "features": [
       "Multi-spectral index calculation (NDVI, EVI, SAVI, GNDVI, NDRE)",
       "Custom formula engine with safe expression evaluation",

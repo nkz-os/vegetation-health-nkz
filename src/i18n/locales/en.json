@@ -361,7 +361,8 @@
     "noDataYet": "No data yet — open the detail page to launch an analysis",
     "activeScene": "Active scene",
     "openDetail": "Open parcel detail",
-    "clearSelection": "Clear selection"
+    "clearSelection": "Clear selection",
+    "moduleTitle": "Vegetation"
   },
   "monitoring": {
     "activate": "Activate monitoring",
@@ -713,6 +714,11 @@
     "formulaCreated": "Custom formula created.",
     "exportTitle": "Export VRA prescription",
     "exportHint": "Downloads the most recent VRA zoning result. Generate a VRA above first if you have not already.",
-    "exportError": "Export failed (a VRA result is required first)."
+    "exportError": "Export failed (a VRA result is required first).",
+    "dismiss": "Dismiss",
+    "advancedBadgeVra": "VRA",
+    "advancedBadgeFormulas": "{{n}} custom",
+    "advancedBadgeFormulasEmpty": "Custom formulas",
+    "advancedBadgeExport": "Export"
   }
 }

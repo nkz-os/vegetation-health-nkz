@@ -154,8 +154,9 @@ const JobRow: React.FC<JobRowProps> = ({ job, onDelete }) => {
           disabled={confirming || busy}
           className="p-1.5 text-slate-300 hover:text-rose-600 hover:bg-rose-50 rounded transition-colors disabled:opacity-30"
           title={t('parcelDetail.deleteTooltip', 'Delete this job (irreversible)')}
+          aria-label={t('parcelDetail.deleteTooltip', 'Delete this job (irreversible)')}
         >
-          <Trash2 className="w-3.5 h-3.5" />
+          <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
         </button>
       </div>
     </li>
@@ -570,9 +571,12 @@ const AdvancedSection: React.FC<AdvancedSectionProps> = ({ entityId, defaultInde
     }
   }, [api]);
 
+  // Load tenant-scoped custom formulas eagerly — the count is needed for the
+  // collapsed-section badge ('3 custom') so users know there's content
+  // before they expand. Cheap query (formulas are tenant-wide).
   useEffect(() => {
-    if (open) loadFormulas();
-  }, [open, loadFormulas]);
+    loadFormulas();
+  }, [loadFormulas]);
 
   const handleCreateFormula = async () => {
     if (!formulaName.trim() || !formulaExpr.trim()) {
@@ -645,17 +649,41 @@ const AdvancedSection: React.FC<AdvancedSectionProps> = ({ entityId, defaultInde
     }
   };
 
+  // Discoverability badges — let the user know what's behind the
+  // collapsed section without forcing them to click it open.
+  const badges: string[] = [];
+  badges.push(t('parcelDetail.advancedBadgeVra', 'VRA'));
+  if (formulas.length > 0) {
+    badges.push(t('parcelDetail.advancedBadgeFormulas', '{{n}} custom', { n: formulas.length }) as string);
+  } else {
+    badges.push(t('parcelDetail.advancedBadgeFormulasEmpty', 'Custom formulas'));
+  }
+  badges.push(t('parcelDetail.advancedBadgeExport', 'Export'));
+
   return (
     <div className="border border-slate-200 rounded-xl overflow-hidden bg-white">
       <button
         onClick={() => setOpen(!open)}
         className="w-full flex items-center gap-3 px-4 py-3 hover:bg-slate-50 transition-colors text-left"
+        aria-expanded={open}
       >
-        {open ? <ChevronDown className="w-4 h-4 text-slate-400" /> : <ChevronRight className="w-4 h-4 text-slate-400" />}
+        {open
+          ? <ChevronDown className="w-4 h-4 text-slate-400" aria-hidden="true" />
+          : <ChevronRight className="w-4 h-4 text-slate-400" aria-hidden="true" />}
         <div className="flex-1 min-w-0">
-          <h3 className="font-semibold text-slate-700 text-sm">
-            {t('parcelDetail.advancedTitle', 'Advanced')}
-          </h3>
+          <div className="flex items-center gap-2 flex-wrap">
+            <h3 className="font-semibold text-slate-700 text-sm">
+              {t('parcelDetail.advancedTitle', 'Advanced')}
+            </h3>
+            {!open && badges.map((b) => (
+              <span
+                key={b}
+                className="inline-block text-[10px] font-medium uppercase tracking-wider px-1.5 py-0.5 rounded bg-slate-100 text-slate-500"
+              >
+                {b}
+              </span>
+            ))}
+          </div>
           <p className="text-[11px] text-slate-500">
             {t('parcelDetail.advancedHint', 'VRA zoning, custom formulas and exports — for power users.')}
           </p>
@@ -746,8 +774,9 @@ const AdvancedSection: React.FC<AdvancedSectionProps> = ({ entityId, defaultInde
                       onClick={() => handleDeleteFormula(f.id)}
                       className="p-1 text-slate-400 hover:text-rose-600 rounded"
                       title={t('parcelDetail.deleteFormula', 'Delete formula')}
+                      aria-label={t('parcelDetail.deleteFormula', 'Delete formula')}
                     >
-                      <Trash2 className="w-3 h-3" />
+                      <Trash2 className="w-3 h-3" aria-hidden="true" />
                     </button>
                   </li>
                 ))}
@@ -896,13 +925,14 @@ const SeasonBlock: React.FC<SeasonBlockProps> = ({ season, entityId, onDelete, o
   );
 };
 
+// Section header with always-on hint copy + decorative info glyph. The
+// hint lives only in the <p>; we keep <Info> as a visual cue but stop
+// duplicating the same string in its `title` attribute.
 const SectionHeader: React.FC<{ title: string; hint: string }> = ({ title, hint }) => (
   <div className="flex items-center gap-2 mb-2">
     <h2 className="text-sm font-bold text-slate-700 uppercase tracking-wider">{title}</h2>
-    <span title={hint}>
-      <Info className="w-3.5 h-3.5 text-slate-300" aria-hidden="true" />
-    </span>
-    <p className="text-xs text-slate-500 ml-1">{hint}</p>
+    <Info className="w-3.5 h-3.5 text-slate-300 shrink-0" aria-hidden="true" />
+    <p className="text-xs text-slate-500">{hint}</p>
   </div>
 );
 

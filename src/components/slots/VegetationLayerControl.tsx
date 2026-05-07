@@ -143,8 +143,9 @@ const VegetationLayerControl: React.FC = () => {
             onClick={() => setSelectedEntityId(null)}
             className="text-nkz-xs text-nkz-text-muted hover:text-nkz-text-primary"
             title={t('layerControl.clearSelection', 'Clear selection')}
+            aria-label={t('layerControl.clearSelection', 'Clear selection')}
           >
-            <X className="w-3.5 h-3.5" />
+            <X className="w-3.5 h-3.5" aria-hidden="true" />
           </button>
         </div>
 
