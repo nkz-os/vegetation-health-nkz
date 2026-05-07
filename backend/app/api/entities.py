@@ -78,70 +78,81 @@ async def get_entity_data_status(
     """
     tenant_id = current_user["tenant_id"]
 
-    # Available indices (DISTINCT index_type from cache)
+    # Available indices and scene count are derived from vegetation_jobs.result
+    # rather than the (unwritten) vegetation_indices_cache table. The worker
+    # only persists results to Orion-LD per the FIWARE mandate; no direct
+    # writes to local SQL caches. Skipped calc_index rows (skipped=true,
+    # raster_path=null) are filtered out so disabled pills only stay
+    # disabled while there is genuinely no usable raster for that index.
     index_rows = (
-        db.query(distinct(VegetationIndexCache.index_type))
+        db.query(distinct(VegetationJob.result["index_type"].astext))
         .filter(
-            VegetationIndexCache.tenant_id == tenant_id,
-            VegetationIndexCache.entity_id == entity_id,
+            VegetationJob.tenant_id == tenant_id,
+            VegetationJob.entity_id == entity_id,
+            VegetationJob.job_type == "calculate_index",
+            VegetationJob.status == "completed",
+            VegetationJob.deleted_at.is_(None),
+            VegetationJob.result["raster_path"].astext.isnot(None),
         )
         .all()
     )
     available_indices = [r[0] for r in index_rows if r[0]]
 
-    # Scene count (DISTINCT scene_id from cache for this entity)
     total_scenes = (
-        db.query(func.count(distinct(VegetationIndexCache.scene_id)))
+        db.query(func.count(distinct(VegetationJob.result["scene_id"].astext)))
         .filter(
-            VegetationIndexCache.tenant_id == tenant_id,
-            VegetationIndexCache.entity_id == entity_id,
+            VegetationJob.tenant_id == tenant_id,
+            VegetationJob.entity_id == entity_id,
+            VegetationJob.job_type == "calculate_index",
+            VegetationJob.status == "completed",
+            VegetationJob.deleted_at.is_(None),
+            VegetationJob.result["raster_path"].astext.isnot(None),
         )
         .scalar()
     ) or 0
 
-    # Date range (min/max sensing_date via join)
+    # Date range, latest NDVI, latest sensing date — derived from
+    # vegetation_jobs.result (not from the dead VegetationIndexCache).
     date_range = None
     latest_ndvi = None
     latest_sensing_date = None
 
     if total_scenes > 0:
-        date_range_row = (
-            db.query(
-                func.min(VegetationScene.sensing_date),
-                func.max(VegetationScene.sensing_date),
-            )
-            .join(VegetationIndexCache, VegetationIndexCache.scene_id == VegetationScene.id)
-            .filter(
-                VegetationIndexCache.tenant_id == tenant_id,
-                VegetationIndexCache.entity_id == entity_id,
-                VegetationScene.is_valid == True,
-            )
-            .first()
+        non_skipped_filter = [
+            VegetationJob.tenant_id == tenant_id,
+            VegetationJob.entity_id == entity_id,
+            VegetationJob.job_type == "calculate_index",
+            VegetationJob.status == "completed",
+            VegetationJob.deleted_at.is_(None),
+            VegetationJob.result["raster_path"].astext.isnot(None),
+        ]
+        sensing_dates = (
+            db.query(distinct(VegetationJob.result["sensing_date"].astext))
+            .filter(*non_skipped_filter)
+            .all()
         )
-        if date_range_row and date_range_row[0]:
-            date_range = {
-                "first": date_range_row[0].isoformat() if hasattr(date_range_row[0], 'isoformat') else str(date_range_row[0]),
-                "last": date_range_row[1].isoformat() if hasattr(date_range_row[1], 'isoformat') else str(date_range_row[1]),
-            }
+        sensing_strs = sorted(d[0] for d in sensing_dates if d[0])
+        if sensing_strs:
+            date_range = {"first": sensing_strs[0], "last": sensing_strs[-1]}
 
-        # Latest NDVI
-        latest_row = (
-            db.query(VegetationIndexCache.mean_value, VegetationScene.sensing_date)
-            .join(VegetationScene, VegetationIndexCache.scene_id == VegetationScene.id)
+        latest_ndvi_job = (
+            db.query(VegetationJob)
             .filter(
-                VegetationIndexCache.tenant_id == tenant_id,
-                VegetationIndexCache.entity_id == entity_id,
-                VegetationIndexCache.index_type == "NDVI",
-                VegetationScene.is_valid == True,
+                *non_skipped_filter,
+                VegetationJob.result["index_type"].astext == "NDVI",
             )
-            .order_by(VegetationScene.sensing_date.desc())
+            .order_by(VegetationJob.result["sensing_date"].astext.desc())
             .first()
         )
-        if latest_row:
-            latest_ndvi = float(latest_row[0]) if latest_row[0] is not None else None
-            latest_sensing_date = (
-                latest_row[1].isoformat() if hasattr(latest_row[1], 'isoformat') else str(latest_row[1])
-            )
+        if latest_ndvi_job and latest_ndvi_job.result:
+            stats = latest_ndvi_job.result.get("statistics") or {}
+            mean = stats.get("mean")
+            if mean is not None:
+                try:
+                    latest_ndvi = float(mean)
+                except (TypeError, ValueError):
+                    latest_ndvi = None
+            latest_sensing_date = latest_ndvi_job.result.get("sensing_date")
 
     # Active crop seasons
     crop_seasons = (
