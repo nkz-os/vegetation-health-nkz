@@ -56,6 +56,19 @@ export const VegetationLayer: React.FC<VegetationLayerProps> = ({ viewer }) => {
 
         let keys = Object.keys(data.indices || {});
 
+        // Fallback: a stale selectedSceneId from a previous session can
+        // scope the query to a scene that no longer matches anything,
+        // returning indices={}. Drop the scene filter and re-fetch the
+        // latest-per-index so the slot recovers without forcing the user
+        // to deselect/reselect the parcel.
+        if (sceneToUse && keys.length === 0) {
+          setSelectedSceneId(null);
+          sceneToUse = null;
+          data = await api.getEntityResults(selectedEntityId);
+          if (cancelled) return;
+          keys = Object.keys(data.indices || {});
+        }
+
         if (!sceneToUse && keys.length > 0) {
           const preferredKey = entityDataStatus?.available_indices?.[0] || 'NDVI';
           const pivotKey = keys.includes(preferredKey) ? preferredKey
