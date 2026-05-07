@@ -48,6 +48,12 @@ def _job_card(job: VegetationJob) -> Dict[str, Any]:
     indices = result.get("calculate_indices") or job.parameters.get("calculate_indices")
     if not indices and result.get("index_type"):
         indices = [result.get("index_type")]
+    # VRA_ZONES metadata
+    zones_created = result.get("zones_created") if result.get("index_type") == "VRA_ZONES" else None
+    zoning_source = (
+        job.parameters.get("source_index") if result.get("index_type") == "VRA_ZONES" else None
+    )
+
     return {
         "id": str(job.id),
         "type": job.job_type,
@@ -60,11 +66,14 @@ def _job_card(job: VegetationJob) -> Dict[str, Any]:
         "raster_path": result.get("raster_path"),
         "index_type": result.get("index_type"),
         "stats_mean": (result.get("statistics") or {}).get("mean"),
-        "error_message": job.error_message,
+        "error_message": job.error_message or (result.get("message") if result.get("status") == "error" else None),
         "created_at": job.created_at.isoformat() if job.created_at else None,
         "completed_at": job.completed_at.isoformat() if job.completed_at else None,
         "created_by": job.created_by,
         "crop_season_id": str(job.crop_season_id) if job.crop_season_id else None,
+        "zones_created": zones_created,
+        "zoning_source": zoning_source,
+        "is_vra": result.get("index_type") == "VRA_ZONES",
     }
 
 

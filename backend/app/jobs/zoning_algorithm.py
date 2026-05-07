@@ -13,8 +13,9 @@ from scipy.cluster.vq import kmeans2, whiten
 from typing import Optional, Dict, Any, List
 
 from sqlalchemy.orm import Session
+from sqlalchemy import desc, text
 from app.database import get_db_session
-from app.models.indices import VegetationIndexCache
+from app.models.jobs import VegetationJob
 from app.models.config import VegetationConfig
 from app.services.storage import create_storage_service, generate_tenant_bucket_name
 from app.services.fiware_integration import FIWAREClient
@@ -126,32 +127,44 @@ class ZoningAlgorithm:
             })
         return features
 
-    async def generate_zones(self, parcel_id: str, n_zones: int=3):
+    async def generate_zones(self, parcel_id: str, n_zones: int=3, source_index: str = 'NDVI'):
         """
         Main workflow:
-        1. Fetch latest NDVI Raster URL from Orion/MinIO (now using VegetationIndexCache)
+        1. Fetch latest index raster from VegetationJob results
         2. Cluster
         3. Create AgriManagementZone entities
         """
-        logger.info(f"Generating {n_zones} management zones for {parcel_id}")
-        
+        logger.info(f"Generating {n_zones} management zones for {parcel_id} (source: {source_index})")
+
         db = next(get_db_session())
         try:
-            # 1. Fetch latest NDVI from cache
-            cache_entry = (
-                db.query(VegetationIndexCache)
+            # 1. Fetch latest raster from completed calculate_index jobs
+            #    (VegetationIndexCache is dead — rasters live in VegetationJob.result)
+            raster_job = (
+                db.query(VegetationJob)
                 .filter(
-                    VegetationIndexCache.tenant_id == self.tenant_id,
-                    VegetationIndexCache.entity_id == parcel_id,
-                    VegetationIndexCache.index_type == 'NDVI'
+                    VegetationJob.tenant_id == self.tenant_id,
+                    VegetationJob.entity_id == parcel_id,
+                    VegetationJob.job_type == "calculate_index",
+                    VegetationJob.status == "completed",
+                    text("result->>'index_type' = :idx"),
+                    VegetationJob.result["raster_path"].astext.isnot(None),
                 )
-                .order_by(VegetationIndexCache.calculated_at.desc())
+                .params(idx=source_index)
+                .order_by(desc(VegetationJob.created_at))
                 .first()
             )
-            
-            if not cache_entry or not cache_entry.result_raster_path:
-                logger.warning(f"No NDVI raster found in cache for parcel {parcel_id}. Zones cannot be generated.")
-                return {"status": "error", "message": "No NDVI data available for parcel"}
+
+            if not raster_job or not raster_job.result:
+                logger.warning(
+                    "No %s raster found in jobs for parcel %s. Zones cannot be generated.",
+                    source_index, parcel_id,
+                )
+                return {"status": "error", "message": f"No {source_index} data available for parcel"}
+
+            raster_path = raster_job.result.get("raster_path")
+            if not raster_path:
+                return {"status": "error", "message": f"No raster path in {source_index} job result"}
 
             # Get storage config
             config = db.query(VegetationConfig).filter(VegetationConfig.tenant_id == self.tenant_id).first()
@@ -162,7 +175,7 @@ class ZoningAlgorithm:
             # Download raster locally for processing
             local_path = f"/tmp/zoning_{parcel_id.replace(':', '_')}.tif"
             try:
-                storage.download_file(cache_entry.result_raster_path, local_path)
+                storage.download_file(raster_path, local_path)
             except Exception as e:
                 logger.error(f"Failed to download raster: {e}")
                 return {"status": "error", "message": "Failed to retrieve raster data"}
@@ -261,27 +274,28 @@ class ZoningAlgorithm:
     def execute(self, parcel_id: str, scene_id: str, parameters: Dict[str, Any]) -> Dict[str, Any]:
         """
         Synchronous execution wrapper for background task.
-        
+
         Args:
             parcel_id: Target parcel ID
             scene_id: Scene to use for clustering (can be same as parcel_id for latest)
-            parameters: Additional parameters (n_zones, etc.)
-            
+            parameters: Additional parameters (n_zones, source_index, etc.)
+
         Returns:
             N8N-compatible result dictionary
         """
         import asyncio
-        
+
         n_zones = parameters.get('n_zones', 3)
-        
+        source_index = parameters.get('source_index', 'NDVI')
+
         # Run the async method synchronously
         try:
             loop = asyncio.get_event_loop()
         except RuntimeError:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-        
-        result = loop.run_until_complete(self.generate_zones(parcel_id, n_zones))
+
+        result = loop.run_until_complete(self.generate_zones(parcel_id, n_zones, source_index))
         return result or {"status": "no_zones_generated", "parcel_id": parcel_id}
 
     def prepare_for_intelligence_module(self, parcel_id: str, raster_data: np.ndarray) -> Dict[str, Any]:

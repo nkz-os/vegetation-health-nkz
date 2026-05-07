@@ -98,11 +98,21 @@ const JobRow: React.FC<JobRowProps> = ({ job, onDelete }) => {
         <div className="flex flex-wrap items-center gap-2">
           <StatusPill status={job.status} />
           <span className="text-xs font-medium text-slate-700">
-            {job.type === 'download' ? t('parcelDetail.jobTypeDownload', 'Scene') : t('parcelDetail.jobTypeIndex', 'Index')}
-            {job.indices.length > 0 && (
+            {job.is_vra
+              ? t('parcelDetail.jobTypeVra', 'VRA Zoning')
+              : job.type === 'download'
+                ? t('parcelDetail.jobTypeDownload', 'Scene')
+                : t('parcelDetail.jobTypeIndex', 'Index')}
+            {job.is_vra && job.zoning_source && (
+              <span className="text-slate-500"> · {t('parcelDetail.vraSourceLabel', 'Source')}: {job.zoning_source}</span>
+            )}
+            {job.is_vra && job.zones_created != null && (
+              <span className="text-slate-500"> · {job.zones_created} {t('parcelDetail.vraZones', 'zones')}</span>
+            )}
+            {!job.is_vra && job.indices.length > 0 && (
               <span className="text-slate-500"> · {job.indices.join(', ')}</span>
             )}
-            {job.index_type && job.indices.length === 0 && (
+            {!job.is_vra && job.index_type && job.indices.length === 0 && (
               <span className="text-slate-500"> · {job.index_type}</span>
             )}
           </span>
@@ -533,6 +543,7 @@ const AdvancedSection: React.FC<AdvancedSectionProps> = ({ entityId, defaultInde
       const res = await api.calculateIndex({
         entity_id: entityId,
         index_type: 'VRA_ZONES' as any,
+        source_index: vraSource,
       });
       setVraMsg({
         type: 'ok',

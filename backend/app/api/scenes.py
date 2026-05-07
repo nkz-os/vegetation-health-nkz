@@ -41,10 +41,13 @@ class CalculateRequest(BaseModel):
     end_date: Optional[str] = None
     formula_id: Optional[str] = None
     formula_name: Optional[str] = None
+    source_index: Optional[str] = None
+    n_zones: int = 3
 
 
 class ZoningRequest(BaseModel):
     n_zones: int = 3
+    source_index: str = 'NDVI'
     delegate_to_intelligence: bool = False
     n8n_callback_url: Optional[str] = None
 
@@ -62,7 +65,9 @@ async def calculate_index_endpoint(
     """
     tenant_id = current_user["tenant_id"]
 
-    if not request.scene_id and not (request.start_date and request.end_date):
+    # VRA_ZONES works on already-computed rasters, not Sentinel scenes
+    requires_scene = request.index_type != 'VRA_ZONES'
+    if requires_scene and not request.scene_id and not (request.start_date and request.end_date):
         raise HTTPException(
             status_code=422,
             detail="Either scene_id or both start_date and end_date are required",
@@ -82,6 +87,9 @@ async def calculate_index_endpoint(
         parameters["formula_name"] = request.formula_name or ""
         parameters["formula_expression"] = request.formula
         parameters["result_index_key"] = f"custom:{request.formula_id}"
+    if request.index_type == 'VRA_ZONES':
+        parameters["source_index"] = request.source_index or 'NDVI'
+        parameters["n_zones"] = request.n_zones
 
     job = VegetationJob(
         tenant_id=tenant_id,
@@ -506,6 +514,7 @@ async def trigger_zoning(
             "index_type": "VRA_ZONES",
             "entity_id": parcel_id,
             "n_zones": request.n_zones,
+            "source_index": request.source_index,
         },
         created_by=current_user.get("user_id"),
     )
