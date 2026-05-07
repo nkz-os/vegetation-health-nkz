@@ -3,8 +3,9 @@ from fastapi import APIRouter, HTTPException, Depends, Query, status
 from sqlalchemy.orm import Session
 from sqlalchemy import func, distinct
 from uuid import UUID, uuid4
+import uuid as uuid_mod
 from datetime import datetime, date as date_type
-from typing import Optional
+from typing import Dict, List, Optional
 import os
 import logging
 import httpx
@@ -241,44 +242,87 @@ async def get_available_scenes(
     current_user: dict = Depends(require_auth),
     db: Session = Depends(get_db_with_tenant)
 ):
-    """Retorna metadatos para el timeline (fechas con datos válidos).
+    """Timeline metadata (dates with usable data) derived from
+    vegetation_jobs.result. The legacy implementation joined the
+    VegetationIndexCache table which is no longer written by the FIWARE-
+    canonical worker — it always returned an empty timeline regardless
+    of how many real rasters the parcel had.
 
-    Si no se especifica index_type, retorna escenas de todos los índices disponibles,
-    deduplicadas por scene_id.
+    Each row exposes scene_id, date, mean value of the chosen index and
+    the per-parcel local cloud percentage (from VegetationScene when
+    we can resolve the UUID, null otherwise).
     """
     tenant_id = current_user["tenant_id"]
 
-    query = (
-        db.query(VegetationScene, VegetationIndexCache)
-        .join(VegetationIndexCache, VegetationIndexCache.scene_id == VegetationScene.id)
-        .filter(
-            VegetationIndexCache.tenant_id == tenant_id,
-            VegetationIndexCache.entity_id == entity_id,
-            VegetationScene.is_valid == True,
-        )
+    base_filters = [
+        VegetationJob.tenant_id == tenant_id,
+        VegetationJob.entity_id == entity_id,
+        VegetationJob.job_type == "calculate_index",
+        VegetationJob.status == "completed",
+        VegetationJob.deleted_at.is_(None),
+        VegetationJob.result["raster_path"].astext.isnot(None),
+    ]
+    if index_type:
+        base_filters.append(VegetationJob.result["index_type"].astext == index_type.upper())
+
+    jobs = (
+        db.query(VegetationJob)
+        .filter(*base_filters)
+        .order_by(VegetationJob.result["sensing_date"].astext.asc())
+        .limit(2000)
+        .all()
     )
 
-    if index_type:
-        query = query.filter(VegetationIndexCache.index_type == index_type.upper())
+    # Resolve cloud_coverage from VegetationScene in a single batch query
+    # so the timeline can colour-code overcast scenes without N round trips.
+    scene_uuid_strs = {
+        (j.result or {}).get("scene_id") for j in jobs if (j.result or {}).get("scene_id")
+    }
+    scene_uuids: List[uuid_mod.UUID] = []
+    for s in scene_uuid_strs:
+        try:
+            scene_uuids.append(uuid_mod.UUID(s))
+        except (ValueError, TypeError):
+            continue
+    cloud_by_scene: Dict[str, Optional[str]] = {}
+    if scene_uuids:
+        for sid, cov in (
+            db.query(VegetationScene.id, VegetationScene.cloud_coverage)
+            .filter(
+                VegetationScene.tenant_id == tenant_id,
+                VegetationScene.id.in_(scene_uuids),
+            )
+            .all()
+        ):
+            cloud_by_scene[str(sid)] = cov
 
-    rows = query.order_by(VegetationScene.sensing_date.asc()).all()
-
-    # Deduplicate by scene_id when returning across all indices
+    # Deduplicate by scene_id when caller did not pin an index_type
     seen_scenes: set = set()
     timeline = []
-    for s, c in rows:
-        scene_key = str(s.id)
-        if not index_type and scene_key in seen_scenes:
+    for job in jobs:
+        result = job.result or {}
+        scene_uuid = result.get("scene_id")
+        if not scene_uuid:
             continue
-        seen_scenes.add(scene_key)
+        if not index_type and scene_uuid in seen_scenes:
+            continue
+        seen_scenes.add(scene_uuid)
+        sensing = result.get("sensing_date")
+        stats = result.get("statistics") or {}
+        mean = stats.get("mean")
+        try:
+            mean_f = float(mean) if mean is not None else None
+        except (ValueError, TypeError):
+            mean_f = None
+        cov = cloud_by_scene.get(scene_uuid)
         timeline.append({
-            "id": scene_key,
-            "scene_id": scene_key,
-            "date": s.sensing_date.isoformat(),
-            "mean_value": float(c.mean_value) if c.mean_value else None,
-            "local_cloud_pct": s.cloud_coverage,
-            "cloud_pct": s.cloud_coverage,
-            "raster_path": c.result_raster_path,
+            "id": scene_uuid,
+            "scene_id": scene_uuid,
+            "date": sensing,
+            "mean_value": mean_f,
+            "local_cloud_pct": cov,
+            "cloud_pct": cov,
+            "raster_path": result.get("raster_path"),
         })
 
-    return {"timeline": timeline}
+    return {"timeline": timeline, "count": len(timeline)}
