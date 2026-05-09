@@ -12,6 +12,7 @@ interpretation of crop health and planning.
 
 import logging
 import os
+import re
 from typing import Dict, List, Any, Optional, Tuple
 from datetime import datetime, date, timedelta
 from dataclasses import dataclass, field
@@ -23,6 +24,32 @@ logger = logging.getLogger(__name__)
 WEATHER_MODULE_URL = os.getenv("WEATHER_MODULE_URL", "http://timeseries-reader-service:5000")
 ORION_LD_URL = os.getenv("ORION_LD_URL", "http://orion-ld:1026")
 ENTITY_MANAGER_URL = os.getenv("ENTITY_MANAGER_URL", "http://entity-manager-service:5000")
+
+
+def _make_headers(tenant_id: str) -> dict:
+    """Build canonical NGSI-LD headers with tenant normalization.
+
+    Applies FIWARE multi-tenant conventions: lowercase, underscores,
+    alphanumeric-only normalized tenant value for both NGSILD-Tenant
+    and Fiware-Service headers.
+    """
+    n = tenant_id.lower().strip().replace('-', '_').replace(' ', '_')
+    n = re.sub(r'[^a-z0-9_]', '', n)
+    n = n.strip('_') or tenant_id
+    headers = {
+        "NGSILD-Tenant": n,
+        "Fiware-Service": n,
+        "Fiware-ServicePath": "/",
+        "Accept": "application/ld+json",
+    }
+    ctx = os.getenv("CONTEXT_URL", "")
+    if ctx:
+        headers["Link"] = (
+            f'<{ctx}>; '
+            f'rel="http://www.w3.org/ns/json-ld#context"; '
+            f'type="application/ld+json"'
+        )
+    return headers
 
 
 @dataclass
@@ -270,10 +297,7 @@ class WeatherService:
                     "q": f"refParcel=={entity_id}",
                     "attrs": "soilMoisture,soilTemperature,soilEC,soilPH,leafWetness,location"
                 },
-                headers={
-                    "Accept": "application/ld+json",
-                    "NGSILD-Tenant": tenant_id
-                }
+                headers=_make_headers(tenant_id),
             )
 
             if response.status_code == 200:

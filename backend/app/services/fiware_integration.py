@@ -10,6 +10,7 @@ Follows the platform convention:
 
 import logging
 import os
+import re
 from typing import Dict, Any, Optional, List
 from datetime import datetime, date, timezone
 
@@ -32,11 +33,30 @@ INDEX_ATTRS = {
 
 
 def _make_headers(tenant_id: str) -> Dict[str, str]:
-    """Standard headers for Orion-LD requests."""
-    return {
+    """Build canonical NGSI-LD headers with tenant normalization.
+
+    Applies FIWARE multi-tenant conventions: lowercase, underscores,
+    alphanumeric-only normalized tenant value for both NGSILD-Tenant
+    and Fiware-Service headers. Includes Link header when CONTEXT_URL is set.
+    """
+    n = tenant_id.lower().strip().replace('-', '_').replace(' ', '_')
+    n = re.sub(r'[^a-z0-9_]', '', n)
+    n = n.strip('_') or tenant_id
+    headers: Dict[str, str] = {
         "Content-Type": "application/ld+json",
-        "NGSILD-Tenant": tenant_id,
+        "NGSILD-Tenant": n,
+        "Fiware-Service": n,
+        "Fiware-ServicePath": "/",
+        "Accept": "application/ld+json",
     }
+    ctx = os.getenv("CONTEXT_URL", "")
+    if ctx:
+        headers["Link"] = (
+            f'<{ctx}>; '
+            f'rel="http://www.w3.org/ns/json-ld#context"; '
+            f'type="application/ld+json"'
+        )
+    return headers
 
 
 def _entity_id_for_parcel(tenant_id: str, parcel_id: str) -> str:
@@ -275,10 +295,7 @@ def query_vegetation_index_entities(
     Returns:
         List of NGSI-LD entities
     """
-    headers = {
-        "Accept": "application/ld+json",
-        "NGSILD-Tenant": tenant_id,
-    }
+    headers = _make_headers(tenant_id)
 
     params: Dict[str, Any] = {
         "type": "VegetationIndex",
@@ -314,10 +331,23 @@ class FIWAREClient:
         self.session = requests.Session()
         if auth_token:
             self.session.headers['Authorization'] = f'Bearer {auth_token}'
+        n = tenant_id.lower().strip().replace('-', '_').replace(' ', '_')
+        n = re.sub(r'[^a-z0-9_]', '', n)
+        n = n.strip('_') or tenant_id
         self.session.headers.update({
-            'NGSILD-Tenant': tenant_id,
+            'NGSILD-Tenant': n,
+            'Fiware-Service': n,
+            'Fiware-ServicePath': '/',
             'Content-Type': 'application/ld+json',
+            'Accept': 'application/ld+json',
         })
+        ctx = os.getenv('CONTEXT_URL', '')
+        if ctx:
+            self.session.headers['Link'] = (
+                f'<{ctx}>; '
+                f'rel="http://www.w3.org/ns/json-ld#context"; '
+                f'type="application/ld+json"'
+            )
 
     def create_entity(self, entity: Dict[str, Any]) -> bool:
         try:
