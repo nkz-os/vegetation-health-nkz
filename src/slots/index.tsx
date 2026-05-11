@@ -15,26 +15,8 @@ import { VegetationProvider } from '../services/vegetationContext';
 // Module identifier - used for all slot widgets
 const MODULE_ID = 'vegetation-prime';
 
-// Type definitions for slot widgets (matching SDK types)
-export interface SlotWidgetDefinition {
-  id: string;
-  /** Module ID that owns this widget. REQUIRED for remote modules. */
-  moduleId: string;
-  component: string;
-  priority: number;
-  localComponent: React.ComponentType<any>;
-  defaultProps?: Record<string, any>;
-  showWhen?: {
-    entityType?: string[];
-    layerActive?: string[];
-  };
-}
-
-export type SlotType = 'layer-toggle' | 'context-panel' | 'bottom-panel' | 'entity-tree' | 'map-layer';
-
-export type ModuleViewerSlots = Record<SlotType, SlotWidgetDefinition[]> & {
-  moduleProvider?: React.ComponentType<{ children: React.ReactNode }>;
-};
+import type { SlotType, SlotWidgetDefinition, ModuleViewerSlots } from '@nekazari/sdk';
+export type { SlotType, SlotWidgetDefinition, ModuleViewerSlots };
 
 /**
  * Vegetation Prime Slots Configuration
