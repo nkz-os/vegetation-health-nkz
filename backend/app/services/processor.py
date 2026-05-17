@@ -14,6 +14,10 @@ import simpleeval
 
 logger = logging.getLogger(__name__)
 
+# Buffer (meters) applied to parcel geometry so Sentinel-2 edge pixels that
+# partially overlap the boundary are included in mask and statistics.
+PARCEL_GEOMETRY_BUFFER_M = 10.0
+
 
 class VegetationIndexProcessor:
     """Processes vegetation indices from Sentinel-2 bands."""
@@ -712,6 +716,10 @@ class VegetationIndexProcessor:
         if raster_crs and str(raster_crs) != 'EPSG:4326':
             transformer = Transformer.from_crs('EPSG:4326', raster_crs, always_xy=True)
             geom = transform(transformer.transform, geom)
+
+        # Buffer outward by 10m so Sentinel-2 edge pixels that partially
+        # overlap the parcel boundary are included in the mask and statistics.
+        geom = geom.buffer(PARCEL_GEOMETRY_BUFFER_M)
 
         # Rasterize: 1 inside polygon, 0 outside
         inside = rio_rasterize(
