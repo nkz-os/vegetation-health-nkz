@@ -17,7 +17,7 @@
   },
   "dependencies": {
     "@nekazari/design-tokens": "^0.1.0-alpha.0",
-    "@nekazari/sdk": "^1.0.3",
+    "@nekazari/sdk": "^1.1.0",
     "@nekazari/ui-kit": "^1.0.2-alpha.4",
     "@nekazari/viewer-kit": "^0.1.1-alpha.0",
     "axios": "^1.13.2",
