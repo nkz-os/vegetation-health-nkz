@@ -5,6 +5,16 @@ All notable changes to the Vegetation Prime module will be documented in this fi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Sen2Res super-resolution**: Pure Python content-color factorization super-resolves 20 m Sentinel-2 bands (B05/B8A/B11/B12) to 10 m using B02/B03/B04/B08 as spatial guides. Runs once per scene at download time, before global cache upload. Improves NDRE, CIre, NDWI, and NDMI effective resolution. Feature-flagged via `SEN2RES_ENABLED` (default `false`). Graceful fallback to bilinear interpolation on failure.
+- **Geometry buffer**: 10 m outward buffer on parcel polygon in `create_geometry_mask()` and `compute_local_cloud_pct()`, ensuring Sentinel-2 edge pixels that partially overlap the boundary are included in analysis and cloud filtering.
+- `sen2res_applied` metadata in `VegetationScene` and `GlobalSceneCache` quality_flags.
+
+### Changed
+- `scl_validation.py`: Migrated from `rasterio.warp.transform_geom` to shapely geometry + buffer for cloud mask computation.
+
 ## [2.0.0] - 2026-04-30
 
 ### Added
