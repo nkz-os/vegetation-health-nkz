@@ -20,6 +20,7 @@
 
 ### Key Features
 
+- **Sen2Res Super-Resolution**: Content-color factorization (ATPRK-like) super-resolves 20 m Sentinel-2 bands (B05/B8A/B11/B12) to 10 m using native 10 m bands as spatial guides. Improves NDRE, CIre, NDWI, and NDMI effective resolution. Feature-flagged via `SEN2RES_ENABLED`.
 - **Internal Rendering Engine**: Built-in XYZ tile server using `rio-tiler`. No external dependencies like TiTiler.
 - **Sentinel-2 L2A Integration**: Automated scene discovery and processing via Copernicus Data Space.
 - **Spectral Indices**: Real-time calculation of NDVI, EVI, SAVI, GNDVI, NDRE, and custom formulas.
@@ -34,9 +35,16 @@
 ### Backend (Python/FastAPI)
 - **SOLID Structure**: Decoupled routers for `jobs`, `tiles`, `entities`, and `analytics`.
 - **GIS Core**: `rasterio` and `rio-tiler` for efficient Cloud-Optimized GeoTIFF (COG) processing.
+- **Super-Resolution**: Pure Python content-color factorization brings 20 m bands to 10 m — zero new dependencies.
 - **Async Workers**: Celery + Redis for heavy satellite data processing.
 - **Storage**: MinIO (S3 compatible) with tenant-isolated buckets.
 - **Security**: Non-root container execution (`appuser`) and JWT (RS256) validation.
+
+### Feature Flags
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SEN2RES_ENABLED` | `false` | Enable Sen2Res super-resolution at download time. When enabled, B05/B8A/B11/B12 are super-resolved to 10 m using B02/B03/B04/B08 as spatial guides. Falls back to bilinear on failure. |
 
 ### Frontend (React/TypeScript)
 - **IIFE Bundle**: Single-file bundle injection via `window.__NKZ__.register()`.
