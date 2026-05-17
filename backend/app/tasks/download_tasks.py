@@ -253,6 +253,7 @@ def download_sentinel2_scene(self, job_id: str, tenant_id: str, parameters: Dict
         ).first()
         
         scene_downloaded_from_copernicus = False
+        sr_applied = False
         all_bands_exist = False
         
         if global_cache_entry:
@@ -317,7 +318,29 @@ def download_sentinel2_scene(self, job_id: str, tenant_id: str, parameters: Dict
             
             if not band_paths:
                 raise ValueError("Failed to download any bands")
-            
+
+            # --- Sen2Res super-resolution (feature-flagged) ---
+            sr_applied = False
+            if os.getenv('SEN2RES_ENABLED', 'false').lower() == 'true':
+                logger.info("Sen2Res enabled — super-resolving 20 m bands to 10 m")
+                try:
+                    from app.services.superresolution import superresolve_bands
+
+                    scl_local = band_paths.get('SCL')
+                    band_paths = superresolve_bands(
+                        band_paths=band_paths,
+                        output_dir=str(temp_dir),
+                        scl_path=scl_local,
+                    )
+                    sr_applied = True
+                    logger.info("Sen2Res complete for scene %s", scene_id)
+                except Exception as exc:
+                    logger.warning(
+                        "Sen2Res failed for scene %s: %s — falling back to bilinear",
+                        scene_id, exc,
+                    )
+            # --- end Sen2Res ---
+
             # Upload to global bucket first (for future reuse)
             self.update_state(state='PROGRESS', meta={'progress': 60, 'message': 'Uploading to global cache'})
             global_band_paths = {}
@@ -340,6 +363,9 @@ def download_sentinel2_scene(self, job_id: str, tenant_id: str, parameters: Dict
                 global_cache_entry.storage_bucket = global_bucket_name
                 global_cache_entry.cloud_coverage = str(best_scene['cloud_cover'])
                 global_cache_entry.sensing_date = date.fromisoformat(best_scene['sensing_date'])
+                if global_cache_entry.quality_flags is None:
+                    global_cache_entry.quality_flags = {}
+                global_cache_entry.quality_flags['sen2res_applied'] = sr_applied
             else:
                 # Create new cache entry
                 global_cache_entry = GlobalSceneCache(
@@ -352,7 +378,8 @@ def download_sentinel2_scene(self, job_id: str, tenant_id: str, parameters: Dict
                     bands=global_band_paths,
                     cloud_coverage=str(best_scene['cloud_cover']),
                     download_count=0,
-                    is_valid=True
+                    is_valid=True,
+                    quality_flags={'sen2res_applied': sr_applied},
                 )
                 db.add(global_cache_entry)
             
@@ -421,6 +448,9 @@ def download_sentinel2_scene(self, job_id: str, tenant_id: str, parameters: Dict
             scene.storage_bucket = tenant_bucket_name
             scene.is_valid = True
             scene.job_id = job.id
+            if scene.quality_flags is None:
+                scene.quality_flags = {}
+            scene.quality_flags['sen2res_applied'] = sr_applied
             logger.info(f"Reusing existing scene record {scene.id} for {scene_id}")
         else:
             scene = VegetationScene(
@@ -434,7 +464,8 @@ def download_sentinel2_scene(self, job_id: str, tenant_id: str, parameters: Dict
                 storage_path=f"{storage_path}scenes/{scene_id}/",
                 storage_bucket=tenant_bucket_name,
                 bands=storage_band_paths,
-                job_id=job.id
+                job_id=job.id,
+                quality_flags={'sen2res_applied': sr_applied},
             )
             db.add(scene)
             logger.info(f"Created new scene record for {scene_id}")
