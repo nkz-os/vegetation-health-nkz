@@ -1,7 +1,7 @@
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any, List
 from uuid import UUID
-from datetime import datetime
+from datetime import date, datetime
 
 class JobCreateRequest(BaseModel):
     job_type: str = Field(..., description="download or calculate_index")
@@ -26,3 +26,14 @@ class JobResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class LatestResultsItem(BaseModel):
+    entity_id: str
+    raster_path: Optional[str] = None
+    job_id: str
+    bounds: Optional[List[float]] = None  # [west, south, east, north]
+    minzoom: Optional[int] = None
+    maxzoom: Optional[int] = None
+    sensing_date: Optional[date] = None
+    scene_id: Optional[str] = None
