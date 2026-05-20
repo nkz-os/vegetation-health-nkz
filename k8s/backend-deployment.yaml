@@ -59,9 +59,15 @@ spec:
             - name: REDIS_CACHE_URL
               value: "redis://:$(REDIS_PASSWORD)@redis-service:6379/1"
             - name: JWT_ISSUER
-              value: "https://auth.robotika.cloud/auth/realms/nekazari"
+              valueFrom:
+                configMapKeyRef:
+                  name: vegetation-prime-config
+                  key: JWT_ISSUER
             - name: JWKS_URL
-              value: "https://auth.robotika.cloud/auth/realms/nekazari/protocol/openid-connect/certs"
+              valueFrom:
+                configMapKeyRef:
+                  name: vegetation-prime-config
+                  key: JWKS_URL
             - name: JWT_ALGORITHM
               value: "RS256"
             - name: FIWARE_CONTEXT_BROKER_URL
@@ -71,7 +77,10 @@ spec:
             - name: S3_BUCKET
               value: "vegetation-prime-global"
             - name: TITILER_BASE_URL
-              value: "https://nkz.robotika.cloud/titiler"
+              valueFrom:
+                configMapKeyRef:
+                  name: vegetation-prime-config
+                  key: TITILER_BASE_URL
             - name: MODULE_MANAGEMENT_KEY
               valueFrom:
                 secretKeyRef:
