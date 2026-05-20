@@ -13,6 +13,16 @@ from pydantic import BaseModel, Field
 import logging
 import uuid as uuid_mod
 
+
+def _parse_iso_date(value):
+    """Return a date parsed from an ISO string, or None for missing/invalid values."""
+    if not value or value == "unknown":
+        return None
+    try:
+        return date.fromisoformat(value)
+    except (ValueError, TypeError):
+        return None
+
 from app.database import get_db_with_tenant
 from app.middleware.auth import require_auth
 from app.models import VegetationScene, VegetationIndexCache, VegetationJob, VegetationCustomFormula
@@ -452,7 +462,6 @@ async def get_latest_results_all_entities(
                 VegetationJob.completed_at == latest_subq.c.latest,
             ),
         )
-        .filter(*base_filters)
         .all()
     )
 
@@ -472,9 +481,7 @@ async def get_latest_results_all_entities(
                 bounds=None,
                 minzoom=None,
                 maxzoom=None,
-                sensing_date=date.fromisoformat(job.result["sensing_date"])
-                if job.result.get("sensing_date")
-                else None,
+                sensing_date=_parse_iso_date(job.result.get("sensing_date")),
                 scene_id=job.result.get("scene_id"),
             )
         )
