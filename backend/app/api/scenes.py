@@ -7,7 +7,7 @@ Routes: /api/vegetation/scenes, /api/vegetation/scenes/{entity_id}/stats,
 from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Optional, Dict, Any, List
 from pydantic import BaseModel, Field
 import logging
@@ -16,6 +16,7 @@ import uuid as uuid_mod
 from app.database import get_db_with_tenant
 from app.middleware.auth import require_auth
 from app.models import VegetationScene, VegetationIndexCache, VegetationJob, VegetationCustomFormula
+from app.schemas import LatestResultsItem
 from app.tasks import calculate_vegetation_index, download_sentinel2_scene
 
 router = APIRouter(prefix="/api/vegetation", tags=["scenes"])
@@ -392,6 +393,74 @@ async def analyze_parcel(
         local_cloud_threshold=request.local_cloud_threshold,
         crop_season_id=None,
     )
+
+
+@router.get("/results/latest", response_model=List[LatestResultsItem])
+async def get_latest_results_all_entities(
+    index: str = Query(..., description="Index type, e.g. NDVI, NDRE, NDMI"),
+    scene_date: Optional[date] = Query(
+        None,
+        description="Optional scene date (YYYY-MM-DD) to align all parcels temporally",
+    ),
+    current_user: dict = Depends(require_auth),
+    db: Session = Depends(get_db_with_tenant),
+):
+    """Return the latest completed VegetationJob per entity for this tenant and the given index.
+
+    If scene_date is provided, restrict to that sensing date so all parcels are
+    temporally aligned for the "all parcels" viewer mode.
+    """
+    tenant_id = current_user["tenant_id"]
+
+    jobs = (
+        db.query(VegetationJob)
+        .filter(
+            VegetationJob.tenant_id == tenant_id,
+            VegetationJob.job_type == "calculate_index",
+            VegetationJob.status == "completed",
+            VegetationJob.deleted_at.is_(None),
+            VegetationJob.result["raster_path"].astext.isnot(None),
+        )
+        .order_by(desc(VegetationJob.completed_at))
+        .limit(1000)
+        .all()
+    )
+
+    # Filter to completed jobs for the requested index type and optionally a
+    # single scene date, then deduplicate: only the latest job per entity_id survives.
+    seen: set = set()
+    results: List[LatestResultsItem] = []
+    for job in jobs:
+        if not job.result:
+            continue
+        if job.status != "completed":
+            continue
+        if job.result.get("index_type") != index and job.result.get("index_key") != index:
+            continue
+        if scene_date is not None:
+            job_sensing = job.result.get("sensing_date")
+            if job_sensing != scene_date.isoformat():
+                continue
+        if job.tenant_id != tenant_id:
+            continue
+        if job.entity_id in seen:
+            continue  # already have a newer completed job for this entity
+        seen.add(job.entity_id)
+        results.append(
+            LatestResultsItem(
+                entity_id=job.entity_id,
+                raster_path=job.result.get("raster_path"),
+                job_id=str(job.id),
+                bounds=None,
+                minzoom=None,
+                maxzoom=None,
+                sensing_date=date.fromisoformat(job.result["sensing_date"])
+                if job.result.get("sensing_date")
+                else None,
+                scene_id=job.result.get("scene_id"),
+            )
+        )
+    return results
 
 
 @router.get("/results/{entity_id}")
