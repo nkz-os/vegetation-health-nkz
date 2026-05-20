@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Card } from '@nekazari/ui-kit';
-import { VegetationProvider, useVegetationContext } from './services/vegetationContext';
+import { VegetationProvider, useVegetationContext, type LayerScope } from './services/vegetationContext';
 
 import { useTranslation } from '@nekazari/sdk';
 
@@ -44,21 +44,24 @@ type TabType = 'dashboard' | 'analysis';
  * Read URL search params for deep linking
  * Format: /vegetation?entityId=xxx&tab=analysis
  */
-function useDeepLinkParams(): { entityId: string | null; tab: TabType | null } {
-  const [params, setParams] = useState<{ entityId: string | null; tab: TabType | null }>({
+function useDeepLinkParams(): { entityId: string | null; tab: TabType | null; layerScope: LayerScope | null } {
+  const [params, setParams] = useState<{ entityId: string | null; tab: TabType | null; layerScope: LayerScope | null }>({
     entityId: null,
-    tab: null
+    tab: null,
+    layerScope: null,
   });
 
   useEffect(() => {
     const searchParams = new URLSearchParams(window.location.search);
     const entityId = searchParams.get('entityId');
     const tab = searchParams.get('tab') as TabType | null;
+    const scopeParam = searchParams.get('layerScope');
 
     const validTabs: TabType[] = ['dashboard', 'analysis'];
     const validatedTab = tab && validTabs.includes(tab) ? tab : null;
+    const validatedScope: LayerScope | null = (scopeParam === 'all' || scopeParam === 'selected') ? scopeParam : null;
 
-    setParams({ entityId, tab: validatedTab });
+    setParams({ entityId, tab: validatedTab, layerScope: validatedScope });
   }, []);
 
   return params;
@@ -69,6 +72,7 @@ const DashboardContent: React.FC = () => {
   const {
     selectedEntityId,
     setSelectedEntityId,
+    setLayerScope,
   } = useVegetationContext();
 
   const api = useVegetationApi();
@@ -123,12 +127,16 @@ const DashboardContent: React.FC = () => {
   useEffect(() => {
     if (deepLinkApplied) return;
 
+    if (deepLinkParams.layerScope) {
+      setLayerScope(deepLinkParams.layerScope);
+    }
+
     if (deepLinkParams.entityId) {
       setSelectedEntityId(deepLinkParams.entityId);
       setActiveTab(deepLinkParams.tab || 'analysis');
       setDeepLinkApplied(true);
     }
-  }, [deepLinkParams, deepLinkApplied, setSelectedEntityId]);
+  }, [deepLinkParams, deepLinkApplied, setSelectedEntityId, setLayerScope]);
 
   // If a parcel is selected and we're on dashboard, auto-switch to analytics (unless user opened calculations from dashboard)
   useEffect(() => {
