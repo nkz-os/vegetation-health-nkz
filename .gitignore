@@ -136,3 +136,21 @@ nekazari-module-template/
 # =============================================================================
 .force_rebuild*
 .worktrees/
+
+# =============================================================================
+# Internal agent / AI artifacts — NEVER commit (public repo)
+# Workspace policy: plans, specs, handovers and any internal AI-agent comms
+# live OUTSIDE this repo (in /home/g/Documents/nekazari/documents/). These
+# entries are belt-and-suspenders against accidental drift.
+# =============================================================================
+.ai/
+.claude/
+.cursor/
+.aider*
+.cody/
+internal-docs/
+docs/superpowers/
+docs/handovers/
+*HANDOVER*.md
+*-handover*.md
+*HANDOVER*.txt
