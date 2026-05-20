@@ -3,6 +3,8 @@ import { useViewerOptional } from '@nekazari/sdk';
 import type { EntityDataStatus } from '../types';
 import { useVegetationApi } from './api';
 
+export type LayerScope = 'selected' | 'all';
+
 interface DateRange {
   startDate: Date | null;
   endDate: Date | null;
@@ -45,6 +47,7 @@ interface SharedState {
   selectedDate: Date | null;
   layerOpacity: number; // 0-100
   layerVisible: boolean;
+  layerScope: LayerScope;
   entityDataStatus: EntityDataStatus | null;
   entityDataStatusLoading: boolean;
   entityName: string | null;
@@ -72,7 +75,8 @@ function getStore(): VegetationStore {
         selectedSceneId: null,
         selectedDate: null,
         layerOpacity: 75,
-        layerVisible: true,
+        layerVisible: false,
+        layerScope: 'selected' as LayerScope,
         entityDataStatus: null,
         entityDataStatusLoading: false,
         entityName: null,
@@ -118,6 +122,7 @@ interface VegetationContextType {
   indexResults: Record<string, IndexResult>;
   layerOpacity: number;
   layerVisible: boolean;
+  layerScope: LayerScope;
   entityDataStatus: EntityDataStatus | null;
   entityDataStatusLoading: boolean;
   entityName: string | null;
@@ -132,6 +137,7 @@ interface VegetationContextType {
   setIndexResults: (results: Record<string, IndexResult>) => void;
   setLayerOpacity: (opacity: number) => void;
   setLayerVisible: (visible: boolean) => void;
+  setLayerScope: (scope: LayerScope) => void;
   setSelectedSeasonId: (id: string | null) => void;
   resetContext: () => void;
 }
@@ -181,6 +187,10 @@ export const VegetationProvider: React.FC<{ children: ReactNode }> = ({ children
 
   const setLayerVisible = useCallback((visible: boolean) => {
     updateStore({ layerVisible: visible });
+  }, []);
+
+  const setLayerScope = useCallback((scope: LayerScope) => {
+    updateStore({ layerScope: scope });
   }, []);
 
   const setSelectedSeasonId = useCallback((id: string | null) => {
@@ -322,7 +332,8 @@ export const VegetationProvider: React.FC<{ children: ReactNode }> = ({ children
       selectedSceneId: null,
       selectedDate: null,
       layerOpacity: 75,
-      layerVisible: true,
+      layerVisible: false,
+      layerScope: 'selected' as LayerScope,
       entityDataStatus: null,
       entityDataStatusLoading: false,
       entityName: null,
@@ -347,6 +358,7 @@ export const VegetationProvider: React.FC<{ children: ReactNode }> = ({ children
         indexResults: sharedState.indexResults,
         layerOpacity: sharedState.layerOpacity,
         layerVisible: sharedState.layerVisible,
+        layerScope: sharedState.layerScope,
         entityDataStatus: sharedState.entityDataStatus,
         entityDataStatusLoading: sharedState.entityDataStatusLoading,
         entityName: sharedState.entityName,
@@ -361,6 +373,7 @@ export const VegetationProvider: React.FC<{ children: ReactNode }> = ({ children
         setIndexResults,
         setLayerOpacity,
         setLayerVisible,
+        setLayerScope,
         setSelectedSeasonId,
         resetContext,
       }}

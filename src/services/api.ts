@@ -440,6 +440,29 @@ export class VegetationApiClient {
     return response as any;
   }
 
+  /**
+   * Get the latest completed result per entity for all parcels in the tenant.
+   * Used by the 'all' layer scope to mount one ImageryLayer per parcel.
+   */
+  async getLatestResultsAllEntities(
+    index: string,
+    sceneDate?: string,
+  ): Promise<Array<{
+    entity_id: string;
+    raster_path: string | null;
+    job_id: string;
+    bounds: [number, number, number, number] | null;
+    minzoom: number | null;
+    maxzoom: number | null;
+    sensing_date: string | null;
+    scene_id: string | null;
+  }>> {
+    const q = new URLSearchParams({ index });
+    if (sceneDate) q.set('scene_date', sceneDate);
+    const response = await this.client.get(`/results/latest?${q.toString()}`);
+    return response as any;
+  }
+
   async listCustomFormulas(): Promise<{ items: CustomFormula[]; total: number }> {
     const response = await this.client.get('/custom-formulas');
     return response as unknown as { items: CustomFormula[]; total: number };
