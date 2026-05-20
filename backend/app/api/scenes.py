@@ -6,7 +6,7 @@ Routes: /api/vegetation/scenes, /api/vegetation/scenes/{entity_id}/stats,
 """
 from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.orm import Session
-from sqlalchemy import func, desc
+from sqlalchemy import func, desc, or_, and_
 from datetime import date, datetime, timedelta
 from typing import Optional, Dict, Any, List
 from pydantic import BaseModel, Field
@@ -412,39 +412,57 @@ async def get_latest_results_all_entities(
     """
     tenant_id = current_user["tenant_id"]
 
-    jobs = (
-        db.query(VegetationJob)
-        .filter(
-            VegetationJob.tenant_id == tenant_id,
-            VegetationJob.job_type == "calculate_index",
-            VegetationJob.status == "completed",
-            VegetationJob.deleted_at.is_(None),
-            VegetationJob.result["raster_path"].astext.isnot(None),
+    # Some producers write the index under "index_type", others under "index_key".
+    # Treat both as canonical; existing /results/{entity_id} reads both as well.
+    index_match = or_(
+        VegetationJob.result["index_type"].astext == index,
+        VegetationJob.result["index_key"].astext == index,
+    )
+
+    base_filters = [
+        VegetationJob.tenant_id == tenant_id,
+        VegetationJob.job_type == "calculate_index",
+        VegetationJob.status == "completed",
+        VegetationJob.deleted_at.is_(None),
+        VegetationJob.result["raster_path"].astext.isnot(None),
+        index_match,
+    ]
+    if scene_date is not None:
+        base_filters.append(
+            VegetationJob.result["sensing_date"].astext == scene_date.isoformat()
         )
-        .order_by(desc(VegetationJob.completed_at))
-        .limit(1000)
+
+    # Subquery: max(completed_at) per entity_id within the filter set
+    latest_subq = (
+        db.query(
+            VegetationJob.entity_id.label("entity_id"),
+            func.max(VegetationJob.completed_at).label("latest"),
+        )
+        .filter(*base_filters)
+        .group_by(VegetationJob.entity_id)
+        .subquery()
+    )
+
+    rows = (
+        db.query(VegetationJob)
+        .join(
+            latest_subq,
+            and_(
+                VegetationJob.entity_id == latest_subq.c.entity_id,
+                VegetationJob.completed_at == latest_subq.c.latest,
+            ),
+        )
+        .filter(*base_filters)
         .all()
     )
 
-    # Filter to completed jobs for the requested index type and optionally a
-    # single scene date, then deduplicate: only the latest job per entity_id survives.
+    # In the rare case two jobs share an entity_id + completed_at (tied to the
+    # microsecond), keep the first only.
     seen: set = set()
     results: List[LatestResultsItem] = []
-    for job in jobs:
-        if not job.result:
-            continue
-        if job.status != "completed":
-            continue
-        if job.result.get("index_type") != index and job.result.get("index_key") != index:
-            continue
-        if scene_date is not None:
-            job_sensing = job.result.get("sensing_date")
-            if job_sensing != scene_date.isoformat():
-                continue
-        if job.tenant_id != tenant_id:
-            continue
+    for job in rows:
         if job.entity_id in seen:
-            continue  # already have a newer completed job for this entity
+            continue
         seen.add(job.entity_id)
         results.append(
             LatestResultsItem(

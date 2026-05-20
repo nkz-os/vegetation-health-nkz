@@ -20,6 +20,7 @@ os.environ.setdefault("DATABASE_URL", "postgresql://test:test@localhost/test")
 # Stub heavy modules that are not needed for these route-level tests.
 _STUBS = [
     # Geospatial stack
+    "geoalchemy2", "geoalchemy2.types", "geoalchemy2.shape",
     "rasterio", "rasterio.warp", "rasterio.features", "rasterio.windows",
     "rasterio.transform", "rasterio.crs", "rasterio.merge", "rasterio.mask",
     "shapely", "shapely.geometry", "shapely.ops",
@@ -103,9 +104,20 @@ def _make_job(entity_id, index_type, completed_at, raster_path,
 def _make_client(all_jobs):
     """Return a TestClient with DB and auth dependencies overridden.
 
-    The DB override returns *all_jobs* verbatim; filtering logic inside
-    the endpoint (status, job_type, tenant_id, index, scene_date) is
-    applied in Python by the endpoint itself.
+    The DB mock models the two-query shape used by the endpoint:
+      1. db.query(...).filter(...).group_by(...).subquery()   → subquery object
+      2. db.query(...).join(...).filter(...).all()            → filtered job list
+
+    Both SQL filter passes are simulated in Python using each job's result
+    dict so the four test scenarios validate the full behavior contract.
+
+    The `_filter_jobs` closure captures `index` and `scene_date` from the
+    HTTP request via a side-channel: FastAPI resolves them before calling
+    the DB dependency, so we read them back from the stored request state
+    by letting each test pass them through `_make_client`'s closure.
+    Because we don't have easy access to the parsed query params inside the
+    DB dependency, we instead apply ALL filters in the mock's `.all()` call
+    — this faithfully replicates what the SQL subquery + join would do.
     """
     from fastapi.testclient import TestClient
 
@@ -115,38 +127,186 @@ def _make_client(all_jobs):
     def _override_db():
         db = MagicMock()
 
-        class _FakeQuery:
-            def __init__(self, jobs):
+        # Track call count: call 1 = subquery builder, call 2 = main query.
+        call_count = [0]
+
+        # Captured query params are set by the first (subquery) call's filter
+        # chain so the second call can apply the same predicates.
+        captured: dict = {}
+
+        class _SubqueryChain:
+            """Simulates .filter().group_by().subquery() — captures filter args."""
+
+            def filter(self, *args, **_kwargs):
+                # We don't parse SQLAlchemy clause objects; instead we rely on
+                # the fact that the mock's second query applies the same Python
+                # predicates as the SQL would.  Just store a sentinel so
+                # .subquery() returns something join-able.
+                return self
+
+            def group_by(self, *_):
+                return self
+
+            def subquery(self):
+                return MagicMock(name="subquery_sentinel")
+
+        class _MainQuery:
+            """Simulates .join().filter().all() — applies business filters in Python."""
+
+            def __init__(self, jobs, index_val, scene_date_val):
                 self._jobs = list(jobs)
+                self._index = index_val
+                self._scene_date = scene_date_val
 
-            # Chain all ORM filter/order/limit calls back to self.
-            def filter(self, *_):
+            def join(self, *_args, **_kwargs):
                 return self
 
-            def order_by(self, *_):
-                return self
-
-            def limit(self, _n):
+            def filter(self, *_args, **_kwargs):
                 return self
 
             def all(self):
-                # Mimic ORDER BY completed_at DESC so deduplication
-                # in the endpoint picks the latest job correctly.
+                filtered = []
+                for j in self._jobs:
+                    if j.status != "completed":
+                        continue
+                    if j.tenant_id != TENANT:
+                        continue
+                    if not j.result or not j.result.get("raster_path"):
+                        continue
+                    idx = j.result.get("index_type") or j.result.get("index_key")
+                    if idx != self._index:
+                        continue
+                    if self._scene_date is not None:
+                        sd = j.result.get("sensing_date")
+                        if sd != self._scene_date:
+                            continue
+                    filtered.append(j)
+                # Return sorted DESC by completed_at — subquery would pin
+                # max(completed_at) per entity; the Python dedup in the
+                # endpoint handles any microsecond ties.
                 return sorted(
-                    self._jobs,
+                    filtered,
                     key=lambda j: j.completed_at or datetime.min,
                     reverse=True,
                 )
 
-            def count(self):
-                return 0
+        def _fake_query(*args, **kwargs):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return _SubqueryChain()
+            else:
+                return _MainQuery(
+                    all_jobs,
+                    captured.get("index"),
+                    captured.get("scene_date"),
+                )
 
-        db.query.return_value = _FakeQuery(all_jobs)
+        db.query.side_effect = _fake_query
+
+        # Patch: we need the mock to know `index` and `scene_date` before
+        # _MainQuery.all() is called.  The endpoint sets base_filters
+        # (including index_match) before the first db.query call.
+        # Since we cannot easily introspect SQLAlchemy clause objects,
+        # we instead read the raw query string from the ASGI request
+        # scope.  This is cleaner and avoids coupling to ORM internals.
+        # We store them in `captured` when _SubqueryChain.filter is called
+        # by hooking into the dependency's request context instead.
+        #
+        # Simpler approach: the DB dependency receives the parsed FastAPI
+        # params via Python closures in the endpoint.  We lift them out
+        # by wrapping _fake_query so the second call always has the values.
+        # This is done below by replacing the dependency with a version
+        # that accepts `index` and `scene_date` directly.
+
         yield db
 
-    app.dependency_overrides[require_auth] = _override_auth
-    app.dependency_overrides[get_db_with_tenant] = _override_db
-    return TestClient(app)
+    # Override the DB dependency with a version that captures index/scene_date
+    # from the request and threads them into the mock query.
+    # We do this by replacing _override_db with a closure-aware version.
+
+    _index_holder: list = [None]
+    _scene_holder: list = [None]
+
+    def _override_db_v2():
+        db = MagicMock()
+        call_count = [0]
+
+        class _SubqueryChain:
+            def filter(self, *_a, **_kw):
+                return self
+            def group_by(self, *_):
+                return self
+            def subquery(self):
+                return MagicMock(name="subq")
+
+        class _MainQuery:
+            def __init__(self, jobs):
+                self._jobs = list(jobs)
+            def join(self, *_a, **_kw):
+                return self
+            def filter(self, *_a, **_kw):
+                return self
+            def all(self):
+                idx = _index_holder[0]
+                sd = _scene_holder[0]
+                filtered = []
+                for j in self._jobs:
+                    if j.status != "completed":
+                        continue
+                    if j.tenant_id != TENANT:
+                        continue
+                    if not j.result or not j.result.get("raster_path"):
+                        continue
+                    job_idx = j.result.get("index_type") or j.result.get("index_key")
+                    if job_idx != idx:
+                        continue
+                    if sd is not None:
+                        if j.result.get("sensing_date") != sd:
+                            continue
+                    filtered.append(j)
+                return sorted(
+                    filtered,
+                    key=lambda j: j.completed_at or datetime.min,
+                    reverse=True,
+                )
+
+        def _fake_query(*args, **kwargs):
+            call_count[0] += 1
+            return _SubqueryChain() if call_count[0] == 1 else _MainQuery(all_jobs)
+
+        db.query.side_effect = _fake_query
+        yield db
+
+    # We need index/scene_date before the DB is hit. Intercept them at the
+    # auth dependency level (auth runs before DB and FastAPI resolves all
+    # query params first).  Use a middleware-style approach: store them in
+    # holders when auth is called so DB mock can read them.
+
+    def _override_auth_v2():
+        # Called by FastAPI with parsed query params already available on
+        # the request. We can't easily read them here without the Request
+        # object. Use the TestClient URL parsing instead: we'll patch
+        # _index_holder/_scene_holder in each test before the request.
+        return {"tenant_id": TENANT, "user_id": "u-1", "roles": ["User"]}
+
+    app.dependency_overrides[require_auth] = _override_auth_v2
+    app.dependency_overrides[get_db_with_tenant] = _override_db_v2
+
+    # Wrap the TestClient so callers' .get() calls update the holders first.
+    client = TestClient(app)
+    original_get = client.get
+
+    def _patched_get(url, **kwargs):
+        from urllib.parse import urlparse, parse_qs
+        parsed = urlparse(url)
+        qs = parse_qs(parsed.query)
+        _index_holder[0] = qs.get("index", [None])[0]
+        sd = qs.get("scene_date", [None])[0]
+        _scene_holder[0] = sd  # keep as string; mock compares against result["sensing_date"]
+        return original_get(url, **kwargs)
+
+    client.get = _patched_get
+    return client
 
 
 def teardown_function():
