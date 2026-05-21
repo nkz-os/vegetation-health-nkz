@@ -154,3 +154,10 @@ docs/handovers/
 *HANDOVER*.md
 *-handover*.md
 *HANDOVER*.txt
+docs/plans/
+docs/specs/
+docs/audits/
+*_PLAN.md
+*_SPEC.md
+HANDOFF.md
+CURRENT_STATE.md
