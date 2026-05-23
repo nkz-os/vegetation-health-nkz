@@ -32,6 +32,7 @@ celery_app.conf.update(
     task_soft_time_limit=3300,  # 30 min warning
     worker_prefetch_multiplier=1,
     worker_max_tasks_per_child=50,
+    worker_max_memory_per_child=1200000,  # 1.2 GB — recycle worker before cgroup OOM
     # Durability: do not lose in-flight messages on worker restart
     task_acks_late=True,
     task_reject_on_worker_lost=True,

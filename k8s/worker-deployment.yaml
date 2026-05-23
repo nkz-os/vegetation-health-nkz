@@ -36,8 +36,9 @@ spec:
         - name: worker
           image: ghcr.io/nkz-os/vegetation-health-nkz/vegetation-prime-api:latest
           imagePullPolicy: Always
-          # concurrency=2: overlap index work with downloads.
-          # --max-memory-per-child 1.2GB prevents single-worker OOM kills.
+          # concurrency=1: one task per pod avoids OOM with heavy Sentinel-2 scenes.
+          # Scale horizontally (increase replicas) for more throughput.
+          # --max-memory-per-child 1.2GB recycles workers before cgroup OOM.
           command:
             [
               "celery",
@@ -45,7 +46,7 @@ spec:
               "app.celery_app",
               "worker",
               "--loglevel=info",
-              "--concurrency=2",
+              "--concurrency=1",
               "--max-memory-per-child",
               "1200000",
             ]
@@ -121,5 +122,5 @@ spec:
               memory: "1Gi"
               cpu: "200m"
             limits:
-              memory: "3Gi"
+              memory: "4Gi"
               cpu: "1000m"
