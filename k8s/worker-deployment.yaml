@@ -36,7 +36,8 @@ spec:
         - name: worker
           image: ghcr.io/nkz-os/vegetation-health-nkz/vegetation-prime-api:latest
           imagePullPolicy: Always
-          # concurrency=2: overlap index work with downloads (watch memory limits)
+          # concurrency=2: overlap index work with downloads.
+          # --max-memory-per-child 1.2GB prevents single-worker OOM kills.
           command:
             [
               "celery",
@@ -45,6 +46,8 @@ spec:
               "worker",
               "--loglevel=info",
               "--concurrency=2",
+              "--max-memory-per-child",
+              "1200000",
             ]
           env:
             - name: DATABASE_URL
