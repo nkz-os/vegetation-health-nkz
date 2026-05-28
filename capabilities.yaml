@@ -1,0 +1,87 @@
+# capabilities.yaml — declares what vegetation-health publishes.
+# Consumed by bioorchestrator CapabilityLoader at module install/upgrade.
+moduleId: vegetation-prime
+version: "2.0.0"
+publishes:
+  - entityType: VegetationIndex
+    sdmStatus: draft-proposal
+    sdmProposal: SDM-005
+    scope: per-parcel
+    refRelationship: refAgriParcel
+    attributes:
+      - name: ndviMean
+        unitCode: C62
+        temporal: temporal
+        spatial: polygon-aggregated
+        sources: [derived-from:Sentinel2-L2A]
+        entitlement: open
+        description: "NDVI mean value for the parcel area"
+      - name: ndviMin
+        unitCode: C62
+        temporal: temporal
+        spatial: polygon-aggregated
+        sources: [derived-from:Sentinel2-L2A]
+        entitlement: open
+      - name: ndviMax
+        unitCode: C62
+        temporal: temporal
+        spatial: polygon-aggregated
+        sources: [derived-from:Sentinel2-L2A]
+        entitlement: open
+      - name: ndviStdDev
+        unitCode: C62
+        temporal: temporal
+        spatial: polygon-aggregated
+        sources: [derived-from:Sentinel2-L2A]
+        entitlement: open
+      - name: eviMean
+        unitCode: C62
+        temporal: temporal
+        spatial: polygon-aggregated
+        sources: [derived-from:Sentinel2-L2A]
+        entitlement: open
+      - name: saviMean
+        unitCode: C62
+        temporal: temporal
+        spatial: polygon-aggregated
+        sources: [derived-from:Sentinel2-L2A]
+        entitlement: open
+      - name: gndviMean
+        unitCode: C62
+        temporal: temporal
+        spatial: polygon-aggregated
+        sources: [derived-from:Sentinel2-L2A]
+        entitlement: open
+      - name: ndreMean
+        unitCode: C62
+        temporal: temporal
+        spatial: polygon-aggregated
+        sources: [derived-from:Sentinel2-L2A]
+        entitlement: open
+      - name: ndwiMean
+        unitCode: C62
+        temporal: temporal
+        spatial: polygon-aggregated
+        sources: [derived-from:Sentinel2-L2A]
+        entitlement: open
+      - name: sensingDate
+        unitCode: ISO8601
+        temporal: static
+        spatial: polygon-aggregated
+        sources: [Sentinel2-L2A]
+        entitlement: open
+      - name: rasterUrl
+        unitCode: URL
+        temporal: static
+        spatial: polygon-aggregated
+        sources: [Sentinel2-L2A]
+        entitlement: open
+      - name: pixelCount
+        unitCode: C62
+        temporal: static
+        spatial: polygon-aggregated
+        sources: [Sentinel2-L2A]
+        entitlement: open
+    relationships:
+      - name: refAgriParcel
+        target: AgriParcel
