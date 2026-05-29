@@ -4,6 +4,14 @@
   "display_name": "Vegetation Prime",
   "version": "2.0.0",
   "description": "High-performance vegetation intelligence suite with advanced spectral index calculation, Sentinel-2 integration, and AI-powered predictions for agricultural monitoring.",
+  "description_i18n": {
+    "es": "Suite de inteligencia vegetal de alto rendimiento con cálculo avanzado de índices espectrales, integración Sentinel-2 y predicciones impulsadas por IA para monitorización agrícola.",
+    "en": "High-performance vegetation intelligence suite with advanced spectral index calculation, Sentinel-2 integration, and AI-powered predictions for agricultural monitoring.",
+    "eu": "Errendimendu handiko landaretza adimen suitea, indize espektralen kalkulu aurreratuarekin, Sentinel-2 integrazioarekin eta IA bidezko iragarpenekin nekazaritza monitorizaziorako.",
+    "fr": "Suite d'intelligence végétale haute performance avec calcul avancé d'indices spectraux, intégration Sentinel-2 et prédictions alimentées par l'IA pour la surveillance agricole.",
+    "pt": "Suíte de inteligência vegetal de alto desempenho com cálculo avançado de índices espectrais, integração Sentinel-2 e previsões baseadas em IA para monitoramento agrícola.",
+    "ca": "Suite d'intel·ligència vegetal d'alt rendiment amb càlcul avançat d'índexs espectrals, integració Sentinel-2 i prediccions impulsades per IA per a monitorització agrícola."
+  },
   "short_description": "Advanced vegetation health monitoring and analysis",
   "author": {
     "name": "Nekazari Team",
