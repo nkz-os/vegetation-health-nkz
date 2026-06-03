@@ -100,7 +100,7 @@ jobs:
   # Publish MF2 remote via OIDC (push to main only)
   publish-module:
     name: Publish Module
-    needs: test
+    needs: [build-frontend, build-backend]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     permissions:
       id-token: write
