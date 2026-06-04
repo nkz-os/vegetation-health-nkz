@@ -34,7 +34,7 @@ spec:
           effect: "NoSchedule"
       containers:
         - name: api
-          image: ghcr.io/nkz-os/vegetation-health-nkz/vegetation-prime-api:latest
+          image: ghcr.io/nkz-os/vegetation-health-nkz/vegetation-prime-api@sha256:8247c7273c2ed5e8f1e01bcf123b784e2113ada0411eb0c8c63775b2cab55431
           imagePullPolicy: Always
           ports:
             - name: http
