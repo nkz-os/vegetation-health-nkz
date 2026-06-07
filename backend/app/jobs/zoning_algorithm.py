@@ -212,7 +212,7 @@ class ZoningAlgorithm:
             entity = {
                 "id": zone_id,
                 "type": "AgriManagementZone",
-                "refAgriParcel": {
+                "hasAgriParcel": {
                     "type": "Relationship",
                     "object": parcel_id
                 },

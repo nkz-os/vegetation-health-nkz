@@ -129,7 +129,7 @@ def upsert_vegetation_index_entity(
         "@context": [CONTEXT_URL],
         "id": entity_id,
         "type": "VegetationIndex",
-        "refAgriParcel": {"type": "Relationship", "object": parcel_id},
+        "hasAgriParcel": {"type": "Relationship", "object": parcel_id},
         attr_mean: {
             "type": "Property",
             "value": round(float(statistics.get("mean", 0)), 6),
@@ -257,7 +257,7 @@ def _patch_agriparcel_with_index(
             "value": ndvi_value,
             "observedAt": observed_at,
         },
-        "refVegetationIndex": {
+        "hasVegetationIndex": {
             "type": "Relationship",
             "object": vegetation_index_id,
         },
@@ -302,7 +302,7 @@ def query_vegetation_index_entities(
         "limit": limit,
     }
     if parcel_id:
-        params["q"] = f"refAgriParcel=={parcel_id}"
+        params["q"] = f"hasAgriParcel=={parcel_id}"
 
     try:
         url = f"{ORION_URL}/ngsi-ld/v1/entities"
