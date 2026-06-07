@@ -68,6 +68,122 @@ def _entity_id_for_parcel(tenant_id: str, parcel_id: str) -> str:
     return f"urn:ngsi-ld:VegetationIndex:{tenant_id}:{parcel_short}"
 
 
+def _entity_id_for_eo_product(tenant_id: str, parcel_id: str, sensing_date_str: str) -> str:
+    """Generate deterministic EOProduct entity ID for a parcel + sensing date.
+
+    Format: urn:ngsi-ld:EOProduct:{tenant}:{parcel_short}:GRD:{date}
+    """
+    parcel_short = parcel_id.split(":")[-1] if ":" in parcel_id else parcel_id
+    return f"urn:ngsi-ld:EOProduct:{tenant_id}:{parcel_short}:GRD:{sensing_date_str}"
+
+
+def upsert_eo_product(
+    tenant_id: str,
+    parcel_id: str,
+    vv_mean: float,
+    vh_mean: float,
+    acquisition_date,
+    product_type: str = "GRD",
+    processing_level: str = "L1",
+):
+    """Create or update an EOProduct entity in Orion-LD for SAR backscatter.
+
+    One entity per parcel + sensing date. Uses the same POST → 201 | 409 → PATCH
+    pattern as upsert_vegetation_index_entity().
+
+    Args:
+        tenant_id: Tenant identifier
+        parcel_id: Full URN of the AgriParcel entity
+        vv_mean: Mean VV backscatter in dB for the parcel
+        vh_mean: Mean VH backscatter in dB for the parcel
+        acquisition_date: Datetime of the Sentinel-1 pass
+        product_type: EO product type (default: GRD)
+        processing_level: Processing level (default: L1)
+
+    Returns:
+        Entity ID if successful, None on failure
+    """
+    sensing_date_str = acquisition_date.strftime("%Y-%m-%d")
+    entity_id = _entity_id_for_eo_product(tenant_id, parcel_id, sensing_date_str)
+    headers = _make_headers(tenant_id)
+
+    observed_at = (
+        acquisition_date
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+
+    entity = {
+        "@context": [CONTEXT_URL],
+        "id": entity_id,
+        "type": "EOProduct",
+        "productType": {"type": "Property", "value": product_type},
+        "processingLevel": {"type": "Property", "value": processing_level},
+        "hasAgriParcel": {
+            "type": "Relationship",
+            "object": parcel_id,
+        },
+        "backscatterVV": {
+            "type": "Property",
+            "value": round(float(vv_mean), 4),
+            "observedAt": observed_at,
+        },
+        "backscatterVH": {
+            "type": "Property",
+            "value": round(float(vh_mean), 4),
+            "observedAt": observed_at,
+        },
+        "acquisitionDate": {
+            "type": "Property",
+            "value": observed_at,
+        },
+        "source": {
+            "type": "Property",
+            "value": "vegetation_health",
+        },
+    }
+
+    try:
+        url = f"{ORION_URL}/ngsi-ld/v1/entities"
+        response = requests.post(url, json=entity, headers=headers, timeout=10)
+
+        result = None
+
+        if response.status_code in (201, 204):
+            logger.info("Created EOProduct entity %s", entity_id)
+            result = entity_id
+
+        elif response.status_code == 409:
+            logger.debug("EOProduct %s already exists, updating...", entity_id)
+            attrs = {
+                k: v for k, v in entity.items()
+                if k not in ("id", "type")
+            }
+            if "@context" not in attrs:
+                attrs["@context"] = [CONTEXT_URL]
+            patch_url = f"{ORION_URL}/ngsi-ld/v1/entities/{entity_id}/attrs"
+            patch_resp = requests.patch(patch_url, json=attrs, headers=headers, timeout=10)
+            if patch_resp.status_code in (204, 207):
+                logger.info("Updated EOProduct entity %s", entity_id)
+                result = entity_id
+            else:
+                logger.error(
+                    "Failed to PATCH EOProduct %s: %s - %s",
+                    entity_id, patch_resp.status_code, patch_resp.text,
+                )
+        else:
+            logger.error(
+                "Failed to create EOProduct entity: %s - %s",
+                response.status_code, response.text,
+            )
+
+        return result
+
+    except Exception as e:
+        logger.error("Error upserting EOProduct entity: %s", e, exc_info=True)
+        return None
+
+
 def upsert_vegetation_index_entity(
     tenant_id: str,
     parcel_id: str,
