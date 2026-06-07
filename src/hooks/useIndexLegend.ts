@@ -59,6 +59,8 @@ export function getIndexLegend(
     GNDVI: 'Green Normalized Difference Vegetation Index - Sensitive to chlorophyll content',
     NDRE: 'Normalized Difference Red Edge - Sensitive to crop stress and nitrogen',
     NDMI: 'Normalized Difference Moisture Index - Measures vegetation water content',
+    'SAR-VV': 'Sentinel-1 VV backscatter - Co-polarized, sensitive to surface roughness and soil moisture',
+    'SAR-VH': 'Sentinel-1 VH backscatter - Cross-polarized, sensitive to vegetation volume and biomass',
     VRA_ZONES: 'Variable Rate Application Zones - AI-clustered management zones',
     CUSTOM: 'Custom Index - User-defined formula',
   };

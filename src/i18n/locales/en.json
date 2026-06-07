@@ -414,6 +414,10 @@
     "categorySoil": "Soil/Water",
     "categorySoilDesc": "Indices for early stages and soil analysis",
     "infoTooltip": "View index information",
+    "categorySAR": "SAR (Radar)",
+    "categorySARDesc": "Sentinel-1 backscatter — penetrates clouds",
+    "sarVv": "SAR-VV — Co-polarized backscatter",
+    "sarVh": "SAR-VH — Cross-polarized backscatter",
     "categoryManagement": "Management"
   },
   "cropSeason": {

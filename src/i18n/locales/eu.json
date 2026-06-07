@@ -395,6 +395,10 @@
     "categorySoil": "Lurzorua/Ura",
     "categorySoilDesc": "Hasierako etapatarako eta lurzoruaren analisirako indizeak",
     "infoTooltip": "Indizearen informazioa ikusi",
+    "categorySAR": "SAR (Radar)",
+    "categorySARDesc": "Sentinel-1 atzerakodispertsioa — hodeiak zeharkatzen ditu",
+    "sarVv": "SAR-VV — Atzerakodispertsio ko-polarizatua",
+    "sarVh": "SAR-VH — Atzerakodispertsio gurutzatua",
     "categoryManagement": "Kudeaketa"
   },
   "cropSeason": {

@@ -414,6 +414,10 @@
     "categorySoil": "Suelo/Agua",
     "categorySoilDesc": "Índices para etapas tempranas y análisis de suelo",
     "infoTooltip": "Ver información del índice",
+    "categorySAR": "SAR (Radar)",
+    "categorySARDesc": "Retrodispersión Sentinel-1 — penetra nubes",
+    "sarVv": "SAR-VV — Retrodispersión co-polarizada",
+    "sarVh": "SAR-VH — Retrodispersión cruzada",
     "categoryManagement": "Manejo"
   },
   "cropSeason": {

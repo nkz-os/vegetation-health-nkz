@@ -395,6 +395,10 @@
     "categorySoil": "Soil/Water",
     "categorySoilDesc": "Indices for early stages and soil analysis",
     "infoTooltip": "View index information",
+    "categorySAR": "SAR (Radar)",
+    "categorySARDesc": "Rétrodiffusion Sentinel-1 — traverse les nuages",
+    "sarVv": "SAR-VV — Rétrodiffusion co-polarisée",
+    "sarVh": "SAR-VH — Rétrodiffusion croisée",
     "categoryManagement": "Management"
   },
   "cropSeason": {

@@ -263,9 +263,15 @@ class CopernicusDataSpaceClient:
             logger.error("Failed to search S1 scenes: %s", str(e))
             raise Exception(f"S1 scene search failed: {str(e)}")
 
-    def get_scene_item(self, scene_id: str) -> Dict[str, Any]:
-        """Fetch a single STAC item by id (public, no auth required)."""
-        url = f"{self.CATALOG_URL}/collections/sentinel-2-l2a/items/{scene_id}"
+    def get_scene_item(self, scene_id: str, collection: str = "sentinel-2-l2a") -> Dict[str, Any]:
+        """Fetch a single STAC item by id (public, no auth required).
+
+        Args:
+            scene_id: STAC item ID
+            collection: STAC collection name. Default: sentinel-2-l2a.
+                         Use 'sentinel-1-grd' for Sentinel-1 GRD scenes.
+        """
+        url = f"{self.CATALOG_URL}/collections/{collection}/items/{scene_id}"
         headers = self._get_optional_auth_headers()
         response = requests.get(url, headers=headers)
         response.raise_for_status()
@@ -362,7 +368,7 @@ class CopernicusDataSpaceClient:
         """
         polarizations = polarizations or ["vv", "vh"]
 
-        scene = self.get_scene_item(scene_id)
+        scene = self.get_scene_item(scene_id, collection="sentinel-1-grd")
         assets = scene.get("assets", {})
 
         band_paths: dict[str, str] = {}
