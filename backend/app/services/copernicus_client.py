@@ -182,6 +182,87 @@ class CopernicusDataSpaceClient:
             logger.error(f"Failed to search scenes: {str(e)}")
             raise Exception(f"Scene search failed: {str(e)}")
 
+    def search_s1_scenes(
+        self,
+        bbox: list[float] | None = None,
+        intersects: dict[str, Any] | None = None,
+        start_date: date | None = None,
+        end_date: date | None = None,
+        product_type: str = "GRD",
+        orbit_direction: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """Search for Sentinel-1 GRD scenes using STAC API.
+
+        Same pattern as search_scenes() but for collection 'sentinel-1-grd'.
+        Sentinel-1 GRD has no cloud cover filter — S1 penetrates clouds.
+
+        Args:
+            bbox: [minLon, minLat, maxLon, maxLat]
+            intersects: GeoJSON geometry for exact spatial filter
+            start_date: Optional start of sensing window
+            end_date: Optional end of sensing window
+            product_type: GRD (Ground Range Detected) — default for SAR
+            orbit_direction: ASCENDING or DESCENDING (optional)
+            limit: Max results
+
+        Returns:
+            List of scene dicts with keys: id, sensing_date, datetime,
+            polarizations, geometry, assets, links
+        """
+        start_date = start_date or date.today() - timedelta(days=30)
+        end_date = end_date or date.today()
+
+        datetime_filter = f"{start_date.isoformat()}T00:00:00Z/{end_date.isoformat()}T23:59:59Z"
+
+        query_filters: dict[str, Any] = {}
+        if isinstance(orbit_direction, str) and orbit_direction:
+            query_filters["sat:orbit_state"] = orbit_direction.lower()
+
+        if intersects:
+            query = {
+                "collections": ["sentinel-1-grd"],
+                "intersects": intersects,
+                "datetime": datetime_filter,
+                "limit": limit,
+            }
+        else:
+            bbox = bbox or [-180, -90, 180, 90]
+            query = {
+                "collections": ["sentinel-1-grd"],
+                "bbox": bbox,
+                "datetime": datetime_filter,
+                "limit": limit,
+            }
+
+        if query_filters:
+            query["query"] = query_filters
+
+        try:
+            headers = self._get_optional_auth_headers()
+            response = requests.post(f"{self.CATALOG_URL}/search", json=query, headers=headers)
+            response.raise_for_status()
+            results = response.json()
+            scenes = []
+            for feature in results.get("features", []):
+                dt_raw = feature["properties"].get("datetime") or ""
+                scene = {
+                    "id": feature["id"],
+                    "sensing_date": dt_raw.split("T")[0] if dt_raw else "",
+                    "datetime": dt_raw if dt_raw else None,
+                    "polarizations": feature["properties"].get("sar:polarizations", []),
+                    "instrument_mode": feature["properties"].get("sar:instrument_mode", ""),
+                    "geometry": feature.get("geometry"),
+                    "assets": feature.get("assets", {}),
+                    "links": feature.get("links", []),
+                }
+                scenes.append(scene)
+            logger.info("Found %d Sentinel-1 GRD scenes matching criteria", len(scenes))
+            return scenes
+        except requests.RequestException as e:
+            logger.error("Failed to search S1 scenes: %s", str(e))
+            raise Exception(f"S1 scene search failed: {str(e)}")
+
     def get_scene_item(self, scene_id: str) -> Dict[str, Any]:
         """Fetch a single STAC item by id (public, no auth required)."""
         url = f"{self.CATALOG_URL}/collections/sentinel-2-l2a/items/{scene_id}"
@@ -257,4 +338,55 @@ class CopernicusDataSpaceClient:
                 band_paths[band] = downloaded_path
             except Exception as e:
                 logger.error(f"Failed to download band {band}: {str(e)}")
+        return band_paths
+
+    def download_s1_bands(
+        self,
+        scene_id: str,
+        polarizations: list[str] | None = None,
+        output_dir: str = "",
+    ) -> dict[str, str]:
+        """Download polarization bands for a Sentinel-1 GRD scene via S3.
+
+        Each polarization (vv, vh) is a separate GeoTIFF in the S3 bucket.
+        S1 assets are named by polarization key (e.g., 'vv', 'vh').
+
+        Args:
+            scene_id: STAC item ID (e.g., S1A_IW_GRDH_1SDV_20260601...)
+            polarizations: List of polarization keys to download (default: ["vv", "vh"])
+            output_dir: Directory to write files to
+
+        Returns:
+            Dict mapping polarization key → local file path. Missing
+            polarizations (not in STAC assets) are omitted.
+        """
+        polarizations = polarizations or ["vv", "vh"]
+
+        scene = self.get_scene_item(scene_id)
+        assets = scene.get("assets", {})
+
+        band_paths: dict[str, str] = {}
+        for pol in polarizations:
+            pol_lower = pol.lower()
+            # S1 assets are keyed by lowercase polarization: 'vv', 'vh'
+            asset = assets.get(pol_lower) or assets.get(pol_lower.upper())
+            if not asset:
+                logger.warning("Polarization %s not found in scene %s assets", pol, scene_id)
+                continue
+
+            href = asset.get("href", "")
+            # S1 GRD href: s3://eodata/Sentinel-1/SAR/GRD/.../<scene_id>_<pol>.tiff
+            s3_key = href.replace("s3://eodata/", "").replace("/eodata/", "")
+
+            output_path = os.path.join(output_dir, f"{scene_id}_{pol_lower}.tif")
+            Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+
+            try:
+                s3 = self._get_s3_client()
+                logger.info("Downloading S1 band %s via S3 from key: %s", pol, s3_key)
+                s3.download_file("eodata", s3_key, output_path)
+                band_paths[pol_lower] = output_path
+            except Exception as e:
+                logger.error("Failed to download S1 band %s: %s", pol, str(e))
+
         return band_paths
