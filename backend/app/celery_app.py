@@ -58,6 +58,10 @@ celery_app.conf.beat_schedule = {
         'task': 'vegetation.reap_stuck_jobs',
         'schedule': crontab(minute='*/15'),  # Every 15 minutes
     },
+    'vegetation.sar_crawl': {
+        'task': 'vegetation.sar_crawl',
+        'schedule': crontab(hour=4, minute=0),  # Daily at 4 AM (offset from process_subscriptions at 2 AM)
+    },
 }
 
 if __name__ == '__main__':
