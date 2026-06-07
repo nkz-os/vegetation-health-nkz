@@ -32,6 +32,13 @@ const INDEX_GROUPS: Array<{
     ],
   },
   {
+    labelKey: 'indices.categorySAR',
+    indices: [
+      { value: 'SAR-VV', shortLabel: 'VV', color: 'bg-indigo-500' },
+      { value: 'SAR-VH', shortLabel: 'VH', color: 'bg-indigo-400' },
+    ],
+  },
+  {
     labelKey: 'indices.categoryManagement',
     indices: [
       { value: 'VRA_ZONES', shortLabel: 'VRA', color: 'bg-purple-600' },

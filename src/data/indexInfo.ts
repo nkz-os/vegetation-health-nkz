@@ -184,6 +184,42 @@ export const INDEX_INFO: Record<string, IndexInfo> = {
         limitations: 'Aproximación empírica. Para alta precisión se requiere calibración local.',
         color: '#059669'
     },
+    'SAR-VV': {
+        id: 'SAR-VV',
+        name: 'SAR VV',
+        fullName: 'Retrodispersión SAR — Polarización VV',
+        description: 'Señal de retrodispersión en polarización co-polarizada (VV) del Sentinel-1. Penetra nubes y mide rugosidad superficial, humedad del suelo y estructura del dosel.',
+        formula: 'σ₀(VV) = media zonal sobre banda VV (dB)',
+        range: [-30, 5],
+        interpretation: {
+            veryLow: { range: '< -20 dB', meaning: 'Agua abierta o suelo muy liso (inundación)' },
+            low: { range: '-20 a -14 dB', meaning: 'Suelo muy húmedo o vegetación herbácea escasa' },
+            medium: { range: '-14 a -8 dB', meaning: 'Vegetación media o suelo moderadamente rugoso' },
+            high: { range: '-8 a -2 dB', meaning: 'Vegetación densa o dosel cerrado' },
+            veryHigh: { range: '> -2 dB', meaning: 'Estructuras, zonas urbanas o vegetación muy densa' }
+        },
+        bestFor: ['Detección de inundaciones (arroz)', 'Humedad del suelo', 'Estructura del cultivo', 'Monitoreo en días nublados'],
+        limitations: 'Señal sensible a ángulo de incidencia y rugosidad del suelo. Requiere calibración radiométrica. Resolución 20m.',
+        color: '#6366f1'
+    },
+    'SAR-VH': {
+        id: 'SAR-VH',
+        name: 'SAR VH',
+        fullName: 'Retrodispersión SAR — Polarización VH',
+        description: 'Señal de retrodispersión en polarización cruzada (VH) del Sentinel-1. Más sensible al volumen de vegetación (dispersión volumétrica en el dosel).',
+        formula: 'σ₀(VH) = media zonal sobre banda VH (dB)',
+        range: [-35, 0],
+        interpretation: {
+            veryLow: { range: '< -25 dB', meaning: 'Agua, suelo desnudo liso' },
+            low: { range: '-25 a -18 dB', meaning: 'Suelo o vegetación muy escasa' },
+            medium: { range: '-18 a -12 dB', meaning: 'Vegetación en desarrollo medio' },
+            high: { range: '-12 a -6 dB', meaning: 'Vegetación densa con alta dispersión volumétrica' },
+            veryHigh: { range: '> -6 dB', meaning: 'Dosel muy denso o estructuras artificiales' }
+        },
+        bestFor: ['Estimación de biomasa', 'Cobertura vegetal', 'Monitoreo de arroz (inundación vs crecimiento)', 'Detección de cambios estructurales'],
+        limitations: 'Menor sensibilidad a humedad del suelo que VV. Puede tener más ruido (speckle). Resolución 20m.',
+        color: '#818cf8'
+    },
     CIRE: {
         id: 'CIRE',
         name: 'CIre',
