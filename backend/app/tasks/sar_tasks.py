@@ -1,18 +1,19 @@
 """
 Celery tasks for Sentinel-1 SAR processing — integrated into the subscription pipeline.
 
-Follows the same pattern as Sentinel-2: download → calculate_index → publish.
-Results flow through VegetationJob.result with index_type="SAR-VV" / "SAR-VH",
-making them automatically visible in the frontend's available_indices.
+Single-task design: download VV+VH bands and compute zonal stats in one Celery task.
+Creates two VegetationJob records (job_type=calculate_index, index_type=SAR-VV/SAR-VH)
+so they appear automatically in the frontend's available_indices.
 """
 
 import logging
 import os
 import tempfile
 import uuid
-from datetime import datetime, date, timezone
-from pathlib import Path
+from datetime import date, datetime, timezone
 from typing import Dict, Any
+
+import numpy as np
 
 from app.celery_app import celery_app
 from app.models import VegetationJob, VegetationScene
@@ -37,40 +38,47 @@ def download_sentinel1_scene(
     tenant_id: str,
     parameters: Dict[str, Any],
 ):
-    """Download Sentinel-1 GRD VV and VH bands for a scene.
+    """Download Sentinel-1 GRD bands and compute SAR backscatter for a parcel.
 
-    Triggered by check_and_process_entity when S1 scenes are found for a
-    subscribed parcel. After downloading, triggers calculate_sar_backscatter
-    for each polarization (SAR-VV, SAR-VH).
+    Downloads VV and VH GeoTIFFs, computes zonal statistics (mean backscatter
+    per polarization), and creates two calculate_index VegetationJob records
+    (index_type="SAR-VV" / "SAR-VH") so they appear in the frontend.
+
+    Also publishes an EOProduct entity to Orion-LD for the crop-health pipeline.
 
     Args:
-        job_id: VegetationJob UUID
+        job_id: UUID of the download_sar VegetationJob
         tenant_id: Tenant identifier
-        parameters: Dict with scene_id, bounds, entity_id, sensing_date
+        parameters: {scene_id, bounds, entity_id, sensing_date}
     """
+    import rasterio
+    from rasterio.features import rasterize
+    from shapely.geometry import shape as shapely_shape
+
     db = next(get_db_session())
-    job = None
+    download_job = None
 
     try:
-        job = db.query(VegetationJob).filter(
+        download_job = db.query(VegetationJob).filter(
             VegetationJob.id == uuid.UUID(job_id)
         ).first()
-        if not job:
+        if not download_job:
             logger.error("SAR job %s not found", job_id)
             return
 
-        job.mark_started()
-        job.celery_task_id = self.request.id
+        download_job.mark_started()
+        download_job.celery_task_id = self.request.id
         db.commit()
 
         scene_id = parameters.get("scene_id")
         entity_id = parameters.get("entity_id")
-        sensing_date = parameters.get("sensing_date")
+        sensing_date_str = parameters.get("sensing_date", "")
         bounds = parameters.get("bounds")
 
-        if not scene_id:
-            raise ValueError("scene_id is required for SAR download")
+        if not scene_id or not entity_id:
+            raise ValueError("scene_id and entity_id are required")
 
+        # ── Credentials ──────────────────────────────────────────────
         creds = get_copernicus_credentials_with_fallback()
         if not creds:
             raise ValueError("Copernicus credentials not available")
@@ -78,6 +86,7 @@ def download_sentinel1_scene(
         copernicus = CopernicusDataSpaceClient()
         copernicus.set_credentials(creds["client_id"], creds["client_secret"])
 
+        # ── Download bands ───────────────────────────────────────────
         self.update_state(
             state="PROGRESS",
             meta={"progress": 20, "message": f"Downloading S1 bands for {scene_id}"},
@@ -96,15 +105,24 @@ def download_sentinel1_scene(
             if not vv_path and not vh_path:
                 raise ValueError(f"No polarization bands downloaded for {scene_id}")
 
-            # Store scene metadata (reuse VegetationScene, no geometry needed for S1)
+            # ── Parse parcel geometry ─────────────────────────────────
+            parcel_geometry = bounds or {}
+            try:
+                geom = shapely_shape(parcel_geometry)
+            except Exception:
+                logger.warning("Cannot parse geometry for %s, using bbox", entity_id)
+                bbox = parameters.get("bbox", [0, 0, 0, 0])
+                from shapely.geometry import box
+                geom = box(*bbox)
+
+            # ── Scene record for tracking ─────────────────────────────
             sensing_dt = None
-            if sensing_date:
+            if sensing_date_str:
                 try:
-                    sensing_dt = date.fromisoformat(sensing_date)
+                    sensing_dt = date.fromisoformat(sensing_date_str)
                 except (ValueError, TypeError):
                     pass
 
-            # Create or find VegetationScene for tracking
             scene_record = db.query(VegetationScene).filter(
                 VegetationScene.scene_id == scene_id,
                 VegetationScene.tenant_id == tenant_id,
@@ -115,221 +133,105 @@ def download_sentinel1_scene(
                     tenant_id=tenant_id,
                     scene_id=scene_id,
                     sensing_date=sensing_dt or date.today(),
-                    cloud_coverage="N/A",  # S1 doesn't have cloud cover
+                    cloud_coverage="N/A",
                     storage_path="",
                     storage_bucket=None,
                     bands=["vv", "vh"] if (vv_path and vh_path) else (["vv"] if vv_path else ["vh"]),
                     is_valid=True,
-                    job_id=job.id,
+                    job_id=download_job.id,
                 )
                 db.add(scene_record)
                 db.commit()
 
-            job.mark_completed({
-                "scene_id": scene_id,
-                "sensing_date": sensing_date,
-                "bands_downloaded": list(band_paths.keys()),
-            })
-            db.commit()
+            # ── Zonal stats for each polarization ─────────────────────
+            stats_by_pol: dict[str, dict] = {}
 
-            # Trigger calculate jobs for each polarization
-            from app.tasks.sar_tasks import calculate_sar_backscatter
-
-            for pol, raster_path in band_paths.items():
-                pol_upper = pol.upper()
-                calc_job_id = str(uuid.uuid4())
-                calc_params = {
-                    "scene_id": scene_id,
-                    "entity_id": entity_id,
-                    "index_type": f"SAR-{pol_upper}",
-                    "rar_path": raster_path,
-                    "sensing_date": sensing_date,
-                    "bounds": bounds,
-                }
-
-                calc_job = VegetationJob(
-                    id=uuid.UUID(calc_job_id),
-                    tenant_id=tenant_id,
-                    entity_id=entity_id,
-                    job_type="calculate_index",
-                    status="pending",
-                    parameters=calc_params,
-                )
-                db.add(calc_job)
-                db.commit()
+            for pol, raster_path in [("VV", vv_path), ("VH", vh_path)]:
+                if not raster_path or not os.path.isfile(raster_path):
+                    logger.warning("Skipping %s — raster not found", pol)
+                    continue
 
                 try:
-                    async_result = calculate_sar_backscatter.delay(
-                        job_id=calc_job_id,
-                        tenant_id=tenant_id,
-                        scene_id=str(scene_record.id),
-                        index_type=f"SAR-{pol_upper}",
-                    )
-                    calc_job.celery_task_id = async_result.id
-                    db.commit()
-                    logger.info(
-                        "Triggered SAR calc for %s/%s (job %s)",
-                        entity_id, f"SAR-{pol_upper}", calc_job_id,
-                    )
+                    with rasterio.open(raster_path) as src:
+                        mask = rasterize(
+                            [(geom, 1)],
+                            out_shape=(src.height, src.width),
+                            transform=src.transform,
+                            fill=0,
+                            dtype="uint8",
+                        )
+                        data = src.read(1).astype(np.float32)
+                        nodata = src.nodata
+                        valid = (mask == 1) & (np.isfinite(data))
+                        if nodata is not None:
+                            valid = valid & (data != nodata)
+
+                        if not np.any(valid):
+                            logger.warning("No valid pixels for %s in %s", pol, entity_id)
+                            continue
+
+                        mean_val = float(np.mean(data[valid]))
+                        stats = {
+                            "mean": round(mean_val, 4),
+                            "min": round(float(np.min(data[valid])), 4),
+                            "max": round(float(np.max(data[valid])), 4),
+                            "pixel_count": int(np.sum(valid)),
+                        }
+                        stats_by_pol[pol] = stats
+
+                        # ── Create calculate_index VegetationJob (visible in frontend) ──
+                        calc_job = VegetationJob(
+                            id=uuid.uuid4(),
+                            tenant_id=tenant_id,
+                            entity_id=entity_id,
+                            job_type="calculate_index",
+                            status="running",
+                            parameters={"scene_id": scene_id, "index_type": f"SAR-{pol}"},
+                        )
+                        db.add(calc_job)
+                        db.commit()
+
+                        calc_job.mark_completed({
+                            "index_type": f"SAR-{pol}",
+                            "index_key": f"SAR-{pol}",
+                            "statistics": stats,
+                            "raster_path": raster_path,
+                            "scene_id": str(scene_record.id),
+                            "sensing_date": sensing_date_str,
+                            "source_image_count": 1,
+                            "is_composite": False,
+                        })
+                        db.commit()
+
+                        logger.info(
+                            "SAR-%s complete: mean=%.4f pixels=%d for %s",
+                            pol, mean_val, stats["pixel_count"], entity_id,
+                        )
+
                 except Exception as e:
-                    logger.exception("Failed to enqueue SAR calc %s", calc_job_id)
-                    calc_job.status = "failed"
-                    calc_job.error_message = str(e)
+                    logger.error("SAR zonal stats failed for %s: %s", pol, e)
+                    # Create a failed job so frontend knows it was attempted
+                    calc_job = VegetationJob(
+                        id=uuid.uuid4(),
+                        tenant_id=tenant_id,
+                        entity_id=entity_id,
+                        job_type="calculate_index",
+                        status="failed",
+                        parameters={"scene_id": scene_id, "index_type": f"SAR-{pol}"},
+                        error_message=str(e),
+                    )
+                    db.add(calc_job)
                     db.commit()
 
-    except Exception as e:
-        logger.error("SAR download failed for %s: %s", parameters.get("scene_id", "?"), e, exc_info=True)
-        if job:
-            job.mark_completed({"error": str(e)})
-            db.commit()
-        raise self.retry(exc=e)
+            # ── Publish EOProduct when both VV and VH are ready ──────
+            if "VV" in stats_by_pol and "VH" in stats_by_pol:
+                vv_mean = stats_by_pol["VV"]["mean"]
+                vh_mean = stats_by_pol["VH"]["mean"]
 
-    finally:
-        db.close()
-
-
-@celery_app.task(
-    bind=True,
-    name="vegetation.calculate_sar_backscatter",
-    max_retries=2,
-    default_retry_delay=600,
-    soft_time_limit=600,
-)
-def calculate_sar_backscatter(
-    self,
-    job_id: str,
-    tenant_id: str,
-    scene_id: str,
-    index_type: str,
-):
-    """Calculate mean SAR backscatter for a parcel from a downloaded raster.
-
-    Stores result in VegetationJob.result with index_type and statistics,
-    making it visible to the frontend. Also publishes EOProduct to Orion-LD.
-
-    Args:
-        job_id: VegetationJob UUID
-        tenant_id: Tenant identifier
-        scene_id: VegetationScene UUID (DB record, not product ID)
-        index_type: "SAR-VV" or "SAR-VH"
-    """
-    import numpy as np
-    import rasterio
-    from rasterio.features import rasterize
-    from shapely.geometry import shape as shapely_shape
-    from geoalchemy2.shape import to_shape
-
-    db = next(get_db_session())
-    job = None
-
-    try:
-        job = db.query(VegetationJob).filter(
-            VegetationJob.id == uuid.UUID(job_id)
-        ).first()
-        if not job:
-            logger.error("SAR calc job %s not found", job_id)
-            return
-
-        job.mark_started()
-        job.celery_task_id = self.request.id
-        db.commit()
-
-        # Get the download job results to find the raster path
-        raster_path = job.parameters.get("raster_path", "")
-        entity_id = job.parameters.get("entity_id", "")
-        sensing_date_str = job.parameters.get("sensing_date", "")
-        bounds = job.parameters.get("bounds")
-
-        if not raster_path or not os.path.isfile(raster_path):
-            raise ValueError(f"Raster file not found: {raster_path}")
-
-        # Get the scene record for metadata
-        try:
-            scene = db.query(VegetationScene).filter(
-                VegetationScene.id == uuid.UUID(scene_id)
-            ).first()
-        except (ValueError, AttributeError):
-            scene = None
-
-        # Get parcel geometry from the subscription (or bounds fallback)
-        parcel_geometry = bounds or {}
-        parcel_id = entity_id
-
-        # Compute zonal stats
-        self.update_state(
-            state="PROGRESS",
-            meta={"progress": 50, "message": f"Computing {index_type} zonal stats"},
-        )
-
-        geom = shapely_shape(parcel_geometry)
-
-        with rasterio.open(raster_path) as src:
-            mask = rasterize(
-                [(geom, 1)],
-                out_shape=(src.height, src.width),
-                transform=src.transform,
-                fill=0,
-                dtype="uint8",
-            )
-            data = src.read(1).astype(np.float32)
-            nodata = src.nodata
-            valid = (mask == 1) & (np.isfinite(data))
-            if nodata is not None:
-                valid = valid & (data != nodata)
-
-            if not np.any(valid):
-                raise ValueError(f"No valid pixels in geometry for {index_type}")
-
-            mean_val = float(np.mean(data[valid]))
-            min_val = float(np.min(data[valid]))
-            max_val = float(np.max(data[valid]))
-
-        statistics = {
-            "mean": round(mean_val, 4),
-            "min": round(min_val, 4),
-            "max": round(max_val, 4),
-            "pixel_count": int(np.sum(valid)),
-        }
-
-        # Store result in VegetationJob (makes it visible to frontend)
-        result = {
-            "index_type": index_type,
-            "index_key": index_type,
-            "statistics": statistics,
-            "raster_path": raster_path,  # temporary path — not uploaded to storage
-            "scene_id": str(scene.id) if scene else scene_id,
-            "sensing_date": sensing_date_str,
-            "source_image_count": 1,
-            "is_composite": False,
-        }
-        job.mark_completed(result)
-        db.commit()
-
-        logger.info(
-            "SAR calc complete: %s mean=%.4f pixels=%d",
-            index_type, mean_val, statistics["pixel_count"],
-        )
-
-        # Publish EOProduct to Orion-LD (side effect for crop-health pipeline)
-        # Only publish when BOTH VV and VH are done — use Redis to track
-        try:
-            import redis as redis_lib
-            redis_url = os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0")
-            r = redis_lib.from_url(redis_url, decode_responses=True)
-            key = f"vegetation:sar:{tenant_id}:{entity_id}:{sensing_date_str}"
-            r.hset(key, index_type, str(round(mean_val, 4)))
-            r.expire(key, 86400)
-
-            # Check if both VV and VH are ready
-            vv_str = r.hget(key, "SAR-VV")
-            vh_str = r.hget(key, "SAR-VH")
-            if vv_str and vh_str:
-                vv_mean = float(vv_str)
-                vh_mean = float(vh_str)
-
-                # Parse acquisition date
                 try:
-                    acq_date = datetime.fromisoformat(sensing_date_str + "T00:00:00Z")
+                    acq_date = datetime.fromisoformat(
+                        sensing_date_str + "T00:00:00Z" if sensing_date_str else ""
+                    )
                 except (ValueError, TypeError):
                     acq_date = datetime.now(timezone.utc)
 
@@ -342,15 +244,22 @@ def calculate_sar_backscatter(
                 )
                 if eid:
                     logger.info("Published EOProduct %s for %s", eid, entity_id)
-                    # Clean up Redis key
-                    r.delete(key)
-        except Exception as e:
-            logger.warning("EOProduct publish deferred: %s", e)
+                else:
+                    logger.warning("Failed to publish EOProduct for %s", entity_id)
+
+            # ── Mark download job complete ────────────────────────────
+            download_job.mark_completed({
+                "scene_id": scene_id,
+                "sensing_date": sensing_date_str,
+                "bands_downloaded": list(band_paths.keys()),
+                "polarizations_computed": list(stats_by_pol.keys()),
+            })
+            db.commit()
 
     except Exception as e:
-        logger.error("SAR calc failed for %s: %s", index_type, e, exc_info=True)
-        if job:
-            job.mark_completed({"error": str(e)})
+        logger.error("SAR download failed: %s", e, exc_info=True)
+        if download_job:
+            download_job.mark_completed({"error": str(e)})
             db.commit()
         raise self.retry(exc=e)
 
