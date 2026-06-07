@@ -208,7 +208,70 @@ def check_and_process_entity(self, subscription_id, start_date, end_date):
                 triggered_count += 1
         
         if triggered_count > 0:
-            logger.info("Triggered %d downloads for subscription %s", triggered_count, subscription_id)
+            logger.info("Triggered %d S2 downloads for subscription %s", triggered_count, subscription_id)
+
+        # ── Sentinel-1 GRD (SAR) search ─────────────────────────────────
+        # Search S1 scenes independently of S2 — SAR penetrates clouds.
+        # Create download_sar jobs which then trigger calculate_sar_backscatter
+        # jobs with index_type "SAR-VV" and "SAR-VH", integrating into the
+        # same VegetationJob pipeline and frontend available_indices.
+        try:
+            s1_scenes = client.search_s1_scenes(
+                intersects=intersects_geojson,
+                start_date=start,
+                end_date=end,
+                limit=10,
+            )
+            if s1_scenes:
+                s1_existing = db.query(VegetationScene.scene_id).filter(
+                    VegetationScene.scene_id.in_([s["id"] for s in s1_scenes]),
+                    VegetationScene.tenant_id == sub.tenant_id,
+                ).all()
+                s1_existing_ids = {r[0] for r in s1_existing}
+
+                s1_triggered = 0
+                for s1_scene in s1_scenes:
+                    if s1_scene["id"] not in s1_existing_ids:
+                        s1_params = {
+                            "scene_id": s1_scene["id"],
+                            "bounds": intersects_geojson,
+                            "bbox": bbox,
+                            "sensing_date": s1_scene["sensing_date"],
+                            "entity_id": sub.entity_id,
+                        }
+                        s1_job = VegetationJob(
+                            id=uuid.uuid4(),
+                            tenant_id=sub.tenant_id,
+                            entity_id=sub.entity_id,
+                            job_type="download_sar",
+                            status="pending",
+                            parameters=s1_params,
+                        )
+                        db.add(s1_job)
+                        db.commit()
+
+                        from app.tasks.sar_tasks import download_sentinel1_scene
+                        download_sentinel1_scene.delay(
+                            job_id=str(s1_job.id),
+                            tenant_id=sub.tenant_id,
+                            parameters=s1_params,
+                        )
+                        s1_triggered += 1
+                        logger.info(
+                            "Triggered SAR download for scene %s (%s)",
+                            s1_scene["id"], sub.entity_id,
+                        )
+
+                if s1_triggered > 0:
+                    logger.info(
+                        "Triggered %d SAR downloads for subscription %s",
+                        s1_triggered, subscription_id,
+                    )
+        except Exception as e:
+            logger.warning(
+                "S1 search failed for subscription %s (non-fatal): %s",
+                subscription_id, e,
+            )
 
         # Update status to active after queuing initial batch
         if sub.status == 'syncing':

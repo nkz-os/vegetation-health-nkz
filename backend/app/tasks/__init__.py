@@ -6,7 +6,7 @@ from .download_tasks import download_sentinel2_scene, process_download_job
 from .processing_tasks import calculate_vegetation_index, process_index_job
 from .scheduler import process_subscriptions, check_and_process_entity, reap_stuck_jobs
 from .storage_cleanup import cleanup_global_cache
-from .sar_crawler_task import sar_crawl
+from .sar_tasks import download_sentinel1_scene, calculate_sar_backscatter
 
 __all__ = [
     'download_sentinel2_scene',
@@ -17,6 +17,7 @@ __all__ = [
     'check_and_process_entity',
     'reap_stuck_jobs',
     'cleanup_global_cache',
-    'sar_crawl',
+    'download_sentinel1_scene',
+    'calculate_sar_backscatter',
 ]
 
