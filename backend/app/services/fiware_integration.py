@@ -77,110 +77,128 @@ def _entity_id_for_eo_product(tenant_id: str, parcel_id: str, sensing_date_str: 
     return f"urn:ngsi-ld:EOProduct:{tenant_id}:{parcel_short}:GRD:{sensing_date_str}"
 
 
+def _entity_id_for_optical_eo_product(tenant_id: str, parcel_id: str, product_type: str, sensing_date_str: str) -> str:
+    """Generate deterministic EOProduct entity ID for optical vegetation indices.
+    Format: urn:ngsi-ld:EOProduct:{tenant}:{parcel_short}:{productType}:{date}
+    """
+    parcel_short = parcel_id.split(":")[-1] if ":" in parcel_id else parcel_id
+    parcel_short = parcel_short[:10] if len(parcel_short) > 10 else parcel_short
+    return f"urn:ngsi-ld:EOProduct:{tenant_id}:{parcel_short}:{product_type}:{sensing_date_str}"
+
+
 def upsert_eo_product(
     tenant_id: str,
     parcel_id: str,
-    vv_mean: float,
-    vh_mean: float,
-    acquisition_date,
+    vv_mean: float = 0.0,
+    vh_mean: float = 0.0,
+    acquisition_date = None,
     product_type: str = "GRD",
     processing_level: str = "L1",
+    # Optical index fields (None for SAR)
+    statistics: Optional[Dict[str, Any]] = None,
+    raster_url: Optional[str] = None,
+    sensing_date: Optional[date] = None,
+    pixel_count: int = 0,
+    campaign_id: Optional[str] = None,
 ):
-    """Create or update an EOProduct entity in Orion-LD for SAR backscatter.
+    """Create or update an EOProduct entity in Orion-LD.
 
-    One entity per parcel + sensing date. Uses the same POST → 201 | 409 → PATCH
-    pattern as upsert_vegetation_index_entity().
+    Supports both SAR backscatter (product_type="GRD") and optical vegetation
+    indices (product_type="NDVI", "GNDVI", "EVI", "SAVI", etc.).
 
-    Args:
-        tenant_id: Tenant identifier
-        parcel_id: Full URN of the AgriParcel entity
-        vv_mean: Mean VV backscatter in dB for the parcel
-        vh_mean: Mean VH backscatter in dB for the parcel
-        acquisition_date: Datetime of the Sentinel-1 pass
-        product_type: EO product type (default: GRD)
-        processing_level: Processing level (default: L1)
+    For SAR: pass vv_mean, vh_mean, acquisition_date.
+    For optical: pass statistics dict, raster_url, sensing_date, pixel_count.
 
-    Returns:
-        Entity ID if successful, None on failure
+    Uses POST → 201 | 409 → PATCH pattern.
     """
-    sensing_date_str = acquisition_date.strftime("%Y-%m-%d")
-    entity_id = _entity_id_for_eo_product(tenant_id, parcel_id, sensing_date_str)
     headers = _make_headers(tenant_id)
 
-    observed_at = (
-        acquisition_date
-        .isoformat()
-        .replace("+00:00", "Z")
-    )
+    if product_type == "GRD":
+        if acquisition_date is None:
+            logger.error("acquisition_date required for SAR EOProduct")
+            return None
+        sensing_date_str = acquisition_date.strftime("%Y-%m-%d")
+        entity_id = _entity_id_for_eo_product(tenant_id, parcel_id, sensing_date_str)
+        observed_at = acquisition_date.isoformat().replace("+00:00", "Z")
+    else:
+        if sensing_date is None:
+            logger.error("sensing_date required for optical EOProduct")
+            return None
+        sensing_date_str = sensing_date.isoformat()
+        entity_id = _entity_id_for_optical_eo_product(tenant_id, parcel_id, product_type, sensing_date_str)
+        observed_at = (
+            datetime(sensing_date.year, sensing_date.month, sensing_date.day,
+                     10, 50, 0, tzinfo=timezone.utc)
+            .isoformat()
+            .replace("+00:00", "Z")
+        )
 
-    entity = {
+    entity: Dict[str, Any] = {
         "@context": [CONTEXT_URL],
         "id": entity_id,
         "type": "EOProduct",
         "productType": {"type": "Property", "value": product_type},
         "processingLevel": {"type": "Property", "value": processing_level},
-        "hasAgriParcel": {
-            "type": "Relationship",
-            "object": parcel_id,
-        },
-        "backscatterVV": {
+        "hasAgriParcel": {"type": "Relationship", "object": parcel_id},
+        "source": {"type": "Property", "value": "vegetation_health"},
+    }
+
+    if product_type == "GRD":
+        entity["backscatterVV"] = {
             "type": "Property",
             "value": round(float(vv_mean), 4),
             "observedAt": observed_at,
-        },
-        "backscatterVH": {
+        }
+        entity["backscatterVH"] = {
             "type": "Property",
             "value": round(float(vh_mean), 4),
             "observedAt": observed_at,
-        },
-        "acquisitionDate": {
-            "type": "Property",
-            "value": observed_at,
-        },
-        "source": {
-            "type": "Property",
-            "value": "vegetation_health",
-        },
-    }
+        }
+        entity["acquisitionDate"] = {"type": "Property", "value": observed_at}
+    else:
+        if statistics:
+            for stat_key, stat_val in statistics.items():
+                if stat_val is not None:
+                    entity[stat_key] = {
+                        "type": "Property",
+                        "value": round(float(stat_val), 6),
+                        "observedAt": observed_at,
+                    }
+        if raster_url:
+            entity["rasterUrl"] = {"type": "Property", "value": raster_url}
+            entity["storageUrl"] = {"type": "Property", "value": raster_url}
+        entity["pixelCount"] = {"type": "Property", "value": int(pixel_count)}
+        entity["sensingDate"] = {"type": "Property", "value": sensing_date_str}
+
+    if campaign_id:
+        campaign_urn = f"urn:ngsi-ld:AgriParcelOperation:{campaign_id}"
+        entity["campaign"] = {"type": "Relationship", "object": campaign_urn}
 
     try:
         url = f"{ORION_URL}/ngsi-ld/v1/entities"
         response = requests.post(url, json=entity, headers=headers, timeout=10)
 
-        result = None
-
         if response.status_code in (201, 204):
             logger.info("Created EOProduct entity %s", entity_id)
-            result = entity_id
+            return entity_id
 
-        elif response.status_code == 409:
-            logger.debug("EOProduct %s already exists, updating...", entity_id)
-            attrs = {
-                k: v for k, v in entity.items()
-                if k not in ("id", "type")
-            }
+        if response.status_code == 409:
+            logger.debug("EOProduct %s exists, updating...", entity_id)
+            attrs = {k: v for k, v in entity.items() if k not in ("id", "type")}
             if "@context" not in attrs:
                 attrs["@context"] = [CONTEXT_URL]
             patch_url = f"{ORION_URL}/ngsi-ld/v1/entities/{entity_id}/attrs"
             patch_resp = requests.patch(patch_url, json=attrs, headers=headers, timeout=10)
             if patch_resp.status_code in (204, 207):
                 logger.info("Updated EOProduct entity %s", entity_id)
-                result = entity_id
-            else:
-                logger.error(
-                    "Failed to PATCH EOProduct %s: %s - %s",
-                    entity_id, patch_resp.status_code, patch_resp.text,
-                )
+                return entity_id
+            logger.error("Failed PATCH EOProduct %s: %s", entity_id, patch_resp.status_code)
         else:
-            logger.error(
-                "Failed to create EOProduct entity: %s - %s",
-                response.status_code, response.text,
-            )
+            logger.error("Failed POST EOProduct: %s — %s", response.status_code, response.text)
 
-        return result
-
+        return None
     except Exception as e:
-        logger.error("Error upserting EOProduct entity: %s", e, exc_info=True)
+        logger.error("Error upserting EOProduct: %s", e, exc_info=True)
         return None
 
 
@@ -394,6 +412,22 @@ def _patch_agriparcel_with_index(
             )
     except Exception as e:
         logger.warning("Error patching AgriParcel %s: %s", parcel_id, e)
+
+
+def delete_eo_product(tenant_id: str, entity_id: str) -> bool:
+    """Delete an EOProduct entity from Orion-LD."""
+    headers = _make_headers(tenant_id)
+    try:
+        url = f"{ORION_URL}/ngsi-ld/v1/entities/{entity_id}"
+        response = requests.delete(url, headers=headers, timeout=10)
+        if response.status_code in (204, 200):
+            logger.info("Deleted EOProduct %s", entity_id)
+            return True
+        logger.warning("Failed to delete EOProduct %s: %s", entity_id, response.status_code)
+        return False
+    except Exception as e:
+        logger.error("Error deleting EOProduct %s: %s", entity_id, e)
+        return False
 
 
 def query_vegetation_index_entities(
