@@ -523,28 +523,28 @@ export class VegetationApiClient {
 
   /**
    * Stop a crop season campaign. Sets monitoring_enabled=false and cancels pending jobs.
-   * POST /api/vegetation/crop-seasons/{season_id}/stop
+   * POST /api/vegetation/crop-seasons/{entity_id}/{season_id}/stop
    */
-  async stopCropSeason(seasonId: string): Promise<{ status: string; campaign_id: string; cancelled_jobs: number }> {
-    const response = await this.client.post(`/crop-seasons/${encodeURIComponent(seasonId)}/stop`);
+  async stopCropSeason(entityId: string, seasonId: string): Promise<{ status: string; season_id: string; cancelled_jobs: number }> {
+    const response = await this.client.post(`/crop-seasons/${encodeURIComponent(entityId)}/${encodeURIComponent(seasonId)}/stop`);
     return response as any;
   }
 
   /**
    * Delete a crop season campaign. Cascade deletes all associated jobs, EOProducts, and rasters.
-   * DELETE /api/vegetation/crop-seasons/{season_id}?cascade=true
+   * DELETE /api/vegetation/crop-seasons/{entity_id}/{season_id}?cascade=true
    */
-  async deleteCropSeason(seasonId: string, cascade: boolean = true): Promise<{ status: string; campaign_id: string; deleted_jobs?: number; deleted_rasters?: number }> {
-    const response = await this.client.delete(`/crop-seasons/${encodeURIComponent(seasonId)}?cascade=${cascade}`);
+  async deleteCropSeason(entityId: string, seasonId: string, cascade: boolean = true): Promise<{ deleted: boolean; id: string; cascade: boolean; deleted_jobs?: number; deleted_rasters?: number }> {
+    const response = await this.client.delete(`/crop-seasons/${encodeURIComponent(entityId)}/${encodeURIComponent(seasonId)}?cascade=${cascade}`);
     return response as any;
   }
 
   /**
-   * Bulk delete multiple jobs. Soft-deletes in PostgreSQL, hard-deletes EOProducts and rasters.
+   * Bulk delete multiple jobs. Soft-deletes in PostgreSQL, cleans EOProducts and rasters.
    * POST /api/vegetation/jobs/bulk-delete
    */
   async bulkDeleteJobs(ids: string[]): Promise<{ deleted: number; failed: Array<{ id: string; reason: string }> }> {
-    const response = await this.client.delete('/jobs/bulk', { data: { ids } });
+    const response = await this.client.post('/jobs/bulk-delete', { ids });
     return response as any;
   }
 

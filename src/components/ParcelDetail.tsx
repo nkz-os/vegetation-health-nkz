@@ -1175,8 +1175,9 @@ export const ParcelDetail: React.FC = () => {
 
   const handleStopSeason = useCallback(
     async (seasonId: string) => {
+      if (!selectedEntityId) return;
       try {
-        await api.stopCropSeason(seasonId);
+        await api.stopCropSeason(selectedEntityId, seasonId);
         refetch();
       } catch (err: any) {
         showFlash(
@@ -1187,13 +1188,14 @@ export const ParcelDetail: React.FC = () => {
         );
       }
     },
-    [api, refetch, t, showFlash],
+    [api, selectedEntityId, refetch, t, showFlash],
   );
 
   const handleDeleteSeason = useCallback(
     async (seasonId: string) => {
+      if (!selectedEntityId) return;
       try {
-        await api.deleteCropSeason(seasonId, true);
+        await api.deleteCropSeason(selectedEntityId, seasonId, true);
         refetch();
       } catch (err: any) {
         showFlash(
@@ -1204,7 +1206,7 @@ export const ParcelDetail: React.FC = () => {
         );
       }
     },
-    [api, refetch, t, showFlash],
+    [api, selectedEntityId, refetch, t, showFlash],
   );
 
   useEffect(() => {
