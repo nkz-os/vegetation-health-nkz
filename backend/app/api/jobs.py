@@ -1,5 +1,7 @@
 # backend/app/api/jobs.py
+from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Depends, status
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from uuid import UUID
 from typing import List, Optional
@@ -181,6 +183,62 @@ async def delete_job(
         raise HTTPException(status_code=404, detail="Job not found")
     db.delete(job)
     db.commit()
+
+
+class BulkDeleteRequest(BaseModel):
+    ids: list[str] = Field(..., min_length=1, max_length=100)
+
+
+@router.post("/bulk-delete", status_code=status.HTTP_200_OK)
+async def bulk_delete_jobs(
+    body: BulkDeleteRequest,
+    current_user: dict = Depends(require_auth),
+    db: Session = Depends(get_db_with_tenant),
+):
+    """Delete multiple jobs. Soft-deletes in PostgreSQL, cleans EOProducts
+    from Orion-LD and rasters from MinIO. Max 100 per request."""
+    tenant_id = current_user["tenant_id"]
+    deleted = 0
+    failed: list[dict] = []
+
+    for job_id in body.ids:
+        try:
+            job = db.query(VegetationJob).filter(
+                VegetationJob.id == job_id,
+                VegetationJob.tenant_id == tenant_id,
+            ).first()
+            if not job:
+                failed.append({"id": job_id, "reason": "Not found"})
+                continue
+
+            # Clean Orion-LD EOProduct
+            if job.sensing_date:
+                from app.services.fiware_integration import delete_eo_product, _entity_id_for_optical_eo_product
+                try:
+                    index_type = (job.parameters or {}).get("index", "NDVI")
+                    sensing_str = job.sensing_date.isoformat() if hasattr(job.sensing_date, 'isoformat') else str(job.sensing_date)
+                    eo_id = _entity_id_for_optical_eo_product(tenant_id, job.entity_id, index_type, sensing_str)
+                    delete_eo_product(tenant_id, eo_id)
+                except Exception as e:
+                    logger.warning("EOProduct cleanup failed for job %s: %s", job_id, e)
+
+            # Clean MinIO raster
+            raster_url = (job.parameters or {}).get("raster_url", "")
+            if raster_url and raster_url.startswith("s3://"):
+                try:
+                    from app.services.storage import storage_service
+                    key = raster_url.replace("s3://vegetation-prime-global/", "")
+                    storage_service.delete_object("vegetation-prime-global", key)
+                except Exception as e:
+                    logger.warning("Raster cleanup failed for job %s: %s", job_id, e)
+
+            job.deleted_at = datetime.now(timezone.utc)
+            deleted += 1
+        except Exception as e:
+            failed.append({"id": job_id, "reason": str(e)})
+
+    db.commit()
+    return {"deleted": deleted, "failed": failed}
 
 
 @router.delete("", status_code=status.HTTP_200_OK)
