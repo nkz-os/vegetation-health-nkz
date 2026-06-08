@@ -723,6 +723,33 @@
     "advancedBadgeVra": "VRA",
     "advancedBadgeFormulas": "{{n}} personalizadas",
     "advancedBadgeFormulasEmpty": "Fórmulas personalizadas",
-    "advancedBadgeExport": "Exportar"
+    "advancedBadgeExport": "Exportar",
+    "stopSeason": "Detener campaña",
+    "deleteSeason": "Eliminar campaña",
+    "deleteSeasonConfirm": "¿Eliminar esta campaña y todos sus trabajos, rásteres y entidades? No se puede deshacer.",
+    "deleteSeasonYes": "Eliminar todo",
+    "stopSeasonFailed": "Error al detener la campaña: {{msg}}",
+    "deleteSeasonFailed": "Error al eliminar la campaña: {{msg}}",
+    "parcelTooLarge": "Esta parcela tiene {{area}} ha, superando el límite de {{limit}} ha para procesamiento de índices de vegetación. El procesamiento puede ser lento, costoso o fallar.",
+    "bulkModeEnter": "Seleccionar trabajos",
+    "bulkModeCancel": "Cancelar selección",
+    "selectJob": "Seleccionar trabajo",
+    "selectAll": "Seleccionar todos",
+    "selectedCount": "{{n}} trabajo(s) seleccionados",
+    "bulkDelete": "Eliminar seleccionados",
+    "bulkDeleting": "Eliminando…",
+    "bulkDeleteFailed": "Error en eliminación masiva: {{msg}}",
+    "bulkDeletePartial": "Eliminados {{ok}}, {{fail}} fallaron."
+  },
+  "campaignList": {
+    "empty": "Sin campañas activas",
+    "active": "Activa",
+    "completed": "Completada",
+    "ongoing": "en curso",
+    "jobs": "trabajos",
+    "stop": "Detener",
+    "stopTooltip": "Detener campaña y cancelar trabajos pendientes",
+    "delete": "Eliminar",
+    "deleteTooltip": "Eliminar campaña y todos los datos asociados"
   }
 }

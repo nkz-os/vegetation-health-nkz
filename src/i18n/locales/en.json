@@ -723,6 +723,33 @@
     "advancedBadgeVra": "VRA",
     "advancedBadgeFormulas": "{{n}} custom",
     "advancedBadgeFormulasEmpty": "Custom formulas",
-    "advancedBadgeExport": "Export"
+    "advancedBadgeExport": "Export",
+    "stopSeason": "Stop season",
+    "deleteSeason": "Delete season",
+    "deleteSeasonConfirm": "Delete this season and all its jobs, rasters, and entities? This cannot be undone.",
+    "deleteSeasonYes": "Delete all",
+    "stopSeasonFailed": "Failed to stop season: {{msg}}",
+    "deleteSeasonFailed": "Failed to delete season: {{msg}}",
+    "parcelTooLarge": "This parcel is {{area}} ha, which exceeds the {{limit}} ha limit for vegetation index processing. Processing may be slow, expensive, or fail.",
+    "bulkModeEnter": "Select jobs",
+    "bulkModeCancel": "Cancel selection",
+    "selectJob": "Select job",
+    "selectAll": "Select all",
+    "selectedCount": "{{n}} job(s) selected",
+    "bulkDelete": "Delete selected",
+    "bulkDeleting": "Deleting…",
+    "bulkDeleteFailed": "Bulk delete failed: {{msg}}",
+    "bulkDeletePartial": "Deleted {{ok}}, {{fail}} failed."
+  },
+  "campaignList": {
+    "empty": "No active campaigns",
+    "active": "Active",
+    "completed": "Completed",
+    "ongoing": "ongoing",
+    "jobs": "jobs",
+    "stop": "Stop",
+    "stopTooltip": "Stop campaign and cancel pending jobs",
+    "delete": "Delete",
+    "deleteTooltip": "Delete campaign and all associated data"
   }
 }

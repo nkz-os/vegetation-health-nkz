@@ -23,6 +23,7 @@ import {
   Trash2,
   Plus,
   Play,
+  Square,
   Sprout,
   Map as MapIcon,
   Download,
@@ -66,9 +67,12 @@ const StatusPill: React.FC<{ status: string }> = ({ status }) => {
 interface JobRowProps {
   job: ParcelJobCard;
   onDelete: (jobId: string) => Promise<void>;
+  bulkMode?: boolean;
+  isSelected?: boolean;
+  onToggleSelect?: (jobId: string) => void;
 }
 
-const JobRow: React.FC<JobRowProps> = ({ job, onDelete }) => {
+const JobRow: React.FC<JobRowProps> = ({ job, onDelete, bulkMode, isSelected, onToggleSelect }) => {
   const { t } = useTranslation();
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -92,8 +96,20 @@ const JobRow: React.FC<JobRowProps> = ({ job, onDelete }) => {
       : '';
 
   return (
-    <li className="flex items-start gap-3 py-2 px-3 rounded-lg hover:bg-slate-50 border border-transparent hover:border-slate-100">
-      <div className="shrink-0 w-1 self-stretch rounded-full bg-slate-200" />
+    <li className={`flex items-start gap-3 py-2 px-3 rounded-lg border transition-colors ${
+      isSelected ? 'bg-blue-50 border-blue-200' : 'border-transparent hover:bg-slate-50 hover:border-slate-100'
+    }`}>
+      {bulkMode && onToggleSelect ? (
+        <input
+          type="checkbox"
+          checked={!!isSelected}
+          onChange={() => onToggleSelect(job.id)}
+          className="shrink-0 mt-0.5 w-4 h-4 rounded accent-blue-600"
+          aria-label={t('parcelDetail.selectJob', 'Select job')}
+        />
+      ) : (
+        <div className="shrink-0 w-1 self-stretch rounded-full bg-slate-200" />
+      )}
       <div className="flex-1 min-w-0">
         <div className="flex flex-wrap items-center gap-2">
           <StatusPill status={job.status} />
@@ -348,6 +364,16 @@ const NewSeasonForm: React.FC<NewSeasonFormProps> = ({ entityId, onCreated }) =>
   const [monitoring, setMonitoring] = useState<boolean>(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [sizeCheck, setSizeCheck] = useState<{ area_ha: number; exceeds_limit: boolean; limit_ha: number } | null>(null);
+
+  // Check parcel size when form opens
+  useEffect(() => {
+    if (open && entityId) {
+      api.checkParcelSize(entityId)
+        .then(setSizeCheck)
+        .catch(() => setSizeCheck(null));
+    }
+  }, [open, entityId, api]);
 
   const reset = () => {
     setCropType('wheat');
@@ -490,6 +516,19 @@ const NewSeasonForm: React.FC<NewSeasonFormProps> = ({ entityId, onCreated }) =>
         />
         {t('parcelDetail.monitoringLabel', 'Enable continuous monitoring (auto-process new scenes)')}
       </label>
+
+      {sizeCheck?.exceeds_limit && (
+        <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800">
+          <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+          <span>
+            {t(
+              'parcelDetail.parcelTooLarge',
+              'This parcel is {{area}} ha, which exceeds the {{limit}} ha limit for vegetation index processing. Processing may be slow, expensive, or fail.',
+              { area: sizeCheck.area_ha, limit: sizeCheck.limit_ha },
+            )}
+          </span>
+        </div>
+      )}
 
       {error && (
         <p className="text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded p-2">{error}</p>
@@ -874,11 +913,53 @@ interface SeasonBlockProps {
   entityId: string;
   onDelete: (jobId: string) => Promise<void>;
   onLaunched: () => void;
+  onStopSeason?: (seasonId: string) => Promise<void>;
+  onDeleteSeason?: (seasonId: string) => Promise<void>;
+  bulkMode?: boolean;
+  selectedJobIds?: Set<string>;
+  onToggleSelectJob?: (jobId: string) => void;
 }
 
-const SeasonBlock: React.FC<SeasonBlockProps> = ({ season, entityId, onDelete, onLaunched }) => {
+const SeasonBlock: React.FC<SeasonBlockProps> = ({
+  season,
+  entityId,
+  onDelete,
+  onLaunched,
+  onStopSeason,
+  onDeleteSeason,
+  bulkMode,
+  selectedJobIds,
+  onToggleSelectJob,
+}) => {
   const { t } = useTranslation();
   const [open, setOpen] = useState(true);
+  const [stoppingSeason, setStoppingSeason] = useState(false);
+  const [deletingSeason, setDeletingSeason] = useState(false);
+  const [confirmDeleteSeason, setConfirmDeleteSeason] = useState(false);
+
+  const handleStopSeason = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!onStopSeason) return;
+    setStoppingSeason(true);
+    try {
+      await onStopSeason(season.id);
+    } finally {
+      setStoppingSeason(false);
+    }
+  };
+
+  const handleDeleteSeason = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!onDeleteSeason) return;
+    setDeletingSeason(true);
+    try {
+      await onDeleteSeason(season.id);
+      setConfirmDeleteSeason(false);
+    } finally {
+      setDeletingSeason(false);
+    }
+  };
+
   return (
     <div className="border border-slate-200 rounded-xl overflow-hidden bg-white">
       <button
@@ -901,13 +982,58 @@ const SeasonBlock: React.FC<SeasonBlockProps> = ({ season, entityId, onDelete, o
             })}
           </p>
         </div>
-        {season.is_active && (
-          <span className="shrink-0 inline-flex items-center gap-1 text-[11px] text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-            {t('parcelDetail.seasonActive', 'active')}
-          </span>
-        )}
+        <div className="flex items-center gap-1.5 shrink-0">
+          {season.is_active && (
+            <span className="inline-flex items-center gap-1 text-[11px] text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+              {t('parcelDetail.seasonActive', 'active')}
+            </span>
+          )}
+          {onStopSeason && season.is_active && (
+            <button
+              onClick={handleStopSeason}
+              disabled={stoppingSeason}
+              className="p-1.5 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors disabled:opacity-50"
+              title={t('parcelDetail.stopSeason', 'Stop season')}
+              aria-label={t('parcelDetail.stopSeason', 'Stop season')}
+            >
+              {stoppingSeason ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Square className="w-3.5 h-3.5" />}
+            </button>
+          )}
+          {onDeleteSeason && (
+            <button
+              onClick={(e) => { e.stopPropagation(); setConfirmDeleteSeason(true); }}
+              disabled={deletingSeason}
+              className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors disabled:opacity-50"
+              title={t('parcelDetail.deleteSeason', 'Delete season')}
+              aria-label={t('parcelDetail.deleteSeason', 'Delete season')}
+            >
+              {deletingSeason ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+            </button>
+          )}
+        </div>
       </button>
+      {confirmDeleteSeason && (
+        <div className="mx-4 mb-3 flex items-center gap-2 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 text-[11px]">
+          <span className="text-rose-700 flex-1">
+            {t('parcelDetail.deleteSeasonConfirm', 'Delete this season and all its jobs, rasters, and entities? This cannot be undone.')}
+          </span>
+          <button
+            onClick={handleDeleteSeason}
+            disabled={deletingSeason}
+            className="px-2.5 py-1 rounded bg-rose-600 text-white font-semibold disabled:opacity-50"
+          >
+            {deletingSeason ? t('parcelDetail.deleting', 'Deleting…') : t('parcelDetail.deleteSeasonYes', 'Delete all')}
+          </button>
+          <button
+            onClick={() => setConfirmDeleteSeason(false)}
+            disabled={deletingSeason}
+            className="px-2.5 py-1 rounded text-rose-700 hover:bg-rose-100"
+          >
+            {t('parcelDetail.cancel', 'Cancel')}
+          </button>
+        </div>
+      )}
       {open && (
         <div className="border-t border-slate-100 dark:border-slate-700 px-3 py-2 bg-slate-50 dark:bg-slate-800">
           {season.jobs.length === 0 ? (
@@ -917,7 +1043,14 @@ const SeasonBlock: React.FC<SeasonBlockProps> = ({ season, entityId, onDelete, o
           ) : (
             <ul className="divide-y divide-slate-100">
               {season.jobs.map((j) => (
-                <JobRow key={j.id} job={j} onDelete={onDelete} />
+                <JobRow
+                  key={j.id}
+                  job={j}
+                  onDelete={onDelete}
+                  bulkMode={bulkMode}
+                  isSelected={selectedJobIds?.has(j.id)}
+                  onToggleSelect={onToggleSelectJob}
+                />
               ))}
             </ul>
           )}
@@ -957,6 +1090,9 @@ export const ParcelDetail: React.FC = () => {
   const [reloadTick, setReloadTick] = useState(0);
   const [quota, setQuota] = useState<{ used: number; limit: number; plan: string } | null>(null);
   const [flash, setFlash] = useState<{ kind: 'error' | 'info'; text: string } | null>(null);
+  const [selectedJobIds, setSelectedJobIds] = useState<Set<string>>(new Set());
+  const [bulkMode, setBulkMode] = useState(false);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
 
   // Inline toast — replaces window.alert() so we never block the Cesium
   // render thread. Self-dismisses after 6s; manual close button below.
@@ -988,6 +1124,87 @@ export const ParcelDetail: React.FC = () => {
       }
     },
     [api, selectedEntityId, refetch, t, showFlash],
+  );
+
+  const toggleSelectJob = useCallback((jobId: string) => {
+    setSelectedJobIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(jobId)) {
+        next.delete(jobId);
+      } else {
+        next.add(jobId);
+      }
+      return next;
+    });
+  }, []);
+
+  const toggleAllJobs = useCallback(() => {
+    setSelectedJobIds((prev) => {
+      const allJobIds = new Set<string>();
+      overview?.seasons.forEach((s) => s.jobs.forEach((j) => allJobIds.add(j.id)));
+      overview?.legacy_jobs.forEach((j) => allJobIds.add(j.id));
+      if (prev.size === allJobIds.size && allJobIds.size > 0) {
+        return new Set();
+      }
+      return allJobIds;
+    });
+  }, [overview]);
+
+  const handleBulkDelete = useCallback(async () => {
+    if (selectedJobIds.size === 0) return;
+    setBulkDeleting(true);
+    try {
+      const res = await api.bulkDeleteJobs([...selectedJobIds]);
+      setSelectedJobIds(new Set());
+      setBulkMode(false);
+      refetch();
+      if (res.failed.length > 0) {
+        showFlash('error', t('parcelDetail.bulkDeletePartial', 'Deleted {{ok}}, {{fail}} failed.', { ok: res.deleted, fail: res.failed.length }));
+      }
+    } catch (err: any) {
+      showFlash(
+        'error',
+        t('parcelDetail.bulkDeleteFailed', 'Bulk delete failed: {{msg}}', {
+          msg: err?.message || String(err),
+        }),
+      );
+    } finally {
+      setBulkDeleting(false);
+    }
+  }, [api, selectedJobIds, refetch, t, showFlash]);
+
+  const handleStopSeason = useCallback(
+    async (seasonId: string) => {
+      try {
+        await api.stopCropSeason(seasonId);
+        refetch();
+      } catch (err: any) {
+        showFlash(
+          'error',
+          t('parcelDetail.stopSeasonFailed', 'Failed to stop season: {{msg}}', {
+            msg: err?.message || String(err),
+          }),
+        );
+      }
+    },
+    [api, refetch, t, showFlash],
+  );
+
+  const handleDeleteSeason = useCallback(
+    async (seasonId: string) => {
+      try {
+        await api.deleteCropSeason(seasonId, true);
+        refetch();
+      } catch (err: any) {
+        showFlash(
+          'error',
+          t('parcelDetail.deleteSeasonFailed', 'Failed to delete season: {{msg}}', {
+            msg: err?.message || String(err),
+          }),
+        );
+      }
+    },
+    [api, refetch, t, showFlash],
   );
 
   useEffect(() => {
@@ -1130,6 +1347,21 @@ export const ParcelDetail: React.FC = () => {
               {t('parcelDetail.activeJobs', '{{n}} job(s) in progress', { n: overview.active_jobs_count })}
             </span>
           )}
+          <button
+            onClick={() => {
+              setBulkMode(!bulkMode);
+              setSelectedJobIds(new Set());
+            }}
+            className={`inline-flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border transition-colors ${
+              bulkMode
+                ? 'bg-blue-600 text-white border-blue-600'
+                : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-100'
+            }`}
+          >
+            {bulkMode
+              ? t('parcelDetail.bulkModeCancel', 'Cancel selection')
+              : t('parcelDetail.bulkModeEnter', 'Select jobs')}
+          </button>
           <a
             href={viewerHref}
             className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 transition-colors"
@@ -1214,6 +1446,11 @@ export const ParcelDetail: React.FC = () => {
                 entityId={overview.parcel.entity_id}
                 onDelete={handleDeleteJob}
                 onLaunched={refetch}
+                onStopSeason={handleStopSeason}
+                onDeleteSeason={handleDeleteSeason}
+                bulkMode={bulkMode}
+                selectedJobIds={selectedJobIds}
+                onToggleSelectJob={toggleSelectJob}
               />
             ))}
             <NewSeasonForm entityId={overview.parcel.entity_id} onCreated={refetch} />
@@ -1231,7 +1468,14 @@ export const ParcelDetail: React.FC = () => {
           <div className="border border-slate-200 rounded-xl bg-white">
             <ul className="divide-y divide-slate-100">
               {overview.legacy_jobs.map((j) => (
-                <JobRow key={j.id} job={j} onDelete={handleDeleteJob} />
+                <JobRow
+                  key={j.id}
+                  job={j}
+                  onDelete={handleDeleteJob}
+                  bulkMode={bulkMode}
+                  isSelected={selectedJobIds.has(j.id)}
+                  onToggleSelect={toggleSelectJob}
+                />
               ))}
             </ul>
           </div>
@@ -1246,6 +1490,37 @@ export const ParcelDetail: React.FC = () => {
           onAction={refetch}
         />
       </section>
+
+      {/* Bulk delete action bar */}
+      {bulkMode && selectedJobIds.size > 0 && (
+        <div className="sticky bottom-4 z-10 flex items-center justify-between gap-3 bg-white border border-slate-300 rounded-xl px-4 py-3 shadow-lg max-w-4xl mx-auto">
+          <div className="flex items-center gap-3 text-sm">
+            <button
+              onClick={toggleAllJobs}
+              className="text-[11px] text-blue-600 hover:underline"
+            >
+              {t('parcelDetail.selectAll', 'Select all')}
+            </button>
+            <span className="text-slate-600">
+              {t('parcelDetail.selectedCount', '{{n}} job(s) selected', { n: selectedJobIds.size })}
+            </span>
+          </div>
+          <button
+            onClick={handleBulkDelete}
+            disabled={bulkDeleting}
+            className="inline-flex items-center gap-1.5 text-xs px-4 py-2 rounded-lg bg-rose-600 text-white font-semibold hover:bg-rose-700 disabled:opacity-50 transition-colors"
+          >
+            {bulkDeleting ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <Trash2 className="w-3.5 h-3.5" />
+            )}
+            {bulkDeleting
+              ? t('parcelDetail.bulkDeleting', 'Deleting…')
+              : t('parcelDetail.bulkDelete', 'Delete selected')}
+          </button>
+        </div>
+      )}
     </div>
   );
 };

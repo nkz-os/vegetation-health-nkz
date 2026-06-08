@@ -521,6 +521,42 @@ export class VegetationApiClient {
     return response as unknown as CropSeason[];
   }
 
+  /**
+   * Stop a crop season campaign. Sets monitoring_enabled=false and cancels pending jobs.
+   * POST /api/vegetation/crop-seasons/{season_id}/stop
+   */
+  async stopCropSeason(seasonId: string): Promise<{ status: string; campaign_id: string; cancelled_jobs: number }> {
+    const response = await this.client.post(`/crop-seasons/${encodeURIComponent(seasonId)}/stop`);
+    return response as any;
+  }
+
+  /**
+   * Delete a crop season campaign. Cascade deletes all associated jobs, EOProducts, and rasters.
+   * DELETE /api/vegetation/crop-seasons/{season_id}?cascade=true
+   */
+  async deleteCropSeason(seasonId: string, cascade: boolean = true): Promise<{ status: string; campaign_id: string; deleted_jobs?: number; deleted_rasters?: number }> {
+    const response = await this.client.delete(`/crop-seasons/${encodeURIComponent(seasonId)}?cascade=${cascade}`);
+    return response as any;
+  }
+
+  /**
+   * Bulk delete multiple jobs. Soft-deletes in PostgreSQL, hard-deletes EOProducts and rasters.
+   * POST /api/vegetation/jobs/bulk-delete
+   */
+  async bulkDeleteJobs(ids: string[]): Promise<{ deleted: number; failed: Array<{ id: string; reason: string }> }> {
+    const response = await this.client.delete('/jobs/bulk', { data: { ids } });
+    return response as any;
+  }
+
+  /**
+   * Check if parcel area exceeds the limit for vegetation index processing.
+   * GET /api/vegetation/parcels/{parcel_id}/check-size
+   */
+  async checkParcelSize(parcelId: string): Promise<{ area_ha: number; exceeds_limit: boolean; limit_ha: number }> {
+    const response = await this.client.get(`/parcels/${encodeURIComponent(parcelId)}/check-size`);
+    return response as any;
+  }
+
   // ==========================================================================
   // Integration Endpoints (N8N, Intelligence Module, Platform)
   // ==========================================================================
