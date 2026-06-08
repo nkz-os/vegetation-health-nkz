@@ -15,6 +15,7 @@ from app.database import init_db
 
 # Specialized Routers (SOLID refactor)
 from app.api.jobs import router as jobs_router
+from app.api.parcels import router as parcels_router
 from app.api.tiles import router as tiles_router
 from app.api.entities import router as entities_router
 from app.api.crops import router as crops_router
@@ -73,6 +74,7 @@ async def health():
 
 # Include Routers (The core of the platform)
 app.include_router(jobs_router)
+app.include_router(parcels_router)
 app.include_router(tiles_router)
 app.include_router(entities_router)
 app.include_router(crops_router, prefix="/api/vegetation", tags=["crops"])
