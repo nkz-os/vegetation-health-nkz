@@ -20,7 +20,7 @@ from app.models import VegetationJob, VegetationScene
 from app.services.processor import VegetationIndexProcessor
 from app.services.storage import create_storage_service, generate_tenant_bucket_name
 from app.database import get_db_session
-from app.services.fiware_integration import upsert_vegetation_index_entity
+from app.services.fiware_integration import upsert_eo_product, upsert_vegetation_index_entity
 
 logger = logging.getLogger(__name__)
 
@@ -155,6 +155,26 @@ def _persist_results(
         logger.info("VegetationIndex entity upserted: %s", result)
     else:
         logger.error("Failed to upsert VegetationIndex entity")
+
+    # Dual-write (migration window): publish same analysis as EOProduct.
+    # VegetationIndex writes removed in Phase 5 once crop-health reads EOProduct.
+    if index_type != 'CUSTOM':
+        try:
+            eo_result = upsert_eo_product(
+                tenant_id=tenant_id,
+                parcel_id=job.entity_id,
+                product_type=index_type,
+                statistics=statistics,
+                raster_url=raster_url,
+                sensing_date=primary_scene.sensing_date,
+                pixel_count=int(statistics.get('pixel_count', 0)),
+            )
+            if eo_result:
+                logger.info("EOProduct dual-write upserted: %s", eo_result)
+            else:
+                logger.error("EOProduct dual-write failed (non-blocking)")
+        except Exception as exc:
+            logger.error("EOProduct dual-write error (non-blocking): %s", exc)
 
 
 @celery_app.task(bind=True, name='vegetation.calculate_vegetation_index')
