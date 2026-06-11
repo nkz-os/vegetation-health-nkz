@@ -7,9 +7,27 @@ on:
     branches: [ main, develop ]
 
 jobs:
-  # Backend tests disabled by request to speed up CI (reliance on existing server environment)
-  # backend-tests: ...
-  
+  backend-tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          # Matches backend/Dockerfile (python:3.11-slim)
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio respx
+
+      - name: Run pytest (per-file process isolation)
+        run: sh run_tests.sh
+
   frontend-tests:
     runs-on: ubuntu-latest
     

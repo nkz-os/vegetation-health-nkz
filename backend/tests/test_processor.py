@@ -15,6 +15,7 @@ sys.modules['rasterio.windows'] = MagicMock()
 sys.modules['rasterio.transform'] = MagicMock()
 sys.modules['shapely'] = MagicMock()
 sys.modules['shapely.geometry'] = MagicMock()
+sys.modules['shapely.ops'] = MagicMock()
 sys.modules['simpleeval'] = MagicMock()
 
 from app.services.processor import VegetationIndexProcessor
@@ -28,6 +29,9 @@ class TestVegetationIndexProcessor:
         processor = VegetationIndexProcessor.__new__(VegetationIndexProcessor)
         processor.band_paths = {}
         processor.band_data = band_data
+        # calculate_* methods call load_bands() unconditionally; band data is
+        # injected synthetically here, so loading from disk must be a no-op.
+        processor.load_bands = lambda bands: None
         processor.band_meta = {
             'transform': None,
             'crs': 'EPSG:4326',
