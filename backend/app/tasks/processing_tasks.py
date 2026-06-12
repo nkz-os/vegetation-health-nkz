@@ -177,7 +177,15 @@ def _persist_results(
             logger.error("EOProduct dual-write error (non-blocking): %s", exc)
 
 
-@celery_app.task(bind=True, name='vegetation.calculate_vegetation_index')
+@celery_app.task(
+    bind=True,
+    name='vegetation.calculate_vegetation_index',
+    autoretry_for=(Exception,),
+    max_retries=3,
+    retry_backoff=True,
+    retry_backoff_max=1800,
+    default_retry_delay=300,
+)
 def calculate_vegetation_index(
     self,
     job_id: str,

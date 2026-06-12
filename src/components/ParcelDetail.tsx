@@ -601,6 +601,36 @@ const AdvancedSection: React.FC<AdvancedSectionProps> = ({ entityId, defaultInde
     }
   };
 
+  // ─── SAR Analysis ──────────────────────────────────────────────────────
+  const [sarBusy, setSarBusy] = useState(false);
+  const [sarMsg, setSarMsg] = useState<{ type: 'ok' | 'error'; text: string } | null>(null);
+
+  const handleSar = async () => {
+    setSarBusy(true);
+    setSarMsg(null);
+    try {
+      const res = await api.analyzeSar({
+        entity_id: entityId,
+        max_scenes: 5,
+      });
+      setSarMsg({
+        type: 'ok',
+        text: t('parcelDetail.sarDispatched', 'SAR analysis: {{n}} job(s) dispatched, {{s}} scene(s) found.', {
+          n: res.job_ids.length,
+          s: res.scenes_found,
+        }),
+      });
+      onAction();
+    } catch (err: any) {
+      setSarMsg({
+        type: 'error',
+        text: err?.response?.data?.detail || err?.message || String(err),
+      });
+    } finally {
+      setSarBusy(false);
+    }
+  };
+
   // ─── Custom formulas ───────────────────────────────────────────────────
   const [formulas, setFormulas] = useState<CustomFormula[]>([]);
   const [loadingFormulas, setLoadingFormulas] = useState(false);
@@ -784,6 +814,37 @@ const AdvancedSection: React.FC<AdvancedSectionProps> = ({ entityId, defaultInde
                 }`}
               >
                 {vraMsg.text}
+              </p>
+            )}
+          </div>
+
+          {/* SAR (Sentinel-1) */}
+          <div>
+            <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1.5 flex items-center gap-1.5">
+              <span>🛰️</span>
+              {t('parcelDetail.sarTitle', 'SAR radar (Sentinel-1)')}
+            </h4>
+            <p className="text-[11px] text-slate-500 mb-2">
+              {t(
+                'parcelDetail.sarHint',
+                'Penetrates clouds and measures soil moisture and biomass. Useful under continuous cloud cover.',
+              )}
+            </p>
+            <button
+              onClick={handleSar}
+              disabled={sarBusy}
+              className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-indigo-600 text-white font-semibold hover:bg-indigo-700 disabled:opacity-50"
+            >
+              {sarBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <span>📡</span>}
+              {t('parcelDetail.sarAnalyze', 'Analyze with SAR')}
+            </button>
+            {sarMsg && (
+              <p className={`text-xs mt-2 px-2 py-1 rounded ${
+                sarMsg.type === 'ok'
+                  ? 'text-emerald-700 bg-emerald-50 border border-emerald-200'
+                  : 'text-rose-700 bg-rose-50 border border-rose-200'
+              }`}>
+                {sarMsg.text}
               </p>
             )}
           </div>

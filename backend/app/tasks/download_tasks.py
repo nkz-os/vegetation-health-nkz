@@ -50,7 +50,15 @@ def _set_band_cleanup_counter(scene_product_id: str, tenant_id: str, tenant_buck
         logger.warning("Failed to set band cleanup counter for scene %s: %s", scene_product_id, e)
 
 
-@celery_app.task(bind=True, name='vegetation.download_sentinel2_scene')
+@celery_app.task(
+    bind=True,
+    name='vegetation.download_sentinel2_scene',
+    autoretry_for=(Exception,),
+    max_retries=3,
+    retry_backoff=True,
+    retry_backoff_max=1800,
+    default_retry_delay=300,
+)
 def download_sentinel2_scene(self, job_id: str, tenant_id: str, parameters: Dict[str, Any]):
     """Download Sentinel-2 scene from Copernicus Data Space Ecosystem.
     

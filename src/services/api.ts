@@ -557,6 +557,26 @@ export class VegetationApiClient {
     return response as any;
   }
 
+  /**
+   * Trigger manual SAR (Sentinel-1) analysis for a parcel.
+   * POST /api/vegetation/sar/analyze
+   */
+  async analyzeSar(params: {
+    entity_id: string;
+    start_date?: string;
+    end_date?: string;
+    max_scenes?: number;
+  }): Promise<{
+    entity_id: string;
+    job_ids: string[];
+    message: string;
+    scenes_found: number;
+    date_range: { start: string; end: string };
+  }> {
+    const response = await this.client.post('/sar/analyze', params);
+    return response as any;
+  }
+
   // ==========================================================================
   // Integration Endpoints (N8N, Intelligence Module, Platform)
   // ==========================================================================

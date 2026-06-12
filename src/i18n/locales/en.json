@@ -751,5 +751,11 @@
     "stopTooltip": "Stop campaign and cancel pending jobs",
     "delete": "Delete",
     "deleteTooltip": "Delete campaign and all associated data"
+  },
+  "parcelDetail": {
+    "sarTitle": "SAR radar (Sentinel-1)",
+    "sarHint": "Penetrates clouds and measures soil moisture and biomass. Useful under continuous cloud cover.",
+    "sarAnalyze": "Analyze with SAR",
+    "sarDispatched": "SAR analysis: {{n}} job(s) dispatched, {{s}} scene(s) found."
   }
 }

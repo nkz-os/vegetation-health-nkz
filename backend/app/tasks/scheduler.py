@@ -289,35 +289,105 @@ def check_and_process_entity(self, subscription_id, start_date, end_date):
 
 @celery_app.task(name="vegetation.reap_stuck_jobs")
 def reap_stuck_jobs():
-    """Mark orphaned/zombie/lost jobs as failed.
+    """Reap stuck jobs and retry them up to 3 times before permanent failure.
 
-    Three patterns we want to catch:
+    Three patterns:
     - Orphan: 'pending' with NULL celery_task_id older than 10 minutes
       → never enqueued (.delay() likely failed before recording task id).
     - Lost message: 'pending' with non-NULL celery_task_id but never started
-      (started_at IS NULL) older than 15 minutes → message was sent to the
-      broker but consumed by the wrong worker (cross-app queue collision)
-      or otherwise dropped before the right worker received it.
+      (started_at IS NULL) older than 15 minutes → message sent to broker
+      but consumed by wrong worker or dropped.
     - Zombie: 'running' with no progress update for >1 hour
-      → worker died mid-task without acking.
+      → worker died mid-task.
+
+    Instead of marking them permanently as 'failed', we reset them to 'pending'
+    and increment a retry_count in the result JSON. After 3 failed attempts the
+    job is permanently failed. This gives transient Copernicus outages / OOM
+    a chance to resolve before the next retry.
     """
+    from app.tasks.download_tasks import download_sentinel2_scene
+    from app.tasks.processing_tasks import calculate_vegetation_index
+
     db = next(get_db_session())
     try:
         now = datetime.now(timezone.utc)
         orphan_cutoff = now - timedelta(minutes=10)
         lost_cutoff = now - timedelta(minutes=15)
         zombie_cutoff = now - timedelta(hours=1)
+        retries = 0
 
+        # Helpers
+        def _increment_retry(job, reason: str):
+            """Increment retry_count on a job and reset to pending if <3 retries."""
+            result = job.result or {}
+            rc = result.get("retry_count", 0) + 1
+            result["retry_count"] = rc
+            result["retry_reason"] = reason
+            job.result = result
+
+            if rc >= 3:
+                job.status = "failed"
+                job.error_message = f"Permanent failure after {rc} retries: {reason}"
+                job.completed_at = now
+                logger.warning(
+                    "Job %s permanently failed after %d retries: %s",
+                    job.id, rc, reason,
+                )
+                return 0
+
+            # Reset to pending so the next scheduler cycle or manual trigger
+            # can pick it up. Clear celery_task_id so the orphan filter catches
+            # it if enqueue fails again.
+            job.status = "pending"
+            job.celery_task_id = None
+            job.completed_at = None
+            job.error_message = None
+            logger.info(
+                "Job %s reset to pending (retry %d/3): %s",
+                job.id, rc, reason,
+            )
+            return 1
+
+        def _redispatch(job):
+            """Re-dispatch a job to Celery after resetting its status."""
+            try:
+                if job.job_type == "download":
+                    async_result = download_sentinel2_scene.delay(
+                        str(job.id), job.tenant_id, job.parameters or {},
+                    )
+                elif job.job_type == "calculate_index":
+                    params = job.parameters or {}
+                    async_result = calculate_vegetation_index.delay(
+                        str(job.id),
+                        job.tenant_id,
+                        params.get("scene_id"),
+                        params.get("index_type"),
+                        params.get("formula"),
+                        params.get("start_date"),
+                        params.get("end_date"),
+                    )
+                else:
+                    return  # don't know how to redispatch this type
+                job.celery_task_id = async_result.id
+                return 1
+            except Exception as e:
+                logger.warning(
+                    "Re-dispatch failed for job %s: %s", job.id, e,
+                )
+                return 0
+
+        # ── Orphans: never enqueued ──────────────────────────────────
         orphans = db.query(VegetationJob).filter(
             VegetationJob.status == "pending",
             VegetationJob.celery_task_id.is_(None),
             VegetationJob.created_at < orphan_cutoff,
         ).all()
         for job in orphans:
-            job.status = "failed"
-            job.error_message = "Reaped: pending without celery_task_id (never enqueued)"
-            job.completed_at = now
+            if _increment_retry(job, "never enqueued"):
+                retries += _redispatch(job)
+        db.commit()
 
+        # ── Lost: enqueued but never started ─────────────────────────
         lost = db.query(VegetationJob).filter(
             VegetationJob.status == "pending",
             VegetationJob.celery_task_id.isnot(None),
@@ -325,27 +395,24 @@ def reap_stuck_jobs():
             VegetationJob.created_at < lost_cutoff,
         ).all()
         for job in lost:
-            job.status = "failed"
-            job.error_message = (
-                "Reaped: enqueued but never started (broker message lost or "
-                "consumed by wrong worker). Retry the analysis."
-            )
-            job.completed_at = now
+            if _increment_retry(job, "broker message lost"):
+                retries += _redispatch(job)
+        db.commit()
 
+        # ── Zombies: stuck in running ────────────────────────────────
         zombies = db.query(VegetationJob).filter(
             VegetationJob.status == "running",
             VegetationJob.updated_at < zombie_cutoff,
         ).all()
         for job in zombies:
-            job.status = "failed"
-            job.error_message = "Reaped: stuck in 'running' >1h with no progress update"
-            job.completed_at = now
+            if _increment_retry(job, "stuck >1h"):
+                retries += _redispatch(job)
+        db.commit()
 
         if orphans or lost or zombies:
-            db.commit()
             logger.warning(
-                "Reaper: failed %d orphan(s), %d lost-message(s), %d zombie(s)",
-                len(orphans), len(lost), len(zombies),
+                "Reaper: %d orphan(s), %d lost, %d zombie(s) — %d re-queued",
+                len(orphans), len(lost), len(zombies), retries,
             )
     finally:
         db.close()
