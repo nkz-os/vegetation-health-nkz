@@ -124,17 +124,17 @@ spec:
                   key: cdse-s3-secret-key
                   optional: true
             - name: DEFAULT_MONTHLY_HA_LIMIT
-              value: "10.0"
+              value: "500.0"
             - name: DEFAULT_DAILY_HA_LIMIT
-              value: "5.0"
+              value: "50.0"
             - name: DEFAULT_DAILY_JOBS_LIMIT
-              value: "5"
+              value: "100"
             - name: DEFAULT_DAILY_DOWNLOAD_JOBS
-              value: "3"
+              value: "30"
             - name: DEFAULT_DAILY_PROCESS_JOBS
-              value: "10"
+              value: "50"
             - name: DEFAULT_DAILY_CALCULATE_JOBS
-              value: "20"
+              value: "150"
             - name: LOG_LEVEL
               value: "INFO"
             - name: SQL_ECHO
