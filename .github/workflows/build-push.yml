@@ -83,6 +83,8 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/${{ env.BACKEND_IMAGE }}:latest
             ${{ env.REGISTRY }}/${{ env.BACKEND_IMAGE }}:${{ github.sha }}
+            # Legacy package path (repo was renamed from vegetation-health-nkz)
+            ${{ env.REGISTRY }}/nkz-os/vegetation-health-nkz/vegetation-prime-api:${{ github.sha }}
 
   summary:
     needs: [build-frontend, build-backend]
