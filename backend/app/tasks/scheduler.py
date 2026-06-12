@@ -56,7 +56,13 @@ def process_subscriptions():
                 end_date=today.isoformat()
             )
             
-            # Update next_run_at based on frequency
+            # Compute next_run_at aligned to date boundary, not current timestamp.
+            # Using now + timedelta accumulates microsecond drift: after one iteration
+            # next_run_at becomes 02:00:00.991 instead of 02:00:00.000. The scheduler
+            # fires at ~02:00:00.884 the next day, which is BEFORE 02:00:00.991 → not due.
+            # Rounding to midnight + 2h snaps to the exact beat time regardless of jitter.
+            from datetime import time as dt_time
+
             if sub.frequency == 'daily':
                 delta = timedelta(days=1)
             elif sub.frequency == 'weekly':
@@ -64,12 +70,11 @@ def process_subscriptions():
             elif sub.frequency == 'biweekly':
                 delta = timedelta(weeks=2)
             else:
-                delta = timedelta(weeks=1) # Default
-            
-            # If it was never run, set next run to tomorrow (to avoid spinning if logic fails today)
-            # Or better, set it to now + frequency
-            sub.next_run_at = now + delta
-            sub.last_run_at = now # Mark as checked
+                delta = timedelta(weeks=1)
+
+            next_run_date = (now + delta).date()
+            sub.next_run_at = datetime.combine(next_run_date, dt_time(2, 0))
+            sub.last_run_at = now  # Mark as checked
             db.commit()
             
     finally:
