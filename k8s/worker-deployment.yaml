@@ -34,7 +34,7 @@ spec:
           effect: "NoSchedule"
       containers:
         - name: worker
-          image: ghcr.io/nkz-os/vegetation-health-nkz/vegetation-prime-api:b6b6f61
+          image: ghcr.io/nkz-os/vegetation-health-nkz/vegetation-prime-api@sha256:1c25ae85e8d3949d353f203bea71af040fa76f017ce6492f9d657f85cdb26d53
           imagePullPolicy: Always
           # concurrency=1: one task per pod avoids OOM with heavy Sentinel-2 scenes.
           # Scale horizontally (increase replicas) for more throughput.
