@@ -87,7 +87,6 @@ app.include_router(sync_router)
 app.include_router(custom_formulas_router)
 app.include_router(crop_seasons_router)
 app.include_router(export_router)
-app.include_router(parcels_router)
 app.include_router(sar_router)
 
 if __name__ == "__main__":
