@@ -637,3 +637,102 @@ async def check_parcel_size(
         "exceeds_limit": area_ha > limit,
         "limit_ha": limit,
     }
+
+
+@router.get("/{entity_id}/stats")
+async def parcel_vegetation_stats(
+    entity_id: str,
+    current_user: dict = Depends(require_auth),
+    db: Session = Depends(get_db_with_tenant),
+):
+    """Return vegetation index zonal statistics for a parcel.
+
+    Queries the latest VegetationIndexCache rows for this entity and returns
+    mean/min/max/std values per index type (NDVI, EVI, SAVI, etc.).
+    Used by BioOrchestrator and other modules for cross-referencing.
+
+    Returns:
+    {
+      "parcel_id": "urn:ngsi-ld:AgriParcel:xxx",
+      "indices": {
+        "NDVI": {
+          "mean": 0.72,
+          "min": 0.31,
+          "max": 0.85,
+          "std": 0.12,
+          "pixel_count": 12500,
+          "observed_at": "2026-06-15T10:30:00Z"
+        },
+        ...
+      }
+    }
+    """
+    tenant_id = current_user["tenant_id"]
+
+    # Build the entity URN if only short ID given
+    parcel_urn = entity_id if entity_id.startswith("urn:") else f"urn:ngsi-ld:AgriParcel:{entity_id}"
+
+    # Query latest VegetationIndexCache per index type
+    from sqlalchemy import func as sa_func
+
+    # Get distinct index types available for this entity
+    index_types = (
+        db.query(VegetationIndexCache.index_type)
+        .filter(
+            VegetationIndexCache.tenant_id == tenant_id,
+            VegetationIndexCache.entity_id == parcel_urn,
+        )
+        .distinct()
+        .all()
+    )
+
+    if not index_types:
+        return {
+            "parcel_id": parcel_urn,
+            "indices": {},
+            "message": "No vegetation data for this parcel yet.",
+        }
+
+    indices = {}
+    for (idx_type,) in index_types:
+        # Latest scene date
+        latest = (
+            db.query(
+                sa_func.max(VegetationIndexCache.scene_id),
+                sa_func.avg(VegetationIndexCache.mean_value),
+                sa_func.min(VegetationIndexCache.min_value),
+                sa_func.max(VegetationIndexCache.max_value),
+                sa_func.stddev(VegetationIndexCache.mean_value),
+                sa_func.sum(VegetationIndexCache.pixel_count),
+            )
+            .filter(
+                VegetationIndexCache.tenant_id == tenant_id,
+                VegetationIndexCache.entity_id == parcel_urn,
+                VegetationIndexCache.index_type == idx_type,
+            )
+            .first()
+        )
+
+        if latest and latest[1] is not None:
+            scene_id = latest[0]
+            # Get scene date
+            scene = (
+                db.query(VegetationScene.sensing_date)
+                .filter(VegetationScene.id == scene_id)
+                .first()
+            )
+            observed_at = scene[0].isoformat() if scene and scene[0] else None
+
+            indices[idx_type] = {
+                "mean": round(float(latest[1]), 4),
+                "min": round(float(latest[2]), 4) if latest[2] else None,
+                "max": round(float(latest[3]), 4) if latest[3] else None,
+                "std": round(float(latest[4]), 4) if latest[4] else None,
+                "pixel_count": int(latest[5]) if latest[5] else 0,
+                "observed_at": observed_at,
+            }
+
+    return {
+        "parcel_id": parcel_urn,
+        "indices": indices,
+    }
