@@ -35,13 +35,14 @@ INDEX_ATTRS = {
 def _make_headers(tenant_id: str) -> Dict[str, str]:
     """Build canonical NGSI-LD headers with tenant normalization.
 
-    Applies FIWARE multi-tenant conventions: lowercase, underscores,
-    alphanumeric-only normalized tenant value for both NGSILD-Tenant
+    Applies FIWARE multi-tenant conventions: lowercase, hyphen-canonical,
+    alphanumeric+hyphen normalized tenant value for both NGSILD-Tenant
     and Fiware-Service headers. Includes Link header when CONTEXT_URL is set.
+    Preserves hyphens (canonical platform convention, was underscore-bug fixed).
     """
-    n = tenant_id.lower().strip().replace('-', '_').replace(' ', '_')
-    n = re.sub(r'[^a-z0-9_]', '', n)
-    n = n.strip('_') or tenant_id
+    n = tenant_id.lower().strip()
+    n = re.sub(r'[^a-z0-9-]', '', n)  # preserve hyphens, NOT underscores
+    n = n.strip('-') or tenant_id
     headers: Dict[str, str] = {
         "Content-Type": "application/ld+json",
         "NGSILD-Tenant": n,
@@ -481,9 +482,9 @@ class FIWAREClient:
         self.session = requests.Session()
         if auth_token:
             self.session.headers['Authorization'] = f'Bearer {auth_token}'
-        n = tenant_id.lower().strip().replace('-', '_').replace(' ', '_')
-        n = re.sub(r'[^a-z0-9_]', '', n)
-        n = n.strip('_') or tenant_id
+        n = tenant_id.lower().strip()
+        n = re.sub(r'[^a-z0-9-]', '', n)  # preserve hyphens
+        n = n.strip('-') or tenant_id
         self.session.headers.update({
             'NGSILD-Tenant': n,
             'Fiware-Service': n,
