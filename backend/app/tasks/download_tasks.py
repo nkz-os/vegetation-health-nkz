@@ -90,7 +90,7 @@ def download_sentinel2_scene(self, job_id: str, tenant_id: str, parameters: Dict
         # Default config values when no VegetationConfig row exists
         storage_type = config.storage_type if config else (os.getenv('STORAGE_TYPE', 's3'))
         storage_path = config.storage_path if config else 'vegetation-prime/'
-        cloud_coverage_threshold = float(config.cloud_coverage_threshold) if config else 20.0
+        cloud_coverage_threshold = float(config.cloud_coverage_threshold) if config else 50.0
 
         # Get Copernicus OAuth credentials (optional — STAC API is public)
         creds = get_copernicus_credentials_with_fallback(

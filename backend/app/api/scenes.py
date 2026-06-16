@@ -279,7 +279,7 @@ async def _dispatch_analyze_for_parcel(
         intersects=intersects_geojson,
         start_date=_date_type.fromisoformat(start_date_iso),
         end_date=_date_type.fromisoformat(end_date_iso),
-        cloud_cover_lte=60,
+        cloud_cover_lte=50,
         limit=50,
     )
 
@@ -307,7 +307,7 @@ async def _dispatch_analyze_for_parcel(
             "bbox": bbox,
             "bounds": geometry,
             "entity_id": entity_id,
-            "cloud_coverage_threshold": 60,
+            "cloud_coverage_threshold": 50,
             "calculate_indices": indices_list,
             "calculate_custom_formulas": custom_formula_specs,
         }
@@ -811,7 +811,7 @@ async def get_config(current_user: dict = Depends(require_auth)):
     return {
         "default_index": "NDVI",
         "auto_process": False,
-        "cloud_threshold": 30,
+        "cloud_threshold": 50,
         "copernicus_client_id": os.getenv("COPERNICUS_CLIENT_ID", ""),
         "copernicus_client_secret_set": bool(os.getenv("COPERNICUS_CLIENT_SECRET")),
     }

@@ -151,12 +151,12 @@ def check_and_process_entity(self, subscription_id, start_date, end_date):
         end = datetime.fromisoformat(end_date).date()
         
         try:
-            # Phase 3 macro filter: intersects (exact parcel) + cloud_cover_lte 60
+            # Phase 3 macro filter: intersects (exact parcel) + cloud_cover_lte 50
             scenes = client.search_scenes(
                 intersects=intersects_geojson,
                 start_date=start,
                 end_date=end,
-                cloud_cover_lte=60,
+                cloud_cover_lte=50,
                 limit=20,
             )
         except Exception as e:
