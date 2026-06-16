@@ -111,7 +111,7 @@ class SentinelCrawler:
             bbox=bbox, 
             start_date=start_date, 
             end_date=end_date,
-            cloud_cover_max=float(self.config.cloud_coverage_threshold or 20.0)
+            cloud_cover_max=float(self.config.cloud_coverage_threshold or 50.0)
         )
         
         if not scenes:

@@ -22,7 +22,7 @@ class VegetationConfig(BaseModel, TenantMixin):
     
     # Processing preferences
     default_index_type = Column(String(20), default='NDVI', nullable=False)
-    cloud_coverage_threshold = Column(Numeric(5, 2), default=Decimal('20.0'), nullable=False)
+    cloud_coverage_threshold = Column(Numeric(5, 2), default=Decimal('50.0'), nullable=False)
     auto_process = Column(Boolean, default=True, nullable=False)
     
     # Storage configuration

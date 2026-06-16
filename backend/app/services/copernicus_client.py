@@ -143,7 +143,7 @@ class CopernicusDataSpaceClient:
                 "datetime": datetime_filter,
                 "limit": limit,
                 "query": {
-                    "eo:cloud_cover": {"lte": cloud_cover_lte if cloud_cover_lte is not None else 60}
+                    "eo:cloud_cover": {"lte": cloud_cover_lte if cloud_cover_lte is not None else 50}
                 }
             }
         else:
@@ -154,7 +154,7 @@ class CopernicusDataSpaceClient:
                 "datetime": datetime_filter,
                 "limit": limit,
                 "query": {
-                    "eo:cloud_cover": {"lt": cloud_cover_max if cloud_cover_max is not None else 20.0}
+                    "eo:cloud_cover": {"lt": cloud_cover_max if cloud_cover_max is not None else 50.0}
                 }
             }
 
