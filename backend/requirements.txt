@@ -26,7 +26,7 @@ cryptography==41.0.7
 # Note: PyJWKClient is included in pyjwt package (from jwt import PyJWKClient)
 
 # Platform SDK — FIWARE NGSI-LD client
-nkz-platform-sdk>=0.5.0
+nkz-platform-sdk==0.5.0
 
 # Geospatial processing
 numpy==1.24.3
