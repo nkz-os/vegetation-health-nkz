@@ -20,6 +20,7 @@ from app.middleware.auth import require_auth
 from app.models import VegetationJob
 from app.services.copernicus_client import CopernicusDataSpaceClient
 from app.services.platform_credentials import get_copernicus_credentials_with_fallback
+from nkz_platform_sdk import inject_fiware_headers
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +60,7 @@ async def analyze_sar(
 
     # Get parcel geometry from Orion-LD
     orion_url = os.getenv("FIWARE_CONTEXT_BROKER_URL", "http://orion-ld-service:1026")
-    headers = {"Accept": "application/json", "NGSILD-Tenant": tenant_id}
+    headers = inject_fiware_headers({"Accept": "application/json"}, tenant=tenant_id, has_context_in_body=False)
 
     async with httpx.AsyncClient(timeout=10) as client:
         resp = await client.get(

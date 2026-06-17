@@ -13,6 +13,7 @@ from app.database import get_db_with_tenant
 from app.middleware.auth import require_auth
 from app.models import VegetationScene, VegetationIndexCache, VegetationJob, VegetationCropSeason
 from app.services.fiware_integration import FIWAREClient
+from nkz_platform_sdk import inject_fiware_headers
 
 router = APIRouter(prefix="/api/vegetation/entities", tags=["entities"])
 logger = logging.getLogger(__name__)
@@ -22,7 +23,7 @@ async def _resolve_entity_name(entity_id: str, tenant_id: str) -> Optional[str]:
     """Query Orion-LD for the entity's name attribute."""
     try:
         orion_url = os.getenv("FIWARE_CONTEXT_BROKER_URL", "http://orion-ld-service:1026")
-        headers = {"Accept": "application/json", "NGSILD-Tenant": tenant_id}
+        headers = inject_fiware_headers({"Accept": "application/json"}, tenant=tenant_id, has_context_in_body=False)
         async with httpx.AsyncClient(timeout=5) as client:
             resp = await client.get(
                 f"{orion_url}/ngsi-ld/v1/entities/{entity_id}",

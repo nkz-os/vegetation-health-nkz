@@ -28,6 +28,7 @@ from app.middleware.auth import require_auth
 from app.models import VegetationScene, VegetationIndexCache, VegetationJob, VegetationCustomFormula
 from app.schemas import LatestResultsItem
 from app.tasks import calculate_vegetation_index, download_sentinel2_scene
+from nkz_platform_sdk import inject_fiware_headers
 
 router = APIRouter(prefix="/api/vegetation", tags=["scenes"])
 logger = logging.getLogger(__name__)
@@ -234,7 +235,7 @@ async def _dispatch_analyze_for_parcel(
         import httpx
 
         orion_url = os.getenv("FIWARE_CONTEXT_BROKER_URL", "http://orion-ld-service:1026")
-        headers = {"Accept": "application/json", "NGSILD-Tenant": tenant_id}
+        headers = inject_fiware_headers({"Accept": "application/json"}, tenant=tenant_id, has_context_in_body=False)
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.get(
                 f"{orion_url}/ngsi-ld/v1/entities/{entity_id}", headers=headers
