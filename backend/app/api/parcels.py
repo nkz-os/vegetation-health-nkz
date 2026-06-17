@@ -28,6 +28,7 @@ from app.models import (
     VegetationScene,
 )
 from app.services.storage import create_storage_service, generate_tenant_bucket_name
+from nkz_platform_sdk import inject_fiware_headers
 
 logger = logging.getLogger(__name__)
 
@@ -326,7 +327,7 @@ async def _delete_orion_entity_if_orphan(
     parcel_short = entity_id.split(":")[-1] if ":" in entity_id else entity_id
     veg_entity_id = f"urn:ngsi-ld:VegetationIndex:{tenant_id}:{parcel_short}"
     orion_url = os.getenv("FIWARE_CONTEXT_BROKER_URL", "http://orion-ld-service:1026")
-    headers = {"Accept": "application/json", "NGSILD-Tenant": tenant_id}
+    headers = inject_fiware_headers({"Accept": "application/json"}, tenant=tenant_id, has_context_in_body=False)
     try:
         async with httpx.AsyncClient(timeout=4) as client:
             resp = await client.delete(
