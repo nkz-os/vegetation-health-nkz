@@ -15,6 +15,7 @@ from typing import Dict, Any, Optional, List
 from datetime import datetime, date, timezone
 
 import requests
+from nkz_platform_sdk import inject_fiware_headers as _canonical_headers
 
 logger = logging.getLogger(__name__)
 
@@ -33,31 +34,8 @@ INDEX_ATTRS = {
 
 
 def _make_headers(tenant_id: str) -> Dict[str, str]:
-    """Build canonical NGSI-LD headers with tenant normalization.
-
-    Applies FIWARE multi-tenant conventions: lowercase, hyphen-canonical,
-    alphanumeric+hyphen normalized tenant value for both NGSILD-Tenant
-    and Fiware-Service headers. Includes Link header when CONTEXT_URL is set.
-    Preserves hyphens (canonical platform convention, was underscore-bug fixed).
-    """
-    n = tenant_id.lower().strip()
-    n = re.sub(r'[^a-z0-9-]', '', n)  # preserve hyphens, NOT underscores
-    n = n.strip('-') or tenant_id
-    headers: Dict[str, str] = {
-        "Content-Type": "application/ld+json",
-        "NGSILD-Tenant": n,
-        "Fiware-Service": n,
-        "Fiware-ServicePath": "/",
-        "Accept": "application/ld+json",
-    }
-    ctx = os.getenv("CONTEXT_URL", "")
-    if ctx:
-        headers["Link"] = (
-            f'<{ctx}>; '
-            f'rel="http://www.w3.org/ns/json-ld#context"; '
-            f'type="application/ld+json"'
-        )
-    return headers
+    """Build canonical NGSI-LD headers — delegates to platform SDK."""
+    return _canonical_headers({}, tenant=tenant_id, has_context_in_body=True)
 
 
 def _entity_id_for_parcel(tenant_id: str, parcel_id: str) -> str:

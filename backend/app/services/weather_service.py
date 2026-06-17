@@ -17,7 +17,7 @@ from typing import Dict, List, Any, Optional, Tuple
 from datetime import datetime, date, timedelta
 from dataclasses import dataclass, field
 import httpx
-from app.common.tenant_utils import normalize_tenant_id
+from nkz_platform_sdk import inject_fiware_headers
 
 logger = logging.getLogger(__name__)
 
@@ -28,26 +28,8 @@ ENTITY_MANAGER_URL = os.getenv("ENTITY_MANAGER_URL", "http://entity-manager-serv
 
 
 def _make_headers(tenant_id: str) -> dict:
-    """Build canonical NGSI-LD headers with tenant normalization.
-
-    Applies FIWARE multi-tenant conventions: lowercase, underscores,
-    alphanumeric-only normalized tenant value for both NGSILD-Tenant
-    and Fiware-Service headers.
-    """
-    n = normalize_tenant_id(tenant_id)
-    headers = {
-        "NGSILD-Tenant": n,
-        "Fiware-Service": n,
-        "Fiware-ServicePath": "/",
-        "Accept": "application/ld+json",
-    }
-    ctx = os.getenv("CONTEXT_URL", "")
-    if ctx:
-        headers["Link"] = (
-            f'<{ctx}>; '
-            f'rel="http://www.w3.org/ns/json-ld#context"; '
-            f'type="application/ld+json"'
-        )
+    """Build cannonical NGSI-LD headers — delegates to platform SDK."""
+    return inject_fiware_headers({}, tenant=tenant_id, has_context_in_body=False)
     return headers
 
 
