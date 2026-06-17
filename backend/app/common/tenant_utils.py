@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 # Tenant ID constraints
 MIN_TENANT_ID_LENGTH = 3
 MAX_TENANT_ID_LENGTH = 63  # MongoDB database name limit
-ALLOWED_CHARS_PATTERN = re.compile(r'^[a-z0-9_]+$')
+ALLOWED_CHARS_PATTERN = re.compile(r'^[a-z0-9]+(?:-[a-z0-9]+)*$')
 
 
 def normalize_tenant_id(tenant_id: str) -> str:
@@ -22,8 +22,7 @@ def normalize_tenant_id(tenant_id: str) -> str:
     
     Rules:
     - Convert to lowercase
-    - Replace hyphens with underscores (MongoDB compatibility)
-    - Remove any characters that are not alphanumeric or underscore
+    - Collapse anything that is not [a-z0-9] into a single hyphen (canonical)
     - Ensure minimum and maximum length
     
     Args:
@@ -36,9 +35,9 @@ def normalize_tenant_id(tenant_id: str) -> str:
         >>> normalize_tenant_id("TESTTENANT")
         'testtenant'
         >>> normalize_tenant_id("Test-Tenant-1")
-        'test_tenant_1'
+        'test-tenant-1'
         >>> normalize_tenant_id("My Tenant@123")
-        'my_tenant123'
+        'my-tenant-123'
     """
     if not tenant_id:
         raise ValueError("Tenant ID cannot be empty")
@@ -46,14 +45,12 @@ def normalize_tenant_id(tenant_id: str) -> str:
     # Convert to lowercase
     normalized = tenant_id.lower().strip()
     
-    # Replace hyphens with underscores (MongoDB database names don't support hyphens)
-    normalized = normalized.replace('-', '_')
     
-    # Remove any characters that are not alphanumeric or underscore
-    normalized = re.sub(r'[^a-z0-9_]', '', normalized)
+    # Collapse anything that is not [a-z0-9] into a single hyphen (canonical)
+    normalized = re.sub(r'[^a-z0-9]+', '-', normalized)
     
-    # Remove leading/trailing underscores
-    normalized = normalized.strip('_')
+    # Remove leading/trailing hyphens
+    normalized = normalized.strip('-')
     
     # Validate length
     if len(normalized) < MIN_TENANT_ID_LENGTH:

@@ -17,6 +17,7 @@ from typing import Dict, List, Any, Optional, Tuple
 from datetime import datetime, date, timedelta
 from dataclasses import dataclass, field
 import httpx
+from app.common.tenant_utils import normalize_tenant_id
 
 logger = logging.getLogger(__name__)
 
@@ -33,9 +34,7 @@ def _make_headers(tenant_id: str) -> dict:
     alphanumeric-only normalized tenant value for both NGSILD-Tenant
     and Fiware-Service headers.
     """
-    n = tenant_id.lower().strip().replace('-', '_').replace(' ', '_')
-    n = re.sub(r'[^a-z0-9_]', '', n)
-    n = n.strip('_') or tenant_id
+    n = normalize_tenant_id(tenant_id)
     headers = {
         "NGSILD-Tenant": n,
         "Fiware-Service": n,
