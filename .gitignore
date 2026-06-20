@@ -161,3 +161,11 @@ docs/audits/
 *_SPEC.md
 HANDOFF.md
 CURRENT_STATE.md
+
+# ── Secrets (belt-and-suspenders) ──
+*.pem
+*.key
+apikey_*.txt
+*.apikey
+*_api_key.txt
+*-secret*
