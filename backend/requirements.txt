@@ -1,7 +1,7 @@
 # Vegetation Prime Backend Dependencies
 
 # FastAPI and web framework
-fastapi==0.104.1
+fastapi>=0.104.1
 uvicorn[standard]==0.24.0
 python-multipart==0.0.6
 pydantic==2.5.0
@@ -22,7 +22,7 @@ flower==2.0.1  # Celery monitoring
 
 # Authentication
 pyjwt==2.8.0
-cryptography==41.0.7
+cryptography>=41.0.7
 # Note: PyJWKClient is included in pyjwt package (from jwt import PyJWKClient)
 
 # Platform SDK — FIWARE NGSI-LD client
@@ -54,7 +54,7 @@ botocore==1.32.7
 simpleeval==0.9.13
 
 # HTTP client
-httpx==0.25.2
+httpx>=0.25.2
 requests==2.31.0
 
 # Utilities
