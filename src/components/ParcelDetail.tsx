@@ -201,6 +201,7 @@ const AnalyzeInSeasonForm: React.FC<AnalyzeFormProps> = ({ entityId, seasonId, o
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState<string[]>([...STANDARD_INDICES]);
   const [threshold, setThreshold] = useState<number>(30);
+  const [includeSar, setIncludeSar] = useState<boolean>(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const closeTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -224,6 +225,7 @@ const AnalyzeInSeasonForm: React.FC<AnalyzeFormProps> = ({ entityId, seasonId, o
       const res = await api.analyzeInSeason(entityId, seasonId, {
         indices: selected,
         local_cloud_threshold: threshold,
+        include_sar: includeSar,
       });
       setSuccess(
         t('parcelDetail.analyzeSuccess', '{{n}} job(s) dispatched, {{s}} scenes found.', {
@@ -313,6 +315,17 @@ const AnalyzeInSeasonForm: React.FC<AnalyzeFormProps> = ({ entityId, seasonId, o
           )}
         </p>
       </div>
+
+      <label className="inline-flex items-center gap-2 text-xs text-slate-600 mt-2">
+        <input
+          type="checkbox"
+          checked={includeSar}
+          onChange={(e) => setIncludeSar(e.target.checked)}
+          disabled={busy}
+          className="accent-emerald-600"
+        />
+        {'🛰️'} {t('parcelDetail.includeSar', 'Include SAR radar (Sentinel-1)')}
+      </label>
 
       {error && (
         <p className="text-xs text-rose-600 bg-rose-50 border border-rose-200 rounded p-2">{error}</p>
