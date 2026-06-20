@@ -2,6 +2,7 @@
 Periodic tasks for scheduling vegetation updates.
 """
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from sqlalchemy import or_, and_
 
@@ -409,10 +410,39 @@ def reap_stuck_jobs():
                 retries += _redispatch(job)
         db.commit()
 
-        if orphans or lost or zombies:
+        # ── Failed recoverable: network/Copernicus errors → retry after 24h ──
+        RECOVERABLE_PATTERNS = ["Copernicus", "timeout", "5[0-9][0-9]", "ConnectionError", "ServiceUnavailable"]
+
+        recoverable_cutoff = now - timedelta(hours=24)
+
+        recoverable_failed = (
+            db.query(VegetationJob)
+            .filter(
+                VegetationJob.status == "failed",
+                VegetationJob.completed_at < recoverable_cutoff,
+                VegetationJob.completed_at.isnot(None),
+                VegetationJob.error_message.isnot(None),
+            )
+            .all()
+        )
+
+        for job in recoverable_failed:
+            error_msg = job.error_message or ""
+            if any(re.search(p, error_msg) for p in RECOVERABLE_PATTERNS):
+                logger.info(
+                    "Recoverable failure for job %s: %s — resetting to pending",
+                    job.id, error_msg[:80],
+                )
+                if _increment_retry(job, f"recoverable failure: {error_msg[:80]}"):
+                    retries += _redispatch(job)
+
+        if recoverable_failed:
+            db.commit()
+
+        if orphans or lost or zombies or recoverable_failed:
             logger.warning(
-                "Reaper: %d orphan(s), %d lost, %d zombie(s) — %d re-queued",
-                len(orphans), len(lost), len(zombies), retries,
+                "Reaper: %d orphan(s), %d lost, %d zombie(s), %d recoverable failed — %d re-queued",
+                len(orphans), len(lost), len(zombies), len(recoverable_failed), retries,
             )
     finally:
         db.close()
