@@ -20,6 +20,7 @@ from app.middleware.auth import require_auth
 from app.models import VegetationJob
 from app.services.copernicus_client import CopernicusDataSpaceClient
 from app.services.platform_credentials import get_copernicus_credentials_with_fallback
+from app.tasks.sar_tasks import download_sentinel1_scene
 from nkz_platform_sdk import inject_fiware_headers
 
 logger = logging.getLogger(__name__)
@@ -62,31 +63,38 @@ async def analyze_sar(
     orion_url = os.getenv("FIWARE_CONTEXT_BROKER_URL", "http://orion-ld-service:1026")
     headers = inject_fiware_headers({"Accept": "application/json"}, tenant=tenant_id, has_context_in_body=False)
 
-    async with httpx.AsyncClient(timeout=10) as client:
-        resp = await client.get(
-            f"{orion_url}/ngsi-ld/v1/entities/{entity_id}", headers=headers
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(
+                f"{orion_url}/ngsi-ld/v1/entities/{entity_id}", headers=headers
+            )
+            if resp.status_code != 200:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Parcel {entity_id} not found in context broker",
+                )
+    except httpx.RequestError as e:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Orion-LD unreachable: {e}",
         )
-        if resp.status_code != 200:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Parcel {entity_id} not found in context broker",
-            )
-        entity_data = resp.json()
-        loc = entity_data.get("location", {})
-        geom = loc.get("value") or loc
-        if not geom or "coordinates" not in geom:
-            raise HTTPException(
-                status_code=422,
-                detail="Parcel has no location geometry",
-            )
-        geom_obj = shp(geom)
-        bbox = list(geom_obj.bounds)
-        # STAC API requires Polygon, not MultiPolygon
-        if geom_obj.geom_type == "MultiPolygon":
-            largest = max(geom_obj.geoms, key=lambda g: g.area)
-            intersects = largest.__geo_interface__
-        else:
-            intersects = geom_obj.__geo_interface__
+
+    entity_data = resp.json()
+    loc = entity_data.get("location", {})
+    geom = loc.get("value") or loc
+    if not geom or "coordinates" not in geom:
+        raise HTTPException(
+            status_code=422,
+            detail="Parcel has no location geometry",
+        )
+    geom_obj = shp(geom)
+    bbox = list(geom_obj.bounds)
+    # STAC API requires Polygon, not MultiPolygon
+    if geom_obj.geom_type == "MultiPolygon":
+        largest = max(geom_obj.geoms, key=lambda g: g.area)
+        intersects = largest.__geo_interface__
+    else:
+        intersects = geom_obj.__geo_interface__
 
     # Search S1 scenes via Copernicus STAC
     creds = get_copernicus_credentials_with_fallback()
@@ -116,7 +124,6 @@ async def analyze_sar(
         }
 
     # Create and dispatch download_sar jobs
-    from app.tasks.sar_tasks import download_sentinel1_scene
 
     job_ids = []
     for s1_scene in s1_scenes:
