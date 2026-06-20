@@ -18,7 +18,6 @@ from app.api.jobs import router as jobs_router
 from app.api.parcels import router as parcels_router
 from app.api.tiles import router as tiles_router
 from app.api.entities import router as entities_router
-from app.api.crops import router as crops_router
 from app.api.subscriptions import router as subscriptions_router
 from app.api.internal import router as internal_router
 from app.api.timeseries_adapter import router as timeseries_adapter_router
@@ -78,7 +77,6 @@ app.include_router(jobs_router)
 app.include_router(parcels_router)
 app.include_router(tiles_router)
 app.include_router(entities_router)
-app.include_router(crops_router, prefix="/api/vegetation", tags=["crops"])
 app.include_router(subscriptions_router, prefix="/api/vegetation", tags=["subscriptions"])
 app.include_router(scenes_router)
 app.include_router(internal_router)
