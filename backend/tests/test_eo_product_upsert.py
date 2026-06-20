@@ -1,6 +1,7 @@
 """Tests for EOProduct entity creation/update in Orion-LD."""
 from unittest.mock import patch, MagicMock
 from datetime import datetime, timezone
+
 from app.services.fiware_integration import upsert_eo_product, _entity_id_for_eo_product, _make_headers
 
 
