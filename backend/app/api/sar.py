@@ -73,21 +73,26 @@ async def analyze_sar(
                     status_code=404,
                     detail=f"Parcel {entity_id} not found in context broker",
                 )
+            entity_data = resp.json()
     except httpx.RequestError as e:
         raise HTTPException(
             status_code=502,
             detail=f"Orion-LD unreachable: {e}",
         )
 
-    entity_data = resp.json()
-    loc = entity_data.get("location", {})
-    geom = loc.get("value") or loc
-    if not geom or "coordinates" not in geom:
-        raise HTTPException(
-            status_code=422,
-            detail="Parcel has no location geometry",
-        )
-    geom_obj = shp(geom)
+    try:
+        loc = entity_data.get("location", {})
+        geom = loc.get("value") or loc
+        if not geom or "coordinates" not in geom:
+            raise HTTPException(
+                status_code=422,
+                detail="Parcel has no location geometry",
+            )
+        geom_obj = shp(geom)
+    except (TypeError, ValueError, HTTPException) as e:
+        if isinstance(e, HTTPException):
+            raise e
+        raise HTTPException(422, detail=f"Parcel geometry parse error: {e}")
     bbox = list(geom_obj.bounds)
     # STAC API requires Polygon, not MultiPolygon
     if geom_obj.geom_type == "MultiPolygon":
