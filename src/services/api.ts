@@ -593,6 +593,53 @@ export class VegetationApiClient {
   }
 
   // ==========================================================================
+  // Historical Evolution (multi-year index trends)
+  // ==========================================================================
+
+  /**
+   * Build (or rebuild) historical index data for a parcel.
+   * POST /api/vegetation/parcels/{entity_id}/build-history
+   */
+  async buildHistory(entityId: string, params: {
+    years?: number;
+    index?: string;
+    window_days?: number;
+    cloud_threshold?: number;
+  }): Promise<{ job_id: string; message: string }> {
+    return this.client.post(`/parcels/${encodeURIComponent(entityId)}/build-history`, {
+      years: params.years ?? 5,
+      index: params.index ?? 'NDVI',
+      window_days: params.window_days ?? 20,
+      cloud_threshold: params.cloud_threshold ?? 30,
+    }) as any;
+  }
+
+  /**
+   * Get historical index data (multi-year) for a parcel.
+   * GET /api/vegetation/parcels/{entity_id}/history
+   */
+  async getParcelHistory(entityId: string, params: {
+    index?: string;
+    year?: number;
+    window_days?: number;
+  }): Promise<{
+    entity_id: string;
+    index: string;
+    data: Array<{
+      observedAt: string;
+      [key: string]: any;
+      windowSize: number;
+      year: number;
+    }>;
+  }> {
+    const q = new URLSearchParams();
+    if (params.index) q.set('index', params.index);
+    if (params.year) q.set('year', String(params.year));
+    if (params.window_days) q.set('window_days', String(params.window_days));
+    return this.client.get(`/parcels/${encodeURIComponent(entityId)}/history?${q.toString()}`) as any;
+  }
+
+  // ==========================================================================
   // Integration Endpoints (N8N, Intelligence Module, Platform)
   // ==========================================================================
 
