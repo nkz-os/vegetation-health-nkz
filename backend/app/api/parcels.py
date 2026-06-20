@@ -441,6 +441,7 @@ class SeasonAnalyzeRequest(BaseModel):
     indices: Optional[List[str]] = None
     custom_formulas: Optional[List[str]] = None
     local_cloud_threshold: Optional[float] = Field(None, ge=0, le=100)
+    include_sar: bool = False  # NEW: also search S1 scenes for SAR backscatter
 
 
 @router.post("/{entity_id}/seasons/{season_id}/analyze")
@@ -508,6 +509,7 @@ async def analyze_in_season(
         end_date=end_date_iso,
         local_cloud_threshold=request.local_cloud_threshold,
         crop_season_id=str(season.id),
+        include_sar=request.include_sar,
     )
 
 

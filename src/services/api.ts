@@ -118,6 +118,7 @@ export class VegetationApiClient {
       indices?: string[];
       custom_formulas?: string[];
       local_cloud_threshold?: number;
+      include_sar?: boolean;
     },
   ): Promise<{
     job_id: string | null;

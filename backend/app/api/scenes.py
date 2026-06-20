@@ -264,6 +264,7 @@ async def _dispatch_analyze_for_parcel(
     end_date: Optional[str],
     local_cloud_threshold: Optional[float],
     crop_season_id: Optional[str] = None,
+    include_sar: bool = False,
 ) -> Dict[str, Any]:
     """Shared analyze pipeline: resolve geometry, search scenes, group into
     dekadal windows, create one download job per window and dispatch the
@@ -427,6 +428,57 @@ async def _dispatch_analyze_for_parcel(
             status_code=503,
             detail="Job queue unavailable, please retry shortly.",
         ) from enqueue_error
+
+    # Trigger SAR analysis if requested
+    if include_sar:
+        try:
+            from app.tasks.sar_tasks import download_sentinel1_scene
+
+            try:
+                creds = get_copernicus_credentials_with_fallback()
+                copernicus = CopernicusDataSpaceClient()
+                if creds:
+                    copernicus.set_credentials(creds["client_id"], creds["client_secret"])
+
+                s1_scenes = copernicus.search_s1_scenes(
+                    intersects=intersects_geojson,
+                    start_date=_date_type.fromisoformat(start_date_iso),
+                    end_date=_date_type.fromisoformat(end_date_iso),
+                    limit=3,
+                )
+
+                for s1_scene in s1_scenes:
+                    s1_params = {
+                        "scene_id": s1_scene["id"],
+                        "bounds": intersects_geojson,
+                        "bbox": bbox,
+                        "sensing_date": s1_scene["sensing_date"],
+                        "entity_id": entity_id,
+                    }
+                    sar_job = VegetationJob(
+                        tenant_id=tenant_id,
+                        entity_id=entity_id,
+                        job_type="download_sar",
+                        status="pending",
+                        parameters=s1_params,
+                    )
+                    db.add(sar_job)
+                    db.commit()
+
+                    try:
+                        download_sentinel1_scene.delay(
+                            job_id=str(sar_job.id),
+                            tenant_id=tenant_id,
+                            parameters=s1_params,
+                        )
+                    except Exception as enq_exc:
+                        sar_job.status = "failed"
+                        sar_job.error_message = f"SAR enqueue failed: {enq_exc}"
+                        db.commit()
+            except Exception as e:
+                logger.warning("SAR trigger failed (non-fatal) for %s: %s", entity_id, e)
+        except Exception as e:
+            logger.warning("SAR setup failed (non-fatal) for %s: %s", entity_id, e)
 
     logger.info(
         "Multi-scene analysis: %d windows dispatched for entity %s (scenes: %d, indices: %s, season: %s)",
