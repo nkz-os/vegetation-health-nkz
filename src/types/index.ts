@@ -111,6 +111,7 @@ export interface IndexCalculationParams {
   end_date?: string;
   // VRA zoning
   source_index?: string;
+  sensing_date?: string;
   n_zones?: number;
 }
 

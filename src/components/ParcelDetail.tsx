@@ -566,6 +566,22 @@ const AdvancedSection: React.FC<AdvancedSectionProps> = ({ entityId, defaultInde
   const [vraSource, setVraSource] = useState<string>(defaultIndex || 'NDVI');
   const [vraBusy, setVraBusy] = useState(false);
   const [vraMsg, setVraMsg] = useState<{ type: 'ok' | 'error'; text: string } | null>(null);
+  const [availableDates, setAvailableDates] = useState<Array<{sensing_date: string; index_type: string}>>([]);
+  const [selectedVraDate, setSelectedVraDate] = useState<string>('latest');
+
+  // Load available raster dates when the section opens
+  useEffect(() => {
+    if (open && entityId) {
+      api.getAvailableRasterDates(entityId)
+        .then(r => {
+          const dates = r.dates.filter((d: any) => d.index_type === vraSource);
+          setAvailableDates(dates);
+          if (dates.length > 0) setSelectedVraDate(dates[0].sensing_date);
+          else setSelectedVraDate('latest');
+        })
+        .catch(() => setAvailableDates([]));
+    }
+  }, [open, entityId, vraSource, api]);
 
   const handleVra = async () => {
     setVraBusy(true);
@@ -575,6 +591,7 @@ const AdvancedSection: React.FC<AdvancedSectionProps> = ({ entityId, defaultInde
         entity_id: entityId,
         index_type: 'VRA_ZONES' as any,
         source_index: vraSource,
+        sensing_date: selectedVraDate === 'latest' ? undefined : selectedVraDate,
       });
       setVraMsg({
         type: 'ok',
@@ -777,7 +794,7 @@ const AdvancedSection: React.FC<AdvancedSectionProps> = ({ entityId, defaultInde
               )}
             </p>
             <div className="flex flex-wrap items-center gap-2">
-              <label className="text-xs text-slate-600">{t('parcelDetail.vraSourceLabel', 'Source index')}:</label>
+              <label className="text-xs text-slate-600">{t('parcelDetail.vraSourceLabel', 'Source')}:</label>
               <select
                 value={vraSource}
                 onChange={(e) => setVraSource(e.target.value)}
@@ -788,6 +805,22 @@ const AdvancedSection: React.FC<AdvancedSectionProps> = ({ entityId, defaultInde
                   <option key={idx} value={idx}>{idx}</option>
                 ))}
               </select>
+
+              <label className="text-xs text-slate-600">{t('parcelDetail.vraDateLabel', 'Date')}:</label>
+              <select
+                value={selectedVraDate}
+                onChange={(e) => setSelectedVraDate(e.target.value)}
+                disabled={vraBusy || availableDates.length === 0}
+                className="text-xs px-2 py-1 border border-slate-300 rounded-lg bg-white"
+              >
+                {availableDates.length === 0 && <option value="latest">{t('parcelDetail.vraLatestAvailable', 'Latest available')}</option>}
+                {availableDates.map(d => (
+                  <option key={`${d.sensing_date}-${d.index_type}`} value={d.sensing_date}>
+                    {d.sensing_date}
+                  </option>
+                ))}
+              </select>
+
               <button
                 onClick={handleVra}
                 disabled={vraBusy}

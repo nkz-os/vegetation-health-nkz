@@ -54,12 +54,14 @@ class CalculateRequest(BaseModel):
     formula_id: Optional[str] = None
     formula_name: Optional[str] = None
     source_index: Optional[str] = None
+    sensing_date: Optional[str] = None
     n_zones: int = 3
 
 
 class ZoningRequest(BaseModel):
     n_zones: int = 3
     source_index: str = 'NDVI'
+    sensing_date: Optional[str] = None
     delegate_to_intelligence: bool = False
     n8n_callback_url: Optional[str] = None
 
@@ -102,6 +104,8 @@ async def calculate_index_endpoint(
     if request.index_type == 'VRA_ZONES':
         parameters["source_index"] = request.source_index or 'NDVI'
         parameters["n_zones"] = request.n_zones
+        if request.sensing_date:
+            parameters["sensing_date"] = request.sensing_date
 
     job = VegetationJob(
         tenant_id=tenant_id,
@@ -729,6 +733,7 @@ async def trigger_zoning(
             "entity_id": parcel_id,
             "n_zones": request.n_zones,
             "source_index": request.source_index,
+            "sensing_date": request.sensing_date,
         },
         created_by=current_user.get("user_id"),
     )

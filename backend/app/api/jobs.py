@@ -2,6 +2,7 @@
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Depends, status
 from pydantic import BaseModel, Field
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from uuid import UUID
 from typing import List, Optional
@@ -133,6 +134,53 @@ async def get_zoning_geojson(
     if not job or not job.result or "geojson" not in job.result:
         raise HTTPException(status_code=404, detail="No zoning data available")
     return job.result["geojson"]
+
+
+@router.get("/parcels/{entity_id}/available-raster-dates")
+async def get_available_raster_dates(
+    entity_id: str,
+    current_user: dict = Depends(require_auth),
+    db: Session = Depends(get_db_with_tenant),
+):
+    """List sensing dates with computed index rasters for a parcel.
+
+    Returns dates grouped by index_type, ordered newest first.
+    Used by the VRA date selector in the frontend.
+    """
+    tenant_id = current_user["tenant_id"]
+
+    rows = (
+        db.query(
+            VegetationJob.result["sensing_date"].astext,
+            VegetationJob.result["index_type"].astext,
+            func.max(VegetationJob.completed_at),
+        )
+        .filter(
+            VegetationJob.tenant_id == tenant_id,
+            VegetationJob.entity_id == entity_id,
+            VegetationJob.job_type == "calculate_index",
+            VegetationJob.status == "completed",
+            VegetationJob.deleted_at.is_(None),
+            VegetationJob.result["raster_path"].astext.isnot(None),
+        )
+        .group_by(
+            VegetationJob.result["sensing_date"].astext,
+            VegetationJob.result["index_type"].astext,
+        )
+        .order_by(func.max(VegetationJob.completed_at).desc())
+        .all()
+    )
+
+    return {
+        "dates": [
+            {
+                "sensing_date": r[0],
+                "index_type": r[1],
+                "completed_at": r[2].isoformat() if r[2] else None,
+            }
+            for r in rows if r[0]
+        ]
+    }
 
 
 @router.get("/{job_id}/details")
