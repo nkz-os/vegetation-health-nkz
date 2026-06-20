@@ -109,6 +109,11 @@ async def analyze_sar(
             end_date=end,
             limit=request.max_scenes,
         )
+    except AttributeError as e:
+        raise HTTPException(
+            status_code=501,
+            detail=f"Sentinel-1 search not implemented in Copernicus client: {e}",
+        )
     except Exception as e:
         raise HTTPException(
             status_code=502,
