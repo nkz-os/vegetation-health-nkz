@@ -579,6 +579,20 @@ export class VegetationApiClient {
   }
 
   // ==========================================================================
+  // VRA / Raster Dates
+  // ==========================================================================
+
+  /**
+   * List sensing dates with computed index rasters for a parcel.
+   * Used by the VRA date selector in the frontend.
+   */
+  async getAvailableRasterDates(entityId: string): Promise<{
+    dates: Array<{ sensing_date: string; index_type: string; completed_at: string }>;
+  }> {
+    return this.client.get(`/jobs/parcels/${encodeURIComponent(entityId)}/available-raster-dates`) as any;
+  }
+
+  // ==========================================================================
   // Integration Endpoints (N8N, Intelligence Module, Platform)
   // ==========================================================================
 
