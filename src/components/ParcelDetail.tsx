@@ -36,7 +36,6 @@ import { useVegetationContext } from '../services/vegetationContext';
 import type { ParcelOverview, ParcelSeasonCard, ParcelJobCard } from '../types';
 
 const STANDARD_INDICES = ['NDVI', 'EVI', 'SAVI', 'GNDVI', 'NDRE'] as const;
-const COMMON_CROP_TYPES = ['wheat', 'barley', 'corn', 'sunflower', 'vineyard', 'olive', 'other'] as const;
 
 const fmtDate = (iso: string | null) => {
   if (!iso) return '—';
@@ -357,7 +356,6 @@ const NewSeasonForm: React.FC<NewSeasonFormProps> = ({ entityId, onCreated }) =>
   const { t } = useTranslation();
   const api = useVegetationApi();
   const [open, setOpen] = useState(false);
-  const [cropType, setCropType] = useState<string>('wheat');
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
   const [label, setLabel] = useState<string>('');
@@ -376,7 +374,6 @@ const NewSeasonForm: React.FC<NewSeasonFormProps> = ({ entityId, onCreated }) =>
   }, [open, entityId, api]);
 
   const reset = () => {
-    setCropType('wheat');
     setStartDate('');
     setEndDate('');
     setLabel('');
@@ -396,8 +393,7 @@ const NewSeasonForm: React.FC<NewSeasonFormProps> = ({ entityId, onCreated }) =>
     setBusy(true);
     setError(null);
     try {
-      await api.createCropSeason(entityId, {
-        crop_type: cropType,
+      await api.createMonitoringPeriod(entityId, {
         start_date: startDate,
         end_date: endDate || null,
         label: label.trim() || null,
@@ -445,28 +441,11 @@ const NewSeasonForm: React.FC<NewSeasonFormProps> = ({ entityId, onCreated }) =>
       <p className="text-[11px] text-slate-500">
         {t(
           'parcelDetail.newSeasonHint',
-          'Pick a crop and a date range. Two seasons cannot overlap on the same parcel — pick non-conflicting dates.',
+          'Pick a date range. Two seasons cannot overlap on the same parcel — pick non-conflicting dates.',
         )}
       </p>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-        <div>
-          <label className="block text-[11px] font-medium text-slate-600 mb-0.5">
-            {t('parcelDetail.cropTypeLabel', 'Crop')}
-          </label>
-          <select
-            value={cropType}
-            onChange={(e) => setCropType(e.target.value)}
-            disabled={busy}
-            className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg bg-white"
-          >
-            {COMMON_CROP_TYPES.map((c) => (
-              <option key={c} value={c}>
-                {t(`cropSeason.${c}`, c)}
-              </option>
-            ))}
-          </select>
-        </div>
         <div>
           <label className="block text-[11px] font-medium text-slate-600 mb-0.5">
             {t('parcelDetail.labelLabel', 'Label (optional)')}
@@ -475,7 +454,7 @@ const NewSeasonForm: React.FC<NewSeasonFormProps> = ({ entityId, onCreated }) =>
             type="text"
             value={label}
             onChange={(e) => setLabel(e.target.value)}
-            placeholder={t('parcelDetail.labelPlaceholder', 'e.g. Wheat 2025') as string}
+            placeholder={t('parcelDetail.labelPlaceholder', 'e.g. Spring 2025') as string}
             disabled={busy}
             className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg"
           />
@@ -1030,7 +1009,7 @@ const SeasonBlock: React.FC<SeasonBlockProps> = ({
         {open ? <ChevronDown className="w-4 h-4 text-slate-400" /> : <ChevronRight className="w-4 h-4 text-slate-400" />}
         <div className="flex-1 min-w-0">
           <h3 className="font-semibold text-slate-800 truncate">
-            {season.label || `${t(`cropSeason.${season.crop_type}`, season.crop_type)} ${season.start_date?.slice(0, 4) || ''}`}
+            {season.label || `Season ${season.start_date?.slice(0, 4) || ''}`}
           </h3>
           <p className="text-xs text-slate-500">
             {fmtDate(season.start_date)} → {season.end_date ? fmtDate(season.end_date) : t('parcelDetail.ongoing', 'ongoing')}
