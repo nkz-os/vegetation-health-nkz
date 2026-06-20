@@ -48,6 +48,8 @@ _STUBS = [
     "app.tasks.processing_tasks",
     "app.tasks.scheduler",
     "app.tasks.storage_cleanup",
+    "app.tasks.sar_tasks",
+    "app.tasks.historical_baseline",
     "app.celery_app",
 ]
 for _mod in _STUBS:
