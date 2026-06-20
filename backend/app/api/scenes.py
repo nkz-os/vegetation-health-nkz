@@ -199,6 +199,59 @@ def _resolve_custom_formula_specs(
     ]
 
 
+async def _get_crop_species_from_orion(tenant_id: str, entity_id: str) -> Optional[str]:
+    """Read the current crop assigned to a parcel from AgriParcel.hasAgriCrop.
+
+    Returns the crop species name (e.g., "Olea europaea") or None if no crop
+    is assigned or Orion-LD is unreachable. Never raises.
+    """
+    import httpx
+    import os
+
+    orion_url = os.getenv("FIWARE_CONTEXT_BROKER_URL", "http://orion-ld-service:1026")
+    headers = inject_fiware_headers(
+        {"Accept": "application/json"},
+        tenant=tenant_id,
+        has_context_in_body=False,
+    )
+
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            # Query parcel entity for hasAgriCrop relationship
+            resp = await client.get(
+                f"{orion_url}/ngsi-ld/v1/entities/{entity_id}?attrs=hasAgriCrop,refAgriCrop",
+                headers=headers,
+            )
+            if resp.status_code != 200:
+                return None
+
+            parcel = resp.json()
+            crop_rel = parcel.get("hasAgriCrop") or parcel.get("refAgriCrop")
+            if not crop_rel:
+                return None
+
+            crop_id = crop_rel.get("object") or crop_rel.get("value")
+            if not crop_id:
+                return None
+
+            # Read AgriCrop entity for species name
+            resp2 = await client.get(
+                f"{orion_url}/ngsi-ld/v1/entities/{crop_id}?attrs=cropSpecies,name",
+                headers=headers,
+            )
+            if resp2.status_code != 200:
+                return None
+
+            crop = resp2.json()
+            return (
+                (crop.get("cropSpecies") or {}).get("value")
+                or (crop.get("name") or {}).get("value")
+            )
+    except Exception:
+        logger.debug("Failed to read AgriCrop for %s", entity_id)
+        return None
+
+
 async def _dispatch_analyze_for_parcel(
     *,
     db: Session,
@@ -226,7 +279,21 @@ async def _dispatch_analyze_for_parcel(
     end_date_iso = end_date or date_type.today().isoformat()
     start_date_iso = start_date or (date_type.today() - timedelta(days=30)).isoformat()
 
-    indices_list = indices or ["NDVI", "EVI", "SAVI", "GNDVI", "NDRE"]
+    if not indices:
+        # Try to read crop from Orion-LD for smart index defaults
+        crop_species = await _get_crop_species_from_orion(tenant_id, entity_id)
+        if crop_species:
+            species_lower = crop_species.lower()
+            # Tree crops: use SAVI (minimizes soil background influence)
+            tree_keywords = {"olea", "vitis", "prunus", "citrus", "malus", "pyrus", "juglans", "amygdalus"}
+            if any(tree in species_lower for tree in tree_keywords):
+                indices_list = ["SAVI", "NDMI", "NDVI"]
+            else:
+                indices_list = ["NDVI", "NDRE", "GNDVI"]
+        else:
+            indices_list = ["NDVI", "EVI", "SAVI", "GNDVI", "NDRE"]
+    else:
+        indices_list = indices
 
     # Get parcel geometry from Orion-LD
     geometry = None
