@@ -34,6 +34,7 @@ import { useTranslation } from '@nekazari/sdk';
 import { useVegetationApi } from '../services/api';
 import { useVegetationContext } from '../services/vegetationContext';
 import type { ParcelOverview, ParcelSeasonCard, ParcelJobCard } from '../types';
+import { HistoricalChart } from './HistoricalChart';
 
 const STANDARD_INDICES = ['NDVI', 'EVI', 'SAVI', 'GNDVI', 'NDRE'] as const;
 
@@ -1578,6 +1579,15 @@ export const ParcelDetail: React.FC = () => {
           onAction={refetch}
         />
       </section>
+
+      {/* Historical evolution */}
+      <div className="mt-6">
+        <SectionHeader
+          title={t('parcelDetail.historicalTitle', 'Historical evolution')}
+          hint={t('parcelDetail.historicalHint', 'Multi-year index trends at parcel level (20-day windows)')}
+        />
+        {selectedEntityId && <HistoricalChart entityId={selectedEntityId} />}
+      </div>
 
       {/* Bulk delete action bar */}
       {bulkMode && selectedJobIds.size > 0 && (
