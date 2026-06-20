@@ -25,7 +25,7 @@ from app.api.timeseries_adapter import router as timeseries_adapter_router
 from app.api.scenes import router as scenes_router
 from app.api.sync import router as sync_router
 from app.api.custom_formulas import router as custom_formulas_router
-from app.api.crop_seasons import router as crop_seasons_router
+from app.api.monitoring_periods import router as crop_seasons_router  # replaced crop_seasons (legacy redirect)
 from app.api.export import router as export_router
 from app.api.parcels import router as parcels_router
 from app.api.sar import router as sar_router
