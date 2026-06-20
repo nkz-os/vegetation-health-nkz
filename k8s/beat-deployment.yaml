@@ -34,7 +34,7 @@ spec:
           effect: "NoSchedule"
       containers:
         - name: beat
-          image: ghcr.io/nkz-os/vegetation-health-nkz/vegetation-prime-api:7fad6091fd41d9d9616e4e6b857280508df90c20
+          image: ghcr.io/nkz-os/vegetation-health-nkz/vegetation-prime-api:ead61316a171af55a8b967189ed9bf0f16f74361
           imagePullPolicy: Always
           command: ["celery", "-A", "app.celery_app", "beat", "--loglevel=info"]
           env:
