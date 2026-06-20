@@ -495,21 +495,21 @@ export class VegetationApiClient {
    * Create a new crop season for a parcel (replaces v1 subscription wizard).
    * POST /api/vegetation/crop-seasons/{entity_id}
    */
-  async createCropSeason(
+  async createMonitoringPeriod(
     entityId: string,
     data: {
-      crop_type: string;
       start_date: string;
       end_date?: string | null;
       label?: string | null;
       monitoring_enabled?: boolean;
     }
-  ): Promise<{ id: string; message: string }> {
-    const response = await this.client.post(
-      `/crop-seasons/${encodeURIComponent(entityId)}`,
-      data
-    );
-    return response as unknown as { id: string; message: string };
+  ): Promise<{ season: any }> {
+    return this.client.post(`/monitoring-periods/${encodeURIComponent(entityId)}`, data) as any;
+  }
+
+  /** @deprecated Use createMonitoringPeriod instead. */
+  async createCropSeason(entityId: string, data: any): Promise<any> {
+    return this.createMonitoringPeriod(entityId, data);
   }
 
   /**
