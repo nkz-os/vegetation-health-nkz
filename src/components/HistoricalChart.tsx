@@ -1,5 +1,4 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { useTranslation } from '@nekazari/sdk';
 import { useVegetationApi } from '../services/api';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
@@ -18,7 +17,6 @@ interface ChartDataPoint {
 }
 
 export const HistoricalChart: React.FC<HistoricalChartProps> = ({ entityId }) => {
-  const { t } = useTranslation();
   const api = useVegetationApi();
   const [data, setData] = useState<ChartDataPoint[]>([]);
   const [loading, setLoading] = useState(true);
