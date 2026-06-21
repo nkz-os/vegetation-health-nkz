@@ -60,7 +60,7 @@ class VegetationJob(BaseModel, TenantMixin):
     created_by = Column(Text, nullable=True)
 
     # Group jobs under a crop season (mandatory for new analyses, NULL for legacy rows).
-    crop_season_id = Column(UUID(as_uuid=True), ForeignKey('vegetation_crop_seasons.id', ondelete='SET NULL'), nullable=True, index=True)
+    crop_season_id = Column(UUID(as_uuid=True), ForeignKey('vegetation_monitoring_periods.id', ondelete='SET NULL'), nullable=True, index=True)
 
     # Soft-delete bookkeeping (the canonical hard-delete cascade lives in the API).
     deleted_at = Column(DateTime(timezone=True), nullable=True)
@@ -68,7 +68,7 @@ class VegetationJob(BaseModel, TenantMixin):
 
     __table_args__ = (
         CheckConstraint(
-            "job_type IN ('download', 'process', 'calculate_index')",
+            "job_type IN ('download', 'process', 'calculate_index', 'download_sar')",
             name='vegetation_jobs_job_type_check'
         ),
         CheckConstraint(
