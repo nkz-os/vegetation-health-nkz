@@ -515,28 +515,28 @@ export class VegetationApiClient {
 
   /**
    * List existing crop seasons for a parcel.
-   * GET /api/vegetation/crop-seasons/{entity_id}
+   * GET /api/vegetation/monitoring-periods/{entity_id}
    */
   async listCropSeasons(entityId: string): Promise<CropSeason[]> {
-    const response = await this.client.get(`/crop-seasons/${encodeURIComponent(entityId)}`);
+    const response = await this.client.get(`/monitoring-periods/${encodeURIComponent(entityId)}`);
     return response as unknown as CropSeason[];
   }
 
   /**
    * Stop a crop season campaign. Sets monitoring_enabled=false and cancels pending jobs.
-   * POST /api/vegetation/crop-seasons/{entity_id}/{season_id}/stop
+   * POST /api/vegetation/monitoring-periods/{entity_id}/{season_id}/stop
    */
   async stopCropSeason(entityId: string, seasonId: string): Promise<{ status: string; season_id: string; cancelled_jobs: number }> {
-    const response = await this.client.post(`/crop-seasons/${encodeURIComponent(entityId)}/${encodeURIComponent(seasonId)}/stop`);
+    const response = await this.client.post(`/monitoring-periods/${encodeURIComponent(entityId)}/${encodeURIComponent(seasonId)}/stop`);
     return response as any;
   }
 
   /**
    * Delete a crop season campaign. Cascade deletes all associated jobs, EOProducts, and rasters.
-   * DELETE /api/vegetation/crop-seasons/{entity_id}/{season_id}?cascade=true
+   * DELETE /api/vegetation/monitoring-periods/{entity_id}/{season_id}?cascade=true
    */
   async deleteCropSeason(entityId: string, seasonId: string, cascade: boolean = true): Promise<{ deleted: boolean; id: string; cascade: boolean; deleted_jobs?: number; deleted_rasters?: number }> {
-    const response = await this.client.delete(`/crop-seasons/${encodeURIComponent(entityId)}/${encodeURIComponent(seasonId)}?cascade=${cascade}`);
+    const response = await this.client.delete(`/monitoring-periods/${encodeURIComponent(entityId)}/${encodeURIComponent(seasonId)}?cascade=${cascade}`);
     return response as any;
   }
 
