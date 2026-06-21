@@ -83,7 +83,7 @@ def _season_card(
 ) -> Dict[str, Any]:
     return {
         "id": str(season.id),
-        "crop_type": season.crop_type,
+        "crop_type": season.label or season.start_date.isoformat() if season.start_date else "unknown",
         "label": season.label,
         "start_date": season.start_date.isoformat() if season.start_date else None,
         "end_date": season.end_date.isoformat() if season.end_date else None,

@@ -37,6 +37,7 @@ import type { ParcelOverview, ParcelSeasonCard, ParcelJobCard } from '../types';
 import { HistoricalChart } from './HistoricalChart';
 
 const STANDARD_INDICES = ['NDVI', 'EVI', 'SAVI', 'GNDVI', 'NDRE'] as const;
+const ALL_PILLS = [...STANDARD_INDICES, 'SAR'] as const;
 
 const fmtDate = (iso: string | null) => {
   if (!iso) return '—';
@@ -202,7 +203,6 @@ const AnalyzeInSeasonForm: React.FC<AnalyzeFormProps> = ({ entityId, seasonId, o
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState<string[]>([...STANDARD_INDICES]);
   const [threshold, setThreshold] = useState<number>(30);
-  const [includeSar, setIncludeSar] = useState<boolean>(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const closeTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -223,10 +223,12 @@ const AnalyzeInSeasonForm: React.FC<AnalyzeFormProps> = ({ entityId, seasonId, o
     setError(null);
     setSuccess(null);
     try {
+      const opticalIndices = selected.filter((idx) => idx !== 'SAR');
+      const include_sar = selected.includes('SAR');
       const res = await api.analyzeInSeason(entityId, seasonId, {
-        indices: selected,
+        indices: opticalIndices,
         local_cloud_threshold: threshold,
-        include_sar: includeSar,
+        include_sar,
       });
       setSuccess(
         t('parcelDetail.analyzeSuccess', '{{n}} job(s) dispatched, {{s}} scenes found.', {
@@ -271,8 +273,9 @@ const AnalyzeInSeasonForm: React.FC<AnalyzeFormProps> = ({ entityId, seasonId, o
           {t('parcelDetail.analyzeIndices', 'Indices to compute')}
         </p>
         <div className="flex flex-wrap gap-1.5">
-          {STANDARD_INDICES.map((idx) => {
+          {ALL_PILLS.map((idx) => {
             const on = selected.includes(idx);
+            const isSar = idx === 'SAR';
             return (
               <button
                 key={idx}
@@ -280,11 +283,13 @@ const AnalyzeInSeasonForm: React.FC<AnalyzeFormProps> = ({ entityId, seasonId, o
                 disabled={busy}
                 className={`px-2.5 py-1 rounded-full text-xs font-semibold border transition-colors ${
                   on
-                    ? 'bg-emerald-600 text-white border-emerald-600'
-                    : 'bg-white text-slate-600 border-slate-300 hover:border-emerald-400'
+                    ? isSar
+                      ? 'bg-indigo-600 text-white border-indigo-600'
+                      : 'bg-emerald-600 text-white border-emerald-600'
+                    : 'bg-white text-slate-600 border-slate-300 hover:border-indigo-400'
                 }`}
               >
-                {idx}
+                {isSar ? '🛰️ SAR' : idx}
               </button>
             );
           })}
@@ -317,16 +322,6 @@ const AnalyzeInSeasonForm: React.FC<AnalyzeFormProps> = ({ entityId, seasonId, o
         </p>
       </div>
 
-      <label className="inline-flex items-center gap-2 text-xs text-slate-600 mt-2">
-        <input
-          type="checkbox"
-          checked={includeSar}
-          onChange={(e) => setIncludeSar(e.target.checked)}
-          disabled={busy}
-          className="accent-emerald-600"
-        />
-        {'🛰️'} {t('parcelDetail.includeSar', 'Include SAR radar (Sentinel-1)')}
-      </label>
 
       {error && (
         <p className="text-xs text-rose-600 bg-rose-50 border border-rose-200 rounded p-2">{error}</p>
@@ -611,35 +606,7 @@ const AdvancedSection: React.FC<AdvancedSectionProps> = ({ entityId, defaultInde
     }
   };
 
-  // ─── SAR Analysis ──────────────────────────────────────────────────────
-  const [sarBusy, setSarBusy] = useState(false);
-  const [sarMsg, setSarMsg] = useState<{ type: 'ok' | 'error'; text: string } | null>(null);
 
-  const handleSar = async () => {
-    setSarBusy(true);
-    setSarMsg(null);
-    try {
-      const res = await api.analyzeSar({
-        entity_id: entityId,
-        max_scenes: 5,
-      });
-      setSarMsg({
-        type: 'ok',
-        text: t('parcelDetail.sarDispatched', 'SAR analysis: {{n}} job(s) dispatched, {{s}} scene(s) found.', {
-          n: res.job_ids.length,
-          s: res.scenes_found,
-        }),
-      });
-      onAction();
-    } catch (err: any) {
-      setSarMsg({
-        type: 'error',
-        text: err?.response?.data?.detail || err?.message || String(err),
-      });
-    } finally {
-      setSarBusy(false);
-    }
-  };
 
   // ─── Custom formulas ───────────────────────────────────────────────────
   const [formulas, setFormulas] = useState<CustomFormula[]>([]);
@@ -844,36 +811,6 @@ const AdvancedSection: React.FC<AdvancedSectionProps> = ({ entityId, defaultInde
             )}
           </div>
 
-          {/* SAR (Sentinel-1) */}
-          <div>
-            <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1.5 flex items-center gap-1.5">
-              <span>🛰️</span>
-              {t('parcelDetail.sarTitle', 'SAR radar (Sentinel-1)')}
-            </h4>
-            <p className="text-[11px] text-slate-500 mb-2">
-              {t(
-                'parcelDetail.sarHint',
-                'Penetrates clouds and measures soil moisture and biomass. Useful under continuous cloud cover.',
-              )}
-            </p>
-            <button
-              onClick={handleSar}
-              disabled={sarBusy}
-              className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-indigo-600 text-white font-semibold hover:bg-indigo-700 disabled:opacity-50"
-            >
-              {sarBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <span>📡</span>}
-              {t('parcelDetail.sarAnalyze', 'Analyze with SAR')}
-            </button>
-            {sarMsg && (
-              <p className={`text-xs mt-2 px-2 py-1 rounded ${
-                sarMsg.type === 'ok'
-                  ? 'text-emerald-700 bg-emerald-50 border border-emerald-200'
-                  : 'text-rose-700 bg-rose-50 border border-rose-200'
-              }`}>
-                {sarMsg.text}
-              </p>
-            )}
-          </div>
 
           {/* Custom formulas */}
           <div>

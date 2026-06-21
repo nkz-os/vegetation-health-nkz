@@ -170,7 +170,7 @@ async def get_entity_data_status(
     active_crop_seasons = [
         {
             "id": str(s.id),
-            "crop_type": s.crop_type,
+            "crop_type": s.label or s.start_date.isoformat() if s.start_date else "unknown",
             "start_date": s.start_date.isoformat() if s.start_date else None,
             "end_date": s.end_date.isoformat() if s.end_date else None,
             "monitoring_enabled": s.monitoring_enabled,
