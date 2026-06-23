@@ -474,7 +474,12 @@ class FIWAREClient:
                 raise ValueError("Entity ID is required for update")
             url = f"{self.context_broker_url}/ngsi-ld/v1/entities/{entity_id}/attrs"
             attrs = {k: v for k, v in entity.items() if k not in ('id', 'type', '@context')}
-            response = self.session.patch(url, json=attrs, timeout=10)
+            # PATCH attrs must be application/json + Link header (not ld+json without @context)
+            # The session already has Link header from __init__
+            response = self.session.patch(
+                url, json=attrs, timeout=10,
+                headers={"Content-Type": "application/json"},
+            )
             if response.status_code in (204, 207):
                 logger.info("Updated entity %s", entity_id)
                 return True
