@@ -88,13 +88,15 @@ def _upsert_agri_parcel_record(
     parcel_short = entity_id.split(":")[-1] if ":" in entity_id else entity_id
     record_id = f"urn:ngsi-ld:AgriParcelRecord:{tenant_id}:{parcel_short}:{index.lower()}:{year}-{doy_start}"
 
+    # entity_id may be full URN or short ID
+    parcel_urn = entity_id if entity_id.startswith("urn:ngsi-ld:AgriParcel:") else f"urn:ngsi-ld:AgriParcel:{entity_id}"
     entity = {
         "id": record_id,
         "type": "AgriParcelRecord",
         "observedAt": {"type": "Property", "value": sensing_date},
         "hasAgriParcel": {
             "type": "Relationship",
-            "object": f"urn:ngsi-ld:AgriParcel:{entity_id}",
+            "object": parcel_urn,
         },
         f"{index.lower()}Mean": {"type": "Property", "value": round(mean_val, 4)},
         f"{index.lower()}Min": {"type": "Property", "value": round(min_val, 4)},
@@ -176,27 +178,30 @@ def _process_window(
         if not band_paths:
             return False
 
-        # Read first required band for zonal statistics
-        band_path = band_paths.get(required_bands[0])
-        if not band_path:
+        # Read red (B04) and NIR (B08) bands for NDVI computation
+        red_band = band_paths.get('B04')
+        nir_band = band_paths.get('B08')
+        if not red_band or not nir_band:
+            logger.warning("Missing B04 or B08 for NDVI computation")
             return False
 
         try:
-            with rasterio.open(band_path) as src:
+            with rasterio.open(red_band) as red_src, rasterio.open(nir_band) as nir_src:
                 parcel_shape = shape(intersects)
-                out_image, _ = rio_mask(
-                    src, [parcel_shape], crop=True, nodata=np.nan,
-                )
-                data = out_image[0]
-                valid = np.isfinite(data)
+                red_data, _ = rio_mask(red_src, [parcel_shape], crop=True, nodata=np.nan)
+                nir_data, _ = rio_mask(nir_src, [parcel_shape], crop=True, nodata=np.nan)
+                red = red_data[0].astype(np.float32)
+                nir = nir_data[0].astype(np.float32)
+                ndvi = np.where((nir + red) > 0, (nir - red) / (nir + red), np.nan)
+                valid = np.isfinite(ndvi)
 
                 if not np.any(valid):
                     return False
 
-                mean_val = float(np.nanmean(data))
-                min_val = float(np.nanmin(data))
-                max_val = float(np.nanmax(data))
-                std_val = float(np.nanstd(data))
+                mean_val = float(np.nanmean(ndvi))
+                min_val = float(np.nanmin(ndvi))
+                max_val = float(np.nanmax(ndvi))
+                std_val = float(np.nanstd(ndvi))
         except Exception as e:
             logger.warning("Raster processing failed for %s: %s", best["id"], e)
             return False
