@@ -6,9 +6,12 @@ from rio_tiler.colormap import cmap as colormap_handler
 from rasterio.warp import transform_bounds
 from sqlalchemy.orm import Session
 from uuid import UUID
+from typing import Optional
 from app.database import get_db_session
 from app.models import VegetationJob
+from app.middleware.auth import get_tenant_id
 from app.services.storage import generate_tenant_bucket_name
+from app.services.tile_auth import validate_tile_token
 import os
 import logging
 
@@ -146,11 +149,9 @@ async def get_tile_by_path(
     z: int, x: int, y: int,
     raster_path: str = Query(..., description="Raster path inside the COG bucket"),
     index: str = Query("NDVI"),
+    tenant_id: str = Depends(get_tenant_id),
 ):
-    """Render a tile directly from a raster_path (for scene-based browsing).
-
-    Public endpoint — raster paths are internal and not guessable.
-    """
+    """Render a tile directly from a raster_path (internal use, requires auth headers)."""
     bucket = _default_bucket
     s3_url = f"s3://{bucket}/{raster_path}"
 
@@ -167,13 +168,16 @@ async def get_tile_by_path(
 async def get_tile(
     job_id: str, z: int, x: int, y: int,
     index: str = "NDVI",
+    token: Optional[str] = Query(None, description="Tile access token"),
     db: Session = Depends(get_db_session),
 ):
-    """Render an XYZ tile from a COG stored in MinIO (S3 compatible).
+    """Render an XYZ tile from a COG stored in MinIO.
 
-    Auth is not required — the job UUID is unguessable and acts as
-    an implicit access token.
+    Requires a time-limited HMAC token obtained from the job response.
     """
+    if not token:
+        raise HTTPException(status_code=401, detail="Tile access token required")
+
     try:
         job = db.query(VegetationJob).filter(
             VegetationJob.id == UUID(job_id),
@@ -183,6 +187,9 @@ async def get_tile(
 
     if not job or not job.result:
         raise HTTPException(status_code=404, detail="Job not found or has no result")
+
+    if not validate_tile_token(token, job_id, job.tenant_id):
+        raise HTTPException(status_code=401, detail="Invalid or expired tile token")
 
     raster_path = job.result.get('raster_path')
     if not raster_path:
