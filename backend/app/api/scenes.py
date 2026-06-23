@@ -28,7 +28,7 @@ from app.middleware.auth import require_auth
 from app.models import VegetationScene, VegetationIndexCache, VegetationJob, VegetationCustomFormula
 from app.schemas import LatestResultsItem
 from app.tasks import calculate_vegetation_index, download_sentinel2_scene
-from nkz_platform_sdk import inject_fiware_headers
+from nkz_platform_sdk import OrionClient
 
 router = APIRouter(prefix="/api/vegetation", tags=["scenes"])
 logger = logging.getLogger(__name__)
@@ -209,22 +209,11 @@ async def _get_crop_species_from_orion(tenant_id: str, entity_id: str) -> Option
     Returns the crop species name (e.g., "Olea europaea") or None if no crop
     is assigned or Orion-LD is unreachable. Never raises.
     """
-    import httpx
-    import os
-
-    orion_url = os.getenv("FIWARE_CONTEXT_BROKER_URL", "http://orion-ld-service:1026")
-    headers = inject_fiware_headers(
-        {"Accept": "application/json"},
-        tenant=tenant_id,
-        has_context_in_body=False,
-    )
-
     try:
-        async with httpx.AsyncClient(timeout=5) as client:
+        async with OrionClient(tenant_id) as orion:
             # Query parcel entity for hasAgriCrop relationship
-            resp = await client.get(
-                f"{orion_url}/ngsi-ld/v1/entities/{entity_id}?attrs=hasAgriCrop,refAgriCrop",
-                headers=headers,
+            resp = await orion.get(
+                f"/ngsi-ld/v1/entities/{entity_id}?attrs=hasAgriCrop,refAgriCrop",
             )
             if resp.status_code != 200:
                 return None
@@ -239,9 +228,8 @@ async def _get_crop_species_from_orion(tenant_id: str, entity_id: str) -> Option
                 return None
 
             # Read AgriCrop entity for species name
-            resp2 = await client.get(
-                f"{orion_url}/ngsi-ld/v1/entities/{crop_id}?attrs=cropSpecies,name",
-                headers=headers,
+            resp2 = await orion.get(
+                f"/ngsi-ld/v1/entities/{crop_id}?attrs=cropSpecies,name",
             )
             if resp2.status_code != 200:
                 return None
@@ -277,7 +265,6 @@ async def _dispatch_analyze_for_parcel(
     Used by both the legacy POST /analyze and the new
     POST /parcels/{id}/seasons/{sid}/analyze.
     """
-    import os
     from datetime import timezone,  date as date_type, timedelta
 
     # Default date range: last 30 days when caller did not constrain it.
@@ -304,14 +291,8 @@ async def _dispatch_analyze_for_parcel(
     geometry = None
     bbox = None
     try:
-        import httpx
-
-        orion_url = os.getenv("FIWARE_CONTEXT_BROKER_URL", "http://orion-ld-service:1026")
-        headers = inject_fiware_headers({"Accept": "application/json"}, tenant=tenant_id, has_context_in_body=False)
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(
-                f"{orion_url}/ngsi-ld/v1/entities/{entity_id}", headers=headers
-            )
+        async with OrionClient(tenant_id) as orion:
+            resp = await orion.get(f"/ngsi-ld/v1/entities/{entity_id}")
             if resp.status_code == 200:
                 entity = resp.json()
                 loc = entity.get("location", {})

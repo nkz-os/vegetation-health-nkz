@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db_with_tenant
 from app.middleware.auth import require_auth
 from app.tasks.historical_baseline import build_historical_baseline
+from nkz_platform_sdk import SyncOrionClient
 
 logger = logging.getLogger(__name__)
 
@@ -60,18 +61,7 @@ async def get_history(
     db: Session = Depends(get_db_with_tenant),
 ):
     """Read historical AgriParcelRecord entries for a parcel from Orion-LD."""
-    import httpx
-    import os
-
     tenant_id = current_user["tenant_id"]
-    orion_url = os.getenv("FIWARE_CONTEXT_BROKER_URL", "http://orion-ld-service:1026")
-
-    from nkz_platform_sdk import inject_fiware_headers
-    headers = inject_fiware_headers(
-        {"Accept": "application/json"},
-        tenant=tenant_id,
-        has_context_in_body=False,
-    )
 
     # Build query
     attr = f"{index.lower()}Mean"
@@ -81,22 +71,18 @@ async def get_history(
         q += f';year=={year}'
 
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(
-                f"{orion_url}/ngsi-ld/v1/entities",
-                params={
-                    "type": "AgriParcelRecord",
-                    "q": q,
-                    "limit": 500,
-                    "attrs": f"observedAt,{attr},{index.lower()}Min,{index.lower()}Max,{index.lower()}Std,windowSize,year",
-                },
-                headers=headers,
-            )
-            if resp.status_code != 200:
-                raise HTTPException(502, detail=f"Orion-LD query failed: {resp.status_code}")
+        orion = SyncOrionClient(tenant_id)
+        resp = orion.get("/ngsi-ld/v1/entities", params={
+            "type": "AgriParcelRecord",
+            "q": q,
+            "limit": 500,
+            "attrs": f"observedAt,{attr},{index.lower()}Min,{index.lower()}Max,{index.lower()}Std,windowSize,year",
+        })
+        if resp.status_code != 200:
+            raise HTTPException(502, detail=f"Orion-LD query failed: {resp.status_code}")
 
-            records = resp.json()
-    except httpx.RequestError as e:
+        records = resp.json()
+    except Exception as e:
         raise HTTPException(502, detail=f"Orion-LD unreachable: {e}")
 
     return {
