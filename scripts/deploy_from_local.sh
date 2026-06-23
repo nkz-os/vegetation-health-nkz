@@ -2,7 +2,7 @@
 set -e
 
 # Configuration
-REMOTE_HOST="g@109.123.252.120"
+REMOTE_HOST="${REMOTE_HOST:-g@YOUR_SERVER_IP}"
 REMOTE_DIR="~/vegetation-deploy"
 IMAGE_NAME="vegetation-prime-api"
 TAG="v1.44"
