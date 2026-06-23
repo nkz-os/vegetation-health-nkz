@@ -10,9 +10,18 @@ interface AuthInjectionMessage {
  * Stores the Bearer token so the API client can use it as fallback when
  * the httpOnly cookie is unavailable (WebView context).
  */
+const ALLOWED_ORIGINS = [
+  'https://nekazari.robotika.cloud',
+  'https://nkz.robotika.cloud',
+  window.location.origin,
+];
+
 export function useMobileAuth() {
   useEffect(() => {
     const handler = (event: MessageEvent) => {
+      if (!ALLOWED_ORIGINS.includes(event.origin)) {
+        return;  // Ignore messages from untrusted origins
+      }
       if (typeof event.data === 'string') {
         try {
           const msg: AuthInjectionMessage = JSON.parse(event.data);
