@@ -24,9 +24,9 @@ const VegetationLayerToggle: React.FC = () => {
   const hasAnyDataInTenant = entityDataStatus?.has_any_data;
 
   const disabledReason = (() => {
-    if (layerScope === 'selected' && !selectedEntityId) return t('layerToggle.needsSelection', 'Selecciona una parcela o cambia a Todas');
-    if (layerScope === 'selected' && !hasSelectedData) return t('layerToggle.noData', 'Sin datos');
-    if (layerScope === 'all' && !hasAnyDataInTenant) return t('layerToggle.noTenantData', 'Aún sin datos en el tenant');
+    if (layerScope === 'selected' && !selectedEntityId) return t('layerToggle.needsSelection', 'Select a parcel or switch to All');
+    if (layerScope === 'selected' && !hasSelectedData) return t('layerToggle.noData', 'No data available');
+    if (layerScope === 'all' && !hasAnyDataInTenant) return t('layerToggle.noTenantData', 'No data in tenant yet');
     return undefined;
   })();
 
@@ -41,10 +41,10 @@ const VegetationLayerToggle: React.FC = () => {
       scope={layerScope}
       onScopeChange={setLayerScope}
       disabledReason={disabledReason}
-      scopeLabel={t('layerToggle.scope', 'Ámbito')}
-      selectedLabel={t('layerToggle.selected', 'Seleccionada')}
-      allLabel={t('layerToggle.all', 'Todas')}
-      opacityLabel={t('layerToggle.opacity', 'Opacidad')}
+      scopeLabel={t('layerToggle.scope', 'Scope')}
+      selectedLabel={t('layerToggle.selected', 'Selected')}
+      allLabel={t('layerToggle.all', 'All')}
+      opacityLabel={t('layerToggle.opacity', 'Opacity')}
       mode={
         <div className="flex flex-wrap gap-nkz-tight">
           {AVAILABLE_INDICES.map(idx => (
