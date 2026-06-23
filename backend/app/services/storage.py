@@ -2,6 +2,7 @@
 Storage service abstraction for S3/MinIO/Local storage.
 """
 
+import hashlib
 import os
 import re
 from abc import ABC, abstractmethod
@@ -55,7 +56,7 @@ def generate_tenant_bucket_name(tenant_id: str) -> str:
     # Ensure length constraints (S3 bucket names: 3-63 chars)
     if len(bucket_name) > 63:
         # Truncate and add hash suffix
-        hash_suffix = str(abs(hash(tenant_id)))[:8]
+        hash_suffix = hashlib.sha256(tenant_id.encode()).hexdigest()[:8]
         bucket_name = f"veg-{sanitized[:50]}-{hash_suffix}"
     
     # Ensure minimum length
