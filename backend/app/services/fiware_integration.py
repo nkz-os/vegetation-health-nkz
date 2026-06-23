@@ -31,6 +31,20 @@ INDEX_ATTRS = {
 }
 
 
+def _make_headers(tenant_id: str) -> Dict[str, str]:
+    """Legacy compatibility wrapper — delegates to SyncOrionClient header injection.
+    
+    Deprecated: new code should use SyncOrionClient directly.
+    """
+    from nkz_platform_sdk import SyncOrionClient
+    orion = SyncOrionClient(tenant_id)
+    return {
+        "Content-Type": "application/json",
+        "NGSILD-Tenant": tenant_id,
+        "Fiware-Service": tenant_id,
+    }
+
+
 def _entity_id_for_parcel(tenant_id: str, parcel_id: str) -> str:
     """Generate deterministic VegetationIndex entity ID for a parcel.
 

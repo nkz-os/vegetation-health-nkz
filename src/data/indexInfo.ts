@@ -132,3 +132,11 @@ export const INDEX_INFO: Record<string, IndexInfo> = {
         color: '#84cc16'
     },
 };
+
+export const getIndexInfo = (indexType: string): IndexInfo | undefined => {
+    return INDEX_INFO[indexType.toUpperCase()];
+};
+
+export const getAllIndices = (): IndexInfo[] => {
+    return Object.values(INDEX_INFO);
+};
