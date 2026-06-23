@@ -2,7 +2,7 @@
 Vegetation job model.
 """
 
-from datetime import date, datetime
+from datetime import timezone,  date, datetime
 from typing import Optional, Dict, Any
 from decimal import Decimal
 
@@ -94,12 +94,12 @@ class VegetationJob(BaseModel, TenantMixin):
     def mark_started(self) -> None:
         """Mark job as started."""
         self.status = 'running'
-        self.started_at = datetime.utcnow()
+        self.started_at = datetime.now(timezone.utc)
     
     def mark_completed(self, result: Optional[Dict[str, Any]] = None) -> None:
         """Mark job as completed."""
         self.status = 'completed'
-        self.completed_at = datetime.utcnow()
+        self.completed_at = datetime.now(timezone.utc)
         self.progress_percentage = 100
         if result:
             self.result = result
@@ -107,7 +107,7 @@ class VegetationJob(BaseModel, TenantMixin):
     def mark_failed(self, error_message: str, error_traceback: Optional[str] = None) -> None:
         """Mark job as failed."""
         self.status = 'failed'
-        self.completed_at = datetime.utcnow()
+        self.completed_at = datetime.now(timezone.utc)
         self.error_message = error_message
         if error_traceback:
             self.error_traceback = error_traceback

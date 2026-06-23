@@ -7,7 +7,7 @@ Routes: /api/vegetation/scenes, /api/vegetation/scenes/{entity_id}/stats,
 from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc, or_, and_
-from datetime import date, datetime, timedelta
+from datetime import timezone,  date, datetime, timedelta
 from typing import Optional, Dict, Any, List
 from pydantic import BaseModel, Field
 import logging
@@ -278,7 +278,7 @@ async def _dispatch_analyze_for_parcel(
     POST /parcels/{id}/seasons/{sid}/analyze.
     """
     import os
-    from datetime import date as date_type, timedelta
+    from datetime import timezone,  date as date_type, timedelta
 
     # Default date range: last 30 days when caller did not constrain it.
     end_date_iso = end_date or date_type.today().isoformat()
@@ -347,7 +347,7 @@ async def _dispatch_analyze_for_parcel(
         largest = max(geom_obj.geoms, key=lambda g: g.area)
         intersects_geojson = largest.__geo_interface__
 
-    from datetime import date as _date_type
+    from datetime import timezone,  date as _date_type
     all_scenes = copernicus.search_scenes(
         intersects=intersects_geojson,
         start_date=_date_type.fromisoformat(start_date_iso),
@@ -839,7 +839,7 @@ async def get_scene_stats(
 ):
     """Aggregated stats for an entity's vegetation index over time."""
     tenant_id = current_user["tenant_id"]
-    since = datetime.utcnow() - timedelta(days=months * 30)
+    since = datetime.now(timezone.utc) - timedelta(days=months * 30)
 
     rows = (
         db.query(VegetationScene.sensing_date, VegetationIndexCache)
@@ -973,10 +973,10 @@ async def get_current_usage(
 ):
     """Return current usage stats for the tenant."""
     from app.models import VegetationJob
-    from datetime import datetime
+    from datetime import timezone,  datetime
 
     tenant_id = current_user["tenant_id"]
-    today = datetime.utcnow().date()
+    today = datetime.now(timezone.utc).date()
 
     jobs_today = (
         db.query(func.count(VegetationJob.id))

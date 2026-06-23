@@ -4,7 +4,7 @@ Usage tracking service for calculating and storing usage metrics.
 
 import logging
 from typing import Dict, Any, Optional
-from datetime import datetime, date
+from datetime import timezone,  datetime, date
 from decimal import Decimal
 import math
 
@@ -114,7 +114,7 @@ class UsageTracker:
             if ha_processed is None:
                 ha_processed = UsageTracker.calculate_area_hectares(bounds)
             
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             current_year = now.year
             current_month = now.month
             
@@ -182,7 +182,7 @@ class UsageTracker:
         Returns:
             Dictionary with usage metrics
         """
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         current_year = now.year
         current_month = now.month
         
@@ -230,7 +230,7 @@ class UsageTracker:
             status: New job status
         """
         try:
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             current_year = now.year
             current_month = now.month
             

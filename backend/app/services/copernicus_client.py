@@ -6,7 +6,7 @@ SOTA Implementation: Uses STAC for discovery and S3 (boto3) for high-performance
 import logging
 import os
 from typing import List, Dict, Any, Optional
-from datetime import date, datetime, timedelta
+from datetime import timezone,  date, datetime, timedelta
 from pathlib import Path
 import requests
 from requests.auth import HTTPBasicAuth
@@ -53,7 +53,7 @@ class CopernicusDataSpaceClient:
             raise ValueError("Copernicus credentials not set.")
         
         if self.access_token and self.token_expires_at:
-            if datetime.utcnow() < (self.token_expires_at - timedelta(minutes=5)):
+            if datetime.now(timezone.utc) < (self.token_expires_at - timedelta(minutes=5)):
                 return self.access_token
         
         try:
@@ -67,7 +67,7 @@ class CopernicusDataSpaceClient:
             token_data = response.json()
             self.access_token = token_data['access_token']
             expires_in = token_data.get('expires_in', 3600)
-            self.token_expires_at = datetime.utcnow() + timedelta(seconds=expires_in)
+            self.token_expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
             return self.access_token
         except requests.RequestException as e:
             logger.error(f"Failed to obtain access token: {str(e)}")

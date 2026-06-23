@@ -14,7 +14,7 @@ import logging
 import os
 import re
 from typing import Dict, List, Any, Optional, Tuple
-from datetime import datetime, date, timedelta
+from datetime import timezone,  datetime, date, timedelta
 from dataclasses import dataclass, field
 import httpx
 from nkz_platform_sdk import inject_fiware_headers
@@ -301,8 +301,8 @@ class WeatherService:
                     sensor_data.append(SoilSensorData(
                         sensor_id=entity.get("id", "unknown"),
                         timestamp=datetime.fromisoformat(
-                            entity.get("soilMoisture", {}).get("observedAt", datetime.utcnow().isoformat()).replace("Z", "+00:00")
-                        ) if "soilMoisture" in entity else datetime.utcnow(),
+                            entity.get("soilMoisture", {}).get("observedAt", datetime.now(timezone.utc).isoformat()).replace("Z", "+00:00")
+                        ) if "soilMoisture" in entity else datetime.now(timezone.utc),
                         soil_moisture=entity.get("soilMoisture", {}).get("value"),
                         soil_temperature=entity.get("soilTemperature", {}).get("value"),
                         soil_ec=entity.get("soilEC", {}).get("value"),

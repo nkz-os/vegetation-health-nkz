@@ -616,13 +616,14 @@ async def check_parcel_size(
         try:
             from shapely.geometry import shape
             from pyproj import Transformer
+            from shapely.ops import transform as shapely_transform
             geom = shape({"type": location.get("type", "Polygon"), "coordinates": coords})
             if not geom.is_empty:
                 centroid = geom.centroid
                 utm_zone = int((centroid.x + 180) / 6) + 1
                 epsg = 32600 + utm_zone if centroid.y >= 0 else 32700 + utm_zone
                 transformer = Transformer.from_crs("EPSG:4326", f"EPSG:{epsg}", always_xy=True)
-                geom_utm = transformer.transform(geom)
+                geom_utm = shapely_transform(transformer.transform, geom)
                 area_ha = geom_utm.area / 10000
         except Exception as e:
             logger.warning("Failed to compute parcel area: %s", e)

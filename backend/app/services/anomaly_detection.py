@@ -7,7 +7,7 @@ via webhooks (N8N compatible) or internal notifications.
 
 import logging
 from typing import Dict, List, Any, Optional, Tuple
-from datetime import datetime, timedelta
+from datetime import timezone,  datetime, timedelta
 from dataclasses import dataclass
 from enum import Enum
 import numpy as np
@@ -287,7 +287,7 @@ class AnomalyDetector:
         Returns:
             List of detected anomalies (may be empty)
         """
-        timestamp = timestamp or datetime.utcnow()
+        timestamp = timestamp or datetime.now(timezone.utc)
         anomalies = []
 
         # Threshold-based detection
@@ -343,7 +343,7 @@ class AlertService:
         """
         payload = {
             "event": "vegetation_anomaly",
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "anomaly": anomaly.to_dict(),
             "platform": "nekazari",
             "module": "vegetation-prime",

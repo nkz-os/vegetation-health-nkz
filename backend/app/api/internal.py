@@ -15,6 +15,7 @@ Contract (ADAPTER_SPEC.md):
     - Multiple series → "value_0", "value_1", ...
 """
 
+import hmac
 import io
 import logging
 import os
@@ -223,7 +224,7 @@ async def setup_parcel(request: Request, body: SetupParcelRequest):
     the VegetationIndex subscription for the tenant.
     """
     secret = request.headers.get("X-Internal-Service-Secret", "")
-    if not INTERNAL_SECRET or secret != INTERNAL_SECRET:
+    if not INTERNAL_SECRET or not hmac.compare_digest(secret, INTERNAL_SECRET):
         logger.warning("Unauthorized internal setup-parcel call from %s", request.client)
         raise HTTPException(status_code=401, detail="Unauthorized")
     if body.action not in ("activate", "deactivate"):
