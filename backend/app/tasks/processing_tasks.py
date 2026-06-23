@@ -141,7 +141,8 @@ def _persist_results(
         logger.warning("No entity_id on job %s — cannot upsert VegetationIndex", job.id)
         return
 
-    raster_url = f"s3://{os.getenv('VEGETATION_COG_BUCKET', 'vegetation-prime')}/{remote_raster_path}"
+    bucket_used = os.getenv("VEGETATION_COG_BUCKET") or generate_tenant_bucket_name(tenant_id)
+    raster_url = f"s3://{bucket_used}/{remote_raster_path}"
     result = upsert_vegetation_index_entity(
         tenant_id=tenant_id,
         parcel_id=job.entity_id,
