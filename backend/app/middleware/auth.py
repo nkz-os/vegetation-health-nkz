@@ -1,158 +1,54 @@
 """
-Authentication middleware for FastAPI.
+Authentication middleware — delegates to api-gateway headers.
+Does NOT validate JWTs locally (platform convention).
 """
-
 import logging
-from typing import Optional
 from fastapi import Request, HTTPException, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-import jwt
-from jwt import PyJWKClient
-import os
 
 logger = logging.getLogger(__name__)
 
-JWT_ALGORITHM = os.getenv('JWT_ALGORITHM', 'RS256')
-JWT_ISSUER = os.getenv('JWT_ISSUER', '')
-JWKS_URL = os.getenv('JWKS_URL', f'{JWT_ISSUER}/protocol/openid-connect/certs' if JWT_ISSUER else '')
 
-# Cache for JWKS
-_jwks_client: Optional[PyJWKClient] = None
-
-
-def get_jwks_client() -> PyJWKClient:
-    """Get or create JWKS client."""
-    global _jwks_client
-    if _jwks_client is None:
-        _jwks_client = PyJWKClient(JWKS_URL)
-    return _jwks_client
-
-
-async def verify_token(token: str) -> dict:
-    """Verify JWT token and return payload.
+async def require_auth(request: Request) -> dict:
+    """FastAPI dependency: extract user from gateway-injected headers.
     
-    Args:
-        token: JWT token string
-        
-    Returns:
-        Decoded token payload
-        
-    Raises:
-        HTTPException if token is invalid
+    The api-gateway validates the JWT and injects X-Tenant-ID, X-User-ID, 
+    X-User-Roles. This module trusts those headers.
     """
-    try:
-        # First, decode without verification to check issuer
-        unverified = jwt.decode(token, options={"verify_signature": False})
-        token_issuer = unverified.get('iss')
-        logger.debug("Token issuer check: %s", token_issuer)
-        
-        # Strict issuer validation - fail closed for security (exact whitelist, no suffix matching)
-        if token_issuer != JWT_ISSUER:
-            logger.warning(f"Issuer mismatch: token has '{token_issuer}', expected '{JWT_ISSUER}'. Rejecting token.")
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail=f"Invalid token issuer"
-            )
-
-        # Get signing key from JWKS
-        jwks_client = get_jwks_client()
-        signing_key = jwks_client.get_signing_key_from_jwt(token)
-
-        # Decode and verify token with strict issuer validation
-        payload = jwt.decode(
-            token,
-            signing_key.key,
-            algorithms=[JWT_ALGORITHM],
-            issuer=JWT_ISSUER,
-            options={"verify_exp": True, "verify_iss": True}
-        )
-        
-        return payload
-        
-    except jwt.ExpiredSignatureError:
-        logger.warning("Token has expired")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token has expired"
-        )
-    except jwt.InvalidTokenError as e:
-        logger.warning(f"Invalid token: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Invalid token: {str(e)}"
-        )
-    except Exception as e:
-        logger.error(f"Error verifying token: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Token verification failed: {str(e)}"
-        )
-
-
-def get_tenant_id(request: Request) -> str:
-    """Extract tenant ID from request headers.
+    tenant_id = request.headers.get("X-Tenant-ID")
+    user_id = request.headers.get("X-User-ID")
+    roles_header = request.headers.get("X-User-Roles", "")
     
-    Args:
-        request: FastAPI request object
-        
-    Returns:
-        Tenant ID
-        
-    Raises:
-        HTTPException if tenant ID is missing
-    """
-    tenant_id = request.headers.get('X-Tenant-ID')
     if not tenant_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="X-Tenant-ID header is required"
+            detail="X-Tenant-ID header is required",
         )
-    return tenant_id
-
-
-def get_request_token(request: Request) -> Optional[str]:
-    """Extract JWT token from Authorization header or httpOnly cookie (fallback)."""
-    auth_header = request.headers.get('Authorization')
-    if auth_header and auth_header.startswith('Bearer '):
-        return auth_header.split(' ')[1]
-    return request.cookies.get('nkz_token')
-
-
-async def get_current_user(request: Request) -> dict:
-    """Get current user from request.
-
-    Args:
-        request: FastAPI request object
-
-    Returns:
-        User information from token
-
-    Raises:
-        HTTPException if authentication fails
-    """
-    # Get token from Authorization header or httpOnly cookie
-    token = get_request_token(request)
-    if not token:
+    if not user_id:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authorization header missing or invalid",
-            headers={"WWW-Authenticate": "Bearer"},
+            detail="X-User-ID header is required",
         )
     
-    # Verify token
-    payload = await verify_token(token)
+    roles = [r.strip() for r in roles_header.split(",") if r.strip()]
     
     return {
-        'user_id': payload.get('sub'),
-        'email': payload.get('email'),
-        'username': payload.get('preferred_username'),
-        'roles': payload.get('realm_access', {}).get('roles', []),
-        'tenant_id': get_tenant_id(request)
+        "user_id": user_id,
+        "tenant_id": tenant_id,
+        "roles": roles,
     }
 
 
-# Dependency for FastAPI
-async def require_auth(request: Request) -> dict:
-    """FastAPI dependency for authentication."""
-    return await get_current_user(request)
+async def get_current_user(request: Request) -> dict:
+    """Alias for require_auth — used as FastAPI dependency."""
+    return await require_auth(request)
 
+
+def get_tenant_id(request: Request) -> str:
+    """Extract tenant ID from request header."""
+    tenant_id = request.headers.get("X-Tenant-ID")
+    if not tenant_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="X-Tenant-ID header is required",
+        )
+    return tenant_id
