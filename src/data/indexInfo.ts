@@ -1,5 +1,6 @@
 /**
  * Information about vegetation indices for educational display
+ * All descriptions in English (i18n keys will be added in a future pass)
  */
 
 export interface IndexInfo {
@@ -25,225 +26,109 @@ export const INDEX_INFO: Record<string, IndexInfo> = {
     NDVI: {
         id: 'NDVI',
         name: 'NDVI',
-        fullName: 'Índice de Vegetación de Diferencia Normalizada',
-        description: 'El índice más utilizado para medir el verdor y vigor de la vegetación. Detecta la clorofila activa en las plantas.',
+        fullName: 'Normalized Difference Vegetation Index',
+        description: 'The most widely used vegetation index for measuring greenness and vigor. Detects active chlorophyll in plants.',
         formula: '(NIR - RED) / (NIR + RED)',
         range: [-1, 1],
         interpretation: {
-            veryLow: { range: '< 0', meaning: 'Agua, nubes o nieve' },
-            low: { range: '0 - 0.2', meaning: 'Suelo desnudo, roca o zonas urbanizadas' },
-            medium: { range: '0.2 - 0.4', meaning: 'Vegetación escasa o estresada' },
-            high: { range: '0.4 - 0.6', meaning: 'Vegetación moderada, cultivos en crecimiento' },
-            veryHigh: { range: '> 0.6', meaning: 'Vegetación densa y saludable' }
+            veryLow: { range: '< 0', meaning: 'Water, clouds or snow' },
+            low: { range: '0 - 0.2', meaning: 'Bare soil, rock, or urban areas' },
+            medium: { range: '0.2 - 0.4', meaning: 'Sparse or stressed vegetation' },
+            high: { range: '0.4 - 0.6', meaning: 'Moderate vegetation, growing crops' },
+            veryHigh: { range: '> 0.6', meaning: 'Dense, healthy vegetation' }
         },
-        bestFor: ['Cultivos extensivos (cereales, maíz)', 'Monitoreo general de salud', 'Pastos y praderas', 'Detección de estrés'],
-        limitations: 'Puede saturarse en vegetación muy densa (bosques). Sensible a efectos atmosféricos.',
+        bestFor: ['Extensive crops (cereals, corn)', 'General health monitoring', 'Pastures and grasslands', 'Stress detection'],
+        limitations: 'Can saturate in very dense vegetation (forests). Sensitive to atmospheric effects.',
         color: '#22c55e'
     },
     EVI: {
         id: 'EVI',
         name: 'EVI',
-        fullName: 'Índice de Vegetación Mejorado',
-        description: 'Versión mejorada del NDVI que corrige distorsiones atmosféricas y reduce la saturación en zonas de alta biomasa.',
+        fullName: 'Enhanced Vegetation Index',
+        description: 'Improved version of NDVI that corrects atmospheric distortions and reduces saturation in high biomass areas.',
         formula: '2.5 × (NIR - RED) / (NIR + 6×RED - 7.5×BLUE + 1)',
         range: [-1, 1],
         interpretation: {
-            veryLow: { range: '< 0', meaning: 'Sin vegetación' },
-            low: { range: '0 - 0.2', meaning: 'Vegetación muy escasa' },
-            medium: { range: '0.2 - 0.4', meaning: 'Vegetación moderada' },
-            high: { range: '0.4 - 0.6', meaning: 'Vegetación densa' },
-            veryHigh: { range: '> 0.6', meaning: 'Vegetación muy densa (bosques)' }
+            veryLow: { range: '< 0', meaning: 'No vegetation' },
+            low: { range: '0 - 0.2', meaning: 'Very sparse vegetation' },
+            medium: { range: '0.2 - 0.4', meaning: 'Moderate vegetation' },
+            high: { range: '0.4 - 0.6', meaning: 'Dense vegetation' },
+            veryHigh: { range: '> 0.6', meaning: 'Very dense vegetation (forests)' }
         },
-        bestFor: ['Bosques densos', 'Zonas tropicales', 'Alta biomasa', 'Estudios forestales'],
-        limitations: 'Requiere banda azul (B02). Más complejo de calcular.',
+        bestFor: ['Dense forests', 'Tropical zones', 'High biomass areas', 'Forestry studies'],
+        limitations: 'Requires blue band (B02). More complex to compute.',
         color: '#16a34a'
     },
     NDWI: {
         id: 'NDWI',
         name: 'NDWI',
-        fullName: 'Índice de Agua de Diferencia Normalizada',
-        description: 'Detecta el contenido de agua en la vegetación usando bandas NIR y SWIR. Esencial para gestión de riego.',
+        fullName: 'Normalized Difference Water Index',
+        description: 'Detects water content in vegetation using NIR and SWIR bands. Essential for irrigation management.',
         formula: '(NIR - SWIR1) / (NIR + SWIR1)',
         range: [-1, 1],
         interpretation: {
-            veryLow: { range: '< -0.3', meaning: 'Vegetación con déficit hídrico severo' },
-            low: { range: '-0.3 - 0', meaning: 'Vegetación con estrés hídrico' },
-            medium: { range: '0 - 0.2', meaning: 'Contenido de agua normal' },
-            high: { range: '0.2 - 0.4', meaning: 'Alto contenido de agua' },
-            veryHigh: { range: '> 0.4', meaning: 'Vegetación muy hidratada o agua' }
+            veryLow: { range: '< -0.3', meaning: 'Severe water deficit' },
+            low: { range: '-0.3 - 0', meaning: 'Water-stressed vegetation' },
+            medium: { range: '0 - 0.2', meaning: 'Normal water content' },
+            high: { range: '0.2 - 0.4', meaning: 'High water content' },
+            veryHigh: { range: '> 0.4', meaning: 'Very hydrated vegetation or water' }
         },
-        bestFor: ['Detección de estrés hídrico', 'Gestión de riego', 'Monitoreo de sequía', 'Planificación de riego'],
-        limitations: 'Requiere banda SWIR (20m resolución). Sensible a suelo húmedo.',
+        bestFor: ['Water stress detection', 'Irrigation management', 'Drought monitoring', 'Irrigation planning'],
+        limitations: 'Requires SWIR band (20m resolution). Sensitive to moist soil.',
         color: '#3b82f6'
     },
     NDMI: {
         id: 'NDMI',
         name: 'NDMI',
-        fullName: 'Índice de Humedad de Diferencia Normalizada',
-        description: 'Mide el contenido de humedad en la vegetación. Más sensible al estrés hídrico que NDVI. Excelente para detectar problemas de riego.',
+        fullName: 'Normalized Difference Moisture Index',
+        description: 'Measures moisture content in vegetation. More sensitive to water stress than NDVI. Excellent for detecting irrigation issues.',
         formula: '(NIR - SWIR1) / (NIR + SWIR1)',
         range: [-1, 1],
         interpretation: {
-            veryLow: { range: '< -0.2', meaning: 'Estrés hídrico severo - riego urgente' },
-            low: { range: '-0.2 - 0', meaning: 'Estrés hídrico moderado' },
-            medium: { range: '0 - 0.2', meaning: 'Humedad adecuada' },
-            high: { range: '0.2 - 0.4', meaning: 'Buena disponibilidad de agua' },
-            veryHigh: { range: '> 0.4', meaning: 'Alto contenido de humedad' }
+            veryLow: { range: '< -0.3', meaning: 'Severe moisture deficit' },
+            low: { range: '-0.3 - 0', meaning: 'Moisture-stressed vegetation' },
+            medium: { range: '0 - 0.2', meaning: 'Normal moisture' },
+            high: { range: '0.2 - 0.4', meaning: 'Good moisture content' },
+            veryHigh: { range: '> 0.4', meaning: 'Very high moisture' }
         },
-        bestFor: ['Detección temprana de sequía', 'Optimización de riego', 'Evaluación de riesgo de incendio', 'Cultivos de regadío'],
-        limitations: 'Usa banda B8A (20m). Similar a NDWI pero optimizado para vegetación densa.',
-        color: '#0ea5e9'
+        bestFor: ['Irrigation monitoring', 'Drought assessment', 'Crop water status', 'Irrigation efficiency'],
+        limitations: 'Similar to NDWI. Requires SWIR band. Can be affected by soil background.',
+        color: '#06b6d4'
     },
     SAVI: {
         id: 'SAVI',
         name: 'SAVI',
-        fullName: 'Índice de Vegetación Ajustado al Suelo',
-        description: 'Minimiza la influencia del brillo del suelo en zonas con baja cobertura vegetal. Ideal para cultivos jóvenes.',
-        formula: '((NIR - RED) / (NIR + RED + L)) × (1 + L)',
+        fullName: 'Soil Adjusted Vegetation Index',
+        description: 'NDVI variant that corrects for soil background influence. Ideal for areas with partial vegetation cover and visible soil.',
+        formula: '(NIR - RED) × (1 + L) / (NIR + RED + L)',
         range: [-1, 1],
         interpretation: {
-            veryLow: { range: '< 0', meaning: 'Suelo sin vegetación' },
-            low: { range: '0 - 0.2', meaning: 'Vegetación emergente o muy escasa' },
-            medium: { range: '0.2 - 0.4', meaning: 'Cobertura vegetal parcial' },
-            high: { range: '0.4 - 0.6', meaning: 'Buena cobertura vegetal' },
-            veryHigh: { range: '> 0.6', meaning: 'Cobertura vegetal completa' }
+            veryLow: { range: '< 0', meaning: 'No vegetation' },
+            low: { range: '0 - 0.2', meaning: 'Very sparse cover' },
+            medium: { range: '0.2 - 0.4', meaning: 'Moderate cover with soil visible' },
+            high: { range: '0.4 - 0.6', meaning: 'Good cover' },
+            veryHigh: { range: '> 0.6', meaning: 'Dense vegetation' }
         },
-        bestFor: ['Cultivos jóvenes (primeras semanas)', 'Zonas áridas o semiáridas', 'Viñedos', 'Olivares'],
-        limitations: 'Factor L fijo (0.5) puede no ser óptimo para todas las situaciones.',
+        bestFor: ['Arid and semi-arid zones', 'Early crop stages', 'Partial cover areas', 'No-till farming'],
+        limitations: 'Requires soil brightness factor (L). Less used than NDVI.',
         color: '#eab308'
-    },
-    MSAVI: {
-        id: 'MSAVI',
-        name: 'MSAVI',
-        fullName: 'SAVI Modificado',
-        description: 'Versión mejorada del SAVI que auto-ajusta el factor de corrección según la densidad de vegetación.',
-        formula: '(2×NIR + 1 - √((2×NIR + 1)² - 8×(NIR - RED))) / 2',
-        range: [-1, 1],
-        interpretation: {
-            veryLow: { range: '< 0', meaning: 'Sin vegetación significativa' },
-            low: { range: '0 - 0.2', meaning: 'Vegetación muy escasa' },
-            medium: { range: '0.2 - 0.4', meaning: 'Vegetación en desarrollo' },
-            high: { range: '0.4 - 0.6', meaning: 'Vegetación bien establecida' },
-            veryHigh: { range: '> 0.6', meaning: 'Vegetación densa' }
-        },
-        bestFor: ['Agricultura de precisión', 'Zonas con vegetación heterogénea', 'Seguimiento de crecimiento'],
-        limitations: 'Cálculo más complejo. Comportamiento similar a NDVI en vegetación densa.',
-        color: '#f97316'
     },
     GNDVI: {
         id: 'GNDVI',
         name: 'GNDVI',
-        fullName: 'NDVI Verde',
-        description: 'Variante del NDVI usando la banda verde. Más sensible a concentraciones de clorofila.',
+        fullName: 'Green Normalized Difference Vegetation Index',
+        description: 'NDVI variant using green band instead of red. More sensitive to chlorophyll content and nitrogen status.',
         formula: '(NIR - GREEN) / (NIR + GREEN)',
         range: [-1, 1],
         interpretation: {
-            veryLow: { range: '< 0', meaning: 'Sin vegetación' },
-            low: { range: '0 - 0.2', meaning: 'Vegetación escasa' },
-            medium: { range: '0.2 - 0.4', meaning: 'Contenido de clorofila moderado' },
-            high: { range: '0.4 - 0.6', meaning: 'Alta concentración de clorofila' },
-            veryHigh: { range: '> 0.6', meaning: 'Muy alta actividad fotosintética' }
+            veryLow: { range: '< 0', meaning: 'No vegetation' },
+            low: { range: '0 - 0.2', meaning: 'Low chlorophyll' },
+            medium: { range: '0.2 - 0.35', meaning: 'Moderate chlorophyll' },
+            high: { range: '0.35 - 0.5', meaning: 'Good chlorophyll content' },
+            veryHigh: { range: '> 0.5', meaning: 'High chlorophyll, good nitrogen' }
         },
-        bestFor: ['Estimación de nitrógeno', 'Aplicación variable de fertilizantes', 'Cultivos de hoja'],
-        limitations: 'Menos común en literatura. Puede ser más ruidoso que NDVI.',
+        bestFor: ['Nitrogen status assessment', 'Fertilization planning', 'Chlorophyll estimation', 'Precision fertilization'],
+        limitations: 'Sensitive to atmospheric conditions. Lower dynamic range than NDVI.',
         color: '#84cc16'
     },
-    NDRE: {
-        id: 'NDRE',
-        name: 'NDRE',
-        fullName: 'Índice de Diferencia Normalizada Red Edge',
-        description: 'Usa la banda Red Edge para mejor penetración en dosel. Excelente para detectar estrés antes que NDVI.',
-        formula: '(NIR - RedEdge) / (NIR + RedEdge)',
-        range: [-1, 1],
-        interpretation: {
-            veryLow: { range: '< 0', meaning: 'Sin vegetación o estrés severo' },
-            low: { range: '0 - 0.2', meaning: 'Vegetación escasa o estresada' },
-            medium: { range: '0.2 - 0.3', meaning: 'Vegetación en desarrollo' },
-            high: { range: '0.3 - 0.5', meaning: 'Vegetación saludable' },
-            veryHigh: { range: '> 0.5', meaning: 'Vegetación muy vigorosa' }
-        },
-        bestFor: ['Detección temprana de estrés', 'Cultivos densos (maíz, trigo)', 'Agricultura de precisión', 'Monitoreo de nitrógeno'],
-        limitations: 'Requiere banda Red Edge (B8A, 20m). Valores más bajos que NDVI.',
-        color: '#dc2626'
-    },
-    LAI: {
-        id: 'LAI',
-        name: 'LAI',
-        fullName: 'Índice de Área Foliar',
-        description: 'Estima el área total de hojas por unidad de superficie. Fundamental para modelos de rendimiento y captura de carbono.',
-        formula: '0.57 × exp(2.33 × NDVI)',
-        range: [0, 8],
-        interpretation: {
-            veryLow: { range: '< 1', meaning: 'Suelo expuesto o vegetación emergente' },
-            low: { range: '1 - 2', meaning: 'Vegetación joven o escasa' },
-            medium: { range: '2 - 4', meaning: 'Cobertura moderada (cultivos en crecimiento)' },
-            high: { range: '4 - 6', meaning: 'Vegetación densa (cultivo maduro)' },
-            veryHigh: { range: '> 6', meaning: 'Vegetación muy densa (bosque)' }
-        },
-        bestFor: ['Estimación de rendimiento', 'Captura de carbono', 'Modelos agronómicos', 'Evapotranspiración'],
-        limitations: 'Aproximación empírica. Para alta precisión se requiere calibración local.',
-        color: '#059669'
-    },
-    'SAR-VV': {
-        id: 'SAR-VV',
-        name: 'SAR VV',
-        fullName: 'Retrodispersión SAR — Polarización VV',
-        description: 'Señal de retrodispersión en polarización co-polarizada (VV) del Sentinel-1. Penetra nubes y mide rugosidad superficial, humedad del suelo y estructura del dosel.',
-        formula: 'σ₀(VV) = media zonal sobre banda VV (dB)',
-        range: [-30, 5],
-        interpretation: {
-            veryLow: { range: '< -20 dB', meaning: 'Agua abierta o suelo muy liso (inundación)' },
-            low: { range: '-20 a -14 dB', meaning: 'Suelo muy húmedo o vegetación herbácea escasa' },
-            medium: { range: '-14 a -8 dB', meaning: 'Vegetación media o suelo moderadamente rugoso' },
-            high: { range: '-8 a -2 dB', meaning: 'Vegetación densa o dosel cerrado' },
-            veryHigh: { range: '> -2 dB', meaning: 'Estructuras, zonas urbanas o vegetación muy densa' }
-        },
-        bestFor: ['Detección de inundaciones (arroz)', 'Humedad del suelo', 'Estructura del cultivo', 'Monitoreo en días nublados'],
-        limitations: 'Señal sensible a ángulo de incidencia y rugosidad del suelo. Requiere calibración radiométrica. Resolución 20m.',
-        color: '#6366f1'
-    },
-    'SAR-VH': {
-        id: 'SAR-VH',
-        name: 'SAR VH',
-        fullName: 'Retrodispersión SAR — Polarización VH',
-        description: 'Señal de retrodispersión en polarización cruzada (VH) del Sentinel-1. Más sensible al volumen de vegetación (dispersión volumétrica en el dosel).',
-        formula: 'σ₀(VH) = media zonal sobre banda VH (dB)',
-        range: [-35, 0],
-        interpretation: {
-            veryLow: { range: '< -25 dB', meaning: 'Agua, suelo desnudo liso' },
-            low: { range: '-25 a -18 dB', meaning: 'Suelo o vegetación muy escasa' },
-            medium: { range: '-18 a -12 dB', meaning: 'Vegetación en desarrollo medio' },
-            high: { range: '-12 a -6 dB', meaning: 'Vegetación densa con alta dispersión volumétrica' },
-            veryHigh: { range: '> -6 dB', meaning: 'Dosel muy denso o estructuras artificiales' }
-        },
-        bestFor: ['Estimación de biomasa', 'Cobertura vegetal', 'Monitoreo de arroz (inundación vs crecimiento)', 'Detección de cambios estructurales'],
-        limitations: 'Menor sensibilidad a humedad del suelo que VV. Puede tener más ruido (speckle). Resolución 20m.',
-        color: '#818cf8'
-    },
-    CIRE: {
-        id: 'CIRE',
-        name: 'CIre',
-        fullName: 'Índice de Clorofila Red Edge',
-        description: 'Altamente sensible al contenido de clorofila. Ideal para detectar deficiencias de nitrógeno y planificar fertilización.',
-        formula: '(NIR / RedEdge1) - 1',
-        range: [0, 10],
-        interpretation: {
-            veryLow: { range: '< 1', meaning: 'Deficiencia severa de clorofila/nitrógeno' },
-            low: { range: '1 - 2', meaning: 'Bajo contenido de clorofila' },
-            medium: { range: '2 - 3', meaning: 'Contenido normal de clorofila' },
-            high: { range: '3 - 5', meaning: 'Alto contenido de clorofila' },
-            veryHigh: { range: '> 5', meaning: 'Muy alta concentración de clorofila' }
-        },
-        bestFor: ['Detección de deficiencia de nitrógeno', 'Fertilización variable', 'Agricultura de precisión', 'Cultivos de alto valor'],
-        limitations: 'Requiere banda RedEdge (B05, 20m). Valores no normalizados.',
-        color: '#7c3aed'
-    }
-};
-
-export const getIndexInfo = (indexType: string): IndexInfo | undefined => {
-    return INDEX_INFO[indexType.toUpperCase()];
-};
-
-export const getAllIndices = (): IndexInfo[] => {
-    return Object.values(INDEX_INFO);
 };
