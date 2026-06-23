@@ -11,7 +11,6 @@ import os
 import uuid as uuid_mod
 from typing import Any, Dict, List, Optional
 
-import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy import desc, func, or_
@@ -28,7 +27,7 @@ from app.models import (
     VegetationScene,
 )
 from app.services.storage import create_storage_service, generate_tenant_bucket_name
-from nkz_platform_sdk import inject_fiware_headers
+from nkz_platform_sdk import SyncOrionClient
 
 logger = logging.getLogger(__name__)
 
@@ -108,39 +107,26 @@ async def _resolve_parcel_meta(entity_id: str, tenant_id: str) -> Dict[str, Any]
     """Best-effort fetch of parcel name + geometry from Orion-LD.
 
     Tolerant: returns partial info on 404 / network issues so the page still
-    paints something. Uses Link header with the schema.org context so the
-    `name` attribute (canonicalised to https://schema.org/name in SDM) is
-    actually returned.
+    paints something. SyncOrionClient handles all NGSI-LD headers automatically.
     """
-    orion_url = os.getenv("FIWARE_CONTEXT_BROKER_URL", "http://orion-ld-service:1026")
-    context_url = os.getenv(
-        "CONTEXT_URL", "http://api-gateway-service:5000/ngsi-ld-context.json"
-    )
-    headers = {
-        "Accept": "application/json",
-        "NGSILD-Tenant": tenant_id,
-        "Link": f'<{context_url}>; rel="http://www.w3.org/ns/json-ld#context"; type="application/ld+json"',
-    }
     out: Dict[str, Any] = {"entity_id": entity_id, "name": None, "location": None}
     try:
-        async with httpx.AsyncClient(timeout=4) as client:
-            resp = await client.get(
-                f"{orion_url}/ngsi-ld/v1/entities/{entity_id}", headers=headers
-            )
-            if resp.status_code == 200:
-                ent = resp.json()
-                # name may live under any of several keys depending on context expansion
-                for key in ("name", "https://schema.org/name"):
-                    val = ent.get(key)
-                    if isinstance(val, dict):
-                        out["name"] = val.get("value")
-                        break
-                    if isinstance(val, str):
-                        out["name"] = val
-                        break
-                loc = ent.get("location")
-                if isinstance(loc, dict):
-                    out["location"] = loc.get("value") or loc
+        orion = SyncOrionClient(tenant_id)
+        resp = orion.get(f"/ngsi-ld/v1/entities/{entity_id}")
+        if resp.status_code == 200:
+            ent = resp.json()
+            # name may live under any of several keys depending on context expansion
+            for key in ("name", "https://schema.org/name"):
+                val = ent.get(key)
+                if isinstance(val, dict):
+                    out["name"] = val.get("value")
+                    break
+                if isinstance(val, str):
+                    out["name"] = val
+                    break
+            loc = ent.get("location")
+            if isinstance(loc, dict):
+                out["location"] = loc.get("value") or loc
     except Exception as exc:
         logger.debug("Could not resolve parcel metadata for %s: %s", entity_id, exc)
     return out
@@ -326,23 +312,19 @@ async def _delete_orion_entity_if_orphan(
 
     parcel_short = entity_id.split(":")[-1] if ":" in entity_id else entity_id
     veg_entity_id = f"urn:ngsi-ld:VegetationIndex:{tenant_id}:{parcel_short}"
-    orion_url = os.getenv("FIWARE_CONTEXT_BROKER_URL", "http://orion-ld-service:1026")
-    headers = inject_fiware_headers({"Accept": "application/json"}, tenant=tenant_id, has_context_in_body=False)
     try:
-        async with httpx.AsyncClient(timeout=4) as client:
-            resp = await client.delete(
-                f"{orion_url}/ngsi-ld/v1/entities/{veg_entity_id}", headers=headers
+        orion = SyncOrionClient(tenant_id)
+        resp = orion.delete(f"/ngsi-ld/v1/entities/{veg_entity_id}")
+        if resp.status_code in (204, 404):
+            logger.info(
+                "Orion-LD VegetationIndex %s: %s (parcel cleaned)",
+                veg_entity_id, resp.status_code,
             )
-            if resp.status_code in (204, 404):
-                logger.info(
-                    "Orion-LD VegetationIndex %s: %s (parcel cleaned)",
-                    veg_entity_id, resp.status_code,
-                )
-            else:
-                logger.warning(
-                    "Orion-LD entity DELETE returned %s for %s: %s",
-                    resp.status_code, veg_entity_id, resp.text[:200],
-                )
+        else:
+            logger.warning(
+                "Orion-LD entity DELETE returned %s for %s: %s",
+                resp.status_code, veg_entity_id, resp.text[:200],
+            )
     except Exception as exc:
         logger.warning("Orion-LD DELETE %s failed: %s", veg_entity_id, exc)
 
@@ -556,7 +538,7 @@ async def delete_parcel_job(
     db.commit()
 
     # Best-effort entity cleanup (does not block the user's success path).
-    # Wrapped so a transient httpx error after the DB delete still returns 204
+    # Wrapped so a transient Orion-LD error after the DB delete still returns 204
     # — the orphan entity in Orion-LD will be reaped on the next delete.
     if job.entity_id:
         try:

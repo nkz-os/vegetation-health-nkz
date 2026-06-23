@@ -17,20 +17,13 @@ from typing import Dict, List, Any, Optional, Tuple
 from datetime import timezone,  datetime, date, timedelta
 from dataclasses import dataclass, field
 import httpx
-from nkz_platform_sdk import inject_fiware_headers
+from nkz_platform_sdk import OrionClient
 
 logger = logging.getLogger(__name__)
 
 # Configuration
 WEATHER_MODULE_URL = os.getenv("WEATHER_MODULE_URL", "http://timeseries-reader-service:5000")
-ORION_LD_URL = os.getenv("ORION_LD_URL", "http://orion-ld:1026")
 ENTITY_MANAGER_URL = os.getenv("ENTITY_MANAGER_URL", "http://entity-manager-service:5000")
-
-
-def _make_headers(tenant_id: str) -> dict:
-    """Build cannonical NGSI-LD headers — delegates to platform SDK."""
-    return inject_fiware_headers({}, tenant=tenant_id, has_context_in_body=False)
-    return headers
 
 
 @dataclass
@@ -182,7 +175,6 @@ class WeatherService:
         self.timeout = timeout
         self._client = None
         self.weather_module_url = WEATHER_MODULE_URL
-        self.orion_url = ORION_LD_URL
 
     async def _get_client(self) -> httpx.AsyncClient:
         """Get or create HTTP client."""
@@ -268,51 +260,42 @@ class WeatherService:
             List of SoilSensorData from IoT sensors
         """
         try:
-            client = await self._get_client()
-
-            # Query Orion-LD for SoilProbe devices in this parcel
-            response = await client.get(
-                f"{self.orion_url}/ngsi-ld/v1/entities",
-                params={
+            async with OrionClient(tenant_id) as orion:
+                # Query Orion-LD for SoilProbe devices in this parcel
+                response = await orion.get("/ngsi-ld/v1/entities", params={
                     "type": "SoilProbe",
                     "q": f"hasAgriParcel=={entity_id}",
                     "attrs": "soilMoisture,soilTemperature,soilEC,soilPH,leafWetness,location"
-                },
-                headers=_make_headers(tenant_id),
-            )
+                })
 
-            # Fallback to legacy refParcel if new name returns nothing
-            if response.status_code == 200 and not response.json():
-                response = await client.get(
-                    f"{self.orion_url}/ngsi-ld/v1/entities",
-                    params={
+                # Fallback to legacy refParcel if new name returns nothing
+                if response.status_code == 200 and not response.json():
+                    response = await orion.get("/ngsi-ld/v1/entities", params={
                         "type": "SoilProbe",
                         "q": f"refParcel=={entity_id}",
                         "attrs": "soilMoisture,soilTemperature,soilEC,soilPH,leafWetness,location"
-                    },
-                    headers=_make_headers(tenant_id),
-                )
+                    })
 
-            if response.status_code == 200:
-                entities = response.json()
-                sensor_data = []
+                if response.status_code == 200:
+                    entities = response.json()
+                    sensor_data = []
 
-                for entity in entities:
-                    sensor_data.append(SoilSensorData(
-                        sensor_id=entity.get("id", "unknown"),
-                        timestamp=datetime.fromisoformat(
-                            entity.get("soilMoisture", {}).get("observedAt", datetime.now(timezone.utc).isoformat()).replace("Z", "+00:00")
-                        ) if "soilMoisture" in entity else datetime.now(timezone.utc),
-                        soil_moisture=entity.get("soilMoisture", {}).get("value"),
-                        soil_temperature=entity.get("soilTemperature", {}).get("value"),
-                        soil_ec=entity.get("soilEC", {}).get("value"),
-                        soil_ph=entity.get("soilPH", {}).get("value"),
-                        leaf_wetness=entity.get("leafWetness", {}).get("value"),
-                        location=entity.get("location", {}).get("value", {}).get("coordinates")
-                    ))
+                    for entity in entities:
+                        sensor_data.append(SoilSensorData(
+                            sensor_id=entity.get("id", "unknown"),
+                            timestamp=datetime.fromisoformat(
+                                entity.get("soilMoisture", {}).get("observedAt", datetime.now(timezone.utc).isoformat()).replace("Z", "+00:00")
+                            ) if "soilMoisture" in entity else datetime.now(timezone.utc),
+                            soil_moisture=entity.get("soilMoisture", {}).get("value"),
+                            soil_temperature=entity.get("soilTemperature", {}).get("value"),
+                            soil_ec=entity.get("soilEC", {}).get("value"),
+                            soil_ph=entity.get("soilPH", {}).get("value"),
+                            leaf_wetness=entity.get("leafWetness", {}).get("value"),
+                            location=entity.get("location", {}).get("value", {}).get("coordinates")
+                        ))
 
-                logger.info(f"Retrieved {len(sensor_data)} soil sensors for {entity_id}")
-                return sensor_data
+                    logger.info(f"Retrieved {len(sensor_data)} soil sensors for {entity_id}")
+                    return sensor_data
 
         except Exception as e:
             logger.debug(f"Could not fetch soil sensors: {e}")

@@ -4,12 +4,10 @@ Allows users to trigger SAR backscatter calculation for a parcel on demand.
 """
 
 import logging
-import os
 import uuid
 from datetime import date, timedelta
 from typing import Optional
 
-import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from shapely.geometry import shape as shp
@@ -21,7 +19,7 @@ from app.models import VegetationJob
 from app.services.copernicus_client import CopernicusDataSpaceClient
 from app.services.platform_credentials import get_copernicus_credentials_with_fallback
 from app.tasks.sar_tasks import download_sentinel1_scene
-from nkz_platform_sdk import inject_fiware_headers
+from nkz_platform_sdk import SyncOrionClient
 
 logger = logging.getLogger(__name__)
 
@@ -60,21 +58,16 @@ async def analyze_sar(
         raise HTTPException(status_code=422, detail="end_date must be >= start_date")
 
     # Get parcel geometry from Orion-LD
-    orion_url = os.getenv("FIWARE_CONTEXT_BROKER_URL", "http://orion-ld-service:1026")
-    headers = inject_fiware_headers({"Accept": "application/json"}, tenant=tenant_id, has_context_in_body=False)
-
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(
-                f"{orion_url}/ngsi-ld/v1/entities/{entity_id}", headers=headers
+        orion = SyncOrionClient(tenant_id)
+        resp = orion.get(f"/ngsi-ld/v1/entities/{entity_id}")
+        if resp.status_code != 200:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Parcel {entity_id} not found in context broker",
             )
-            if resp.status_code != 200:
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"Parcel {entity_id} not found in context broker",
-                )
-            entity_data = resp.json()
-    except httpx.RequestError as e:
+        entity_data = resp.json()
+    except Exception as e:
         raise HTTPException(
             status_code=502,
             detail=f"Orion-LD unreachable: {e}",
