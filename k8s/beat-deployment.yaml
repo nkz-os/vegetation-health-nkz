@@ -28,12 +28,22 @@ spec:
         component: beat
         module: vegetation-prime
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
       tolerations:
         - key: "node.kubernetes.io/disk-pressure"
           operator: "Exists"
           effect: "NoSchedule"
       containers:
         - name: beat
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop: ["ALL"]
           image: ghcr.io/nkz-os/vegetation-health-nkz/vegetation-prime-api:34960be9ae64f009fcdf0d00377f9935c2845aa9
           imagePullPolicy: Always
           command: ["celery", "-A", "app.celery_app", "beat", "--loglevel=info"]
