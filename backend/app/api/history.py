@@ -75,7 +75,8 @@ async def get_history(
 
     # Build query
     attr = f"{index.lower()}Mean"
-    q = f'hasAgriParcel=="urn:ngsi-ld:AgriParcel:{entity_id}"'
+    parcel_id = entity_id if entity_id.startswith("urn:ngsi-ld:AgriParcel:") else f"urn:ngsi-ld:AgriParcel:{entity_id}"
+    q = f'hasAgriParcel=="{parcel_id}"'
     if year:
         q += f';year=={year}'
 
