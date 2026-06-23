@@ -630,6 +630,12 @@ async def check_parcel_size(
     limit = MAX_PARCEL_HA
     override = request.headers.get("X-Override-Max-HA")
     if override:
+        # Only admin users can bypass parcel area limits
+        if "admin" not in current_user.get("roles", []):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only admin users can override MAX_PARCEL_HA",
+            )
         try:
             limit = float(override)
         except ValueError:
