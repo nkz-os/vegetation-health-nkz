@@ -200,7 +200,8 @@ async def stop_monitoring_period(
         db.query(VegetationJob)
         .filter(
             VegetationJob.crop_season_id == period_id,
-            VegetationJob.status.in_(["pending", "queued", "downloading"]),
+            # Real CHECK constraint values: pending, running, completed, failed, cancelled
+            VegetationJob.status.in_(["pending", "running"]),
             VegetationJob.deleted_at.is_(None),
         )
         .all()

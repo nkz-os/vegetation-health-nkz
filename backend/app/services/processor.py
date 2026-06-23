@@ -233,6 +233,7 @@ class VegetationIndexProcessor:
             Data array with masked pixels set to NaN
         """
         if cloud_mask is None:
+            logger.warning("No cloud mask available — indices may include cloudy pixels")
             return data
 
         if data.shape != cloud_mask.shape:

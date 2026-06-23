@@ -14,7 +14,7 @@ import zipfile
 import tempfile
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Tuple
-from datetime import datetime
+from datetime import timezone,  datetime
 import io
 
 logger = logging.getLogger(__name__)
@@ -44,7 +44,7 @@ class PrescriptionMapExporter:
             "type": "FeatureCollection",
             "features": features,
             "metadata": metadata or {},
-            "generated_at": datetime.utcnow().isoformat(),
+            "generated_at": datetime.now(timezone.utc).isoformat(),
             "generator": "Nekazari Vegetation Prime"
         }
 

@@ -46,7 +46,7 @@ async def create_roi(request: dict, current_user: dict = Depends(require_auth)):
     """Crea una Management Zone (ROI) en Orion-LD."""
     try:
         cb_url = os.getenv("FIWARE_CONTEXT_BROKER_URL", "http://orion-ld-service:1026")
-        client = FIWAREClient(url=cb_url, tenant_id=current_user['tenant_id'])
+        client = FIWAREClient(cb_url, current_user['tenant_id'])
         
         entity_id = f"urn:ngsi-ld:AgriParcel:{uuid4()}"
         entity = {

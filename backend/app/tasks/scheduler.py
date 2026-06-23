@@ -30,7 +30,7 @@ def process_subscriptions():
     db = next(db_gen)
     
     try:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         today = now.date()
         
         # Find active subscriptions due for run

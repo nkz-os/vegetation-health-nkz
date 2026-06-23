@@ -303,7 +303,7 @@ async def delete_failed_jobs(
 ):
     """Delete all failed and stuck jobs for the tenant."""
     from datetime import datetime, timedelta
-    stuck_threshold = datetime.utcnow() - timedelta(hours=1)
+    stuck_threshold = datetime.now(timezone.utc) - timedelta(hours=1)
     deleted = db.query(VegetationJob).filter(
         VegetationJob.tenant_id == current_user['tenant_id'],
         (VegetationJob.status.in_(['failed', 'cancelled'])) |

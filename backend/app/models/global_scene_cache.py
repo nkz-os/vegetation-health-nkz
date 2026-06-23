@@ -4,7 +4,7 @@ This allows multiple tenants to reuse the same downloaded scenes without
 re-downloading from Copernicus, saving quota.
 """
 
-from datetime import date, datetime
+from datetime import timezone,  date, datetime
 from typing import Optional, Dict, Any
 from decimal import Decimal
 
@@ -74,7 +74,7 @@ class GlobalSceneCache(BaseModel):
     def increment_download_count(self):
         """Increment the reuse counter and update last accessed time."""
         self.download_count = (self.download_count or 0) + 1
-        self.last_accessed_at = datetime.utcnow()
+        self.last_accessed_at = datetime.now(timezone.utc)
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary with all fields."""
