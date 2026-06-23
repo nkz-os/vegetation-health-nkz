@@ -34,7 +34,8 @@ INSERT INTO marketplace_modules (
         "backend_services": ["vegetation-prime-api"],
         "contextPanel": {
             "entityTypes": ["AgriParcel"]
-        }
+        },
+        "setup_parcel_url": "http://vegetation-prime-api:8000/api/vegetation/internal/setup-parcel"
     }'::jsonb
 ) ON CONFLICT (id) DO UPDATE SET
     version = EXCLUDED.version,

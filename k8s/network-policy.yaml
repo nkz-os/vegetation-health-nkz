@@ -36,8 +36,11 @@ spec:
       ports:
         - protocol: TCP
           port: 8000
-    # Allow health probes from kubernetes
-    - from: []
+    # Allow traffic from entity-manager (parcel activation workflow)
+    - from:
+        - podSelector:
+            matchLabels:
+              app: entity-manager
       ports:
         - protocol: TCP
           port: 8000
