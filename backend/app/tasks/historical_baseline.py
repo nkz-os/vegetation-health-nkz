@@ -28,29 +28,18 @@ BAND_MAP = {
 
 def _get_parcel_geometry(tenant_id: str, entity_id: str) -> tuple:
     """Fetch parcel geometry from Orion-LD. Returns (geom_dict, bbox_list) or raises."""
-    import httpx
+    from nkz_platform_sdk import SyncOrionClient
 
-    orion_url = os.getenv("FIWARE_CONTEXT_BROKER_URL", "http://orion-ld-service:1026")
-    from nkz_platform_sdk import inject_fiware_headers
-    headers = inject_fiware_headers(
-        {"Accept": "application/json"},
-        tenant=tenant_id,
-        has_context_in_body=False,
-    )
+    orion = SyncOrionClient(tenant_id)
+    resp = orion.get(f"/ngsi-ld/v1/entities/{entity_id}?attrs=location")
+    if resp.status_code != 200:
+        raise ValueError(f"Parcel {entity_id} not found in Orion-LD")
 
-    with httpx.Client(timeout=10) as client:
-        resp = client.get(
-            f"{orion_url}/ngsi-ld/v1/entities/{entity_id}?attrs=location",
-            headers=headers,
-        )
-        if resp.status_code != 200:
-            raise ValueError(f"Parcel {entity_id} not found in Orion-LD")
-
-        entity = resp.json()
-        loc = entity.get("location", {})
-        geom = loc.get("value") or loc
-        if not geom or "coordinates" not in geom:
-            raise ValueError("Parcel has no location geometry")
+    entity = resp.json()
+    loc = entity.get("location", {})
+    geom = loc.get("value") or loc
+    if not geom or "coordinates" not in geom:
+        raise ValueError("Parcel has no location geometry")
 
     from shapely.geometry import shape
     geom_obj = shape(geom)
@@ -80,10 +69,7 @@ def _upsert_agri_parcel_record(
     doy_start: int,
 ) -> Optional[str]:
     """Write an AgriParcelRecord entity to Orion-LD."""
-    import httpx
-
-    orion_url = os.getenv("FIWARE_CONTEXT_BROKER_URL", "http://orion-ld-service:1026")
-    from nkz_platform_sdk import inject_fiware_headers
+    from nkz_platform_sdk import SyncOrionClient
 
     parcel_short = entity_id.split(":")[-1] if ":" in entity_id else entity_id
     record_id = f"urn:ngsi-ld:AgriParcelRecord:{tenant_id}:{parcel_short}:{index.lower()}:{year}-{doy_start}"
@@ -107,28 +93,18 @@ def _upsert_agri_parcel_record(
         "@context": "https://nekazari.robotika.cloud/ngsi-ld-context.json",
     }
 
-    headers = inject_fiware_headers(
-        {"Content-Type": "application/ld+json"},
-        tenant=tenant_id,
-        has_context_in_body=True,
-    )
-
     try:
-        with httpx.Client(timeout=10) as client:
-            resp = client.post(
-                f"{orion_url}/ngsi-ld/v1/entities",
-                json=entity,
-                headers=headers,
+        orion = SyncOrionClient(tenant_id)
+        resp = orion.post("/ngsi-ld/v1/entities", json=entity)
+        if resp.status_code in (201, 204):
+            logger.debug("Upserted AgriParcelRecord %s", record_id)
+            return record_id
+        else:
+            logger.warning(
+                "Failed to upsert AgriParcelRecord %s: %s %s",
+                record_id, resp.status_code, resp.text[:200],
             )
-            if resp.status_code in (201, 204):
-                logger.debug("Upserted AgriParcelRecord %s", record_id)
-                return record_id
-            else:
-                logger.warning(
-                    "Failed to upsert AgriParcelRecord %s: %s %s",
-                    record_id, resp.status_code, resp.text[:200],
-                )
-                return None
+            return None
     except Exception as e:
         logger.warning("Orion-LD write failed for %s: %s", record_id, e)
         return None

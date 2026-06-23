@@ -5,7 +5,7 @@ Follows the platform convention:
 - 1 VegetationIndex entity per parcel (updated via PATCH on each new analysis)
 - Orion-LD is the source of truth for analysis results
 - TimescaleDB receives historical snapshots via NGSI-LD subscription (telemetry-worker)
-- Headers: NGSILD-Tenant (platform convention), Content-Type: application/ld+json
+- Uses SyncOrionClient from nkz-platform-sdk (no raw requests/httpx)
 """
 
 import logging
@@ -14,12 +14,10 @@ import re
 from typing import Dict, Any, Optional, List
 from datetime import datetime, date, timezone
 
-import requests
-from nkz_platform_sdk import inject_fiware_headers as _canonical_headers
+from nkz_platform_sdk import SyncOrionClient
 
 logger = logging.getLogger(__name__)
 
-ORION_URL = os.getenv("FIWARE_CONTEXT_BROKER_URL", "http://orion-ld-service:1026")
 CONTEXT_URL = os.getenv("CONTEXT_URL", "http://api-gateway-service:5000/ngsi-ld-context.json")
 
 # Index attribute names: {index_type} → list of NGSI-LD property names
@@ -31,11 +29,6 @@ INDEX_ATTRS = {
     "NDRE": ("ndreMean", "ndreMin", "ndreMax", "ndreStdDev"),
     "NDWI": ("ndwiMean", "ndwiMin", "ndwiMax", "ndwiStdDev"),
 }
-
-
-def _make_headers(tenant_id: str) -> Dict[str, str]:
-    """Build canonical NGSI-LD headers — delegates to platform SDK."""
-    return _canonical_headers({}, tenant=tenant_id, has_context_in_body=True)
 
 
 def _entity_id_for_parcel(tenant_id: str, parcel_id: str) -> str:
@@ -56,7 +49,9 @@ def _entity_id_for_eo_product(tenant_id: str, parcel_id: str, sensing_date_str: 
     return f"urn:ngsi-ld:EOProduct:{tenant_id}:{parcel_short}:GRD:{sensing_date_str}"
 
 
-def _entity_id_for_optical_eo_product(tenant_id: str, parcel_id: str, product_type: str, sensing_date_str: str) -> str:
+def _entity_id_for_optical_eo_product(
+    tenant_id: str, parcel_id: str, product_type: str, sensing_date_str: str
+) -> str:
     """Generate deterministic EOProduct entity ID for optical vegetation indices.
     Format: urn:ngsi-ld:EOProduct:{tenant}:{parcel_short}:{productType}:{date}
     """
@@ -70,10 +65,9 @@ def upsert_eo_product(
     parcel_id: str,
     vv_mean: float = 0.0,
     vh_mean: float = 0.0,
-    acquisition_date = None,
+    acquisition_date=None,
     product_type: str = "GRD",
     processing_level: str = "L1",
-    # Optical index fields (None for SAR)
     statistics: Optional[Dict[str, Any]] = None,
     raster_url: Optional[str] = None,
     sensing_date: Optional[date] = None,
@@ -85,12 +79,9 @@ def upsert_eo_product(
     Supports both SAR backscatter (product_type="GRD") and optical vegetation
     indices (product_type="NDVI", "GNDVI", "EVI", "SAVI", etc.).
 
-    For SAR: pass vv_mean, vh_mean, acquisition_date.
-    For optical: pass statistics dict, raster_url, sensing_date, pixel_count.
-
-    Uses POST → 201 | 409 → PATCH pattern.
+    Uses SyncOrionClient: POST → 201 | 409 → PATCH pattern.
     """
-    headers = _make_headers(tenant_id)
+    orion = SyncOrionClient(tenant_id)
 
     if product_type == "GRD":
         if acquisition_date is None:
@@ -104,7 +95,9 @@ def upsert_eo_product(
             logger.error("sensing_date required for optical EOProduct")
             return None
         sensing_date_str = sensing_date.isoformat()
-        entity_id = _entity_id_for_optical_eo_product(tenant_id, parcel_id, product_type, sensing_date_str)
+        entity_id = _entity_id_for_optical_eo_product(
+            tenant_id, parcel_id, product_type, sensing_date_str
+        )
         observed_at = (
             datetime(sensing_date.year, sensing_date.month, sensing_date.day,
                      10, 50, 0, tzinfo=timezone.utc)
@@ -154,8 +147,7 @@ def upsert_eo_product(
         entity["campaign"] = {"type": "Relationship", "object": campaign_urn}
 
     try:
-        url = f"{ORION_URL}/ngsi-ld/v1/entities"
-        response = requests.post(url, json=entity, headers=headers, timeout=10)
+        response = orion.post("/ngsi-ld/v1/entities", json=entity)
 
         if response.status_code in (201, 204):
             logger.info("Created EOProduct entity %s", entity_id)
@@ -166,14 +158,17 @@ def upsert_eo_product(
             attrs = {k: v for k, v in entity.items() if k not in ("id", "type")}
             if "@context" not in attrs:
                 attrs["@context"] = [CONTEXT_URL]
-            patch_url = f"{ORION_URL}/ngsi-ld/v1/entities/{entity_id}/attrs"
-            patch_resp = requests.patch(patch_url, json=attrs, headers=headers, timeout=10)
+            patch_resp = orion.patch(
+                f"/ngsi-ld/v1/entities/{entity_id}/attrs", json=attrs
+            )
             if patch_resp.status_code in (204, 207):
                 logger.info("Updated EOProduct entity %s", entity_id)
                 return entity_id
             logger.error("Failed PATCH EOProduct %s: %s", entity_id, patch_resp.status_code)
         else:
-            logger.error("Failed POST EOProduct: %s — %s", response.status_code, response.text)
+            logger.error(
+                "Failed POST EOProduct: %s — %s", response.status_code, response.text
+            )
 
         return None
     except Exception as e:
@@ -193,11 +188,7 @@ def upsert_vegetation_index_entity(
     """Create or update the VegetationIndex entity for a parcel in Orion-LD.
 
     One entity per parcel — updated (PATCH) on each new analysis.
-    Each index type writes to its own set of properties (ndviMean, eviMean, etc.)
-    with ``observedAt`` metadata so the telemetry-worker subscription captures
-    every update as a historical snapshot in TimescaleDB.
-
-    Follows the weather-worker pattern: POST → 409 → PATCH /attrs.
+    Uses SyncOrionClient: POST → 409 → PATCH /attrs.
 
     Args:
         tenant_id: Tenant identifier
@@ -206,13 +197,13 @@ def upsert_vegetation_index_entity(
         statistics: Dict with mean, min, max, std, pixel_count
         raster_url: S3/MinIO path to the COG raster
         sensing_date: Date of the satellite observation
-        custom_attr_name: For CUSTOM indices, the attribute prefix (e.g. "custom_abc123")
+        custom_attr_name: For CUSTOM indices, the attribute prefix
 
     Returns:
         Entity ID if successful, None on failure
     """
+    orion = SyncOrionClient(tenant_id)
     entity_id = _entity_id_for_parcel(tenant_id, parcel_id)
-    headers = _make_headers(tenant_id)
 
     observed_at = (
         datetime(sensing_date.year, sensing_date.month, sensing_date.day,
@@ -230,7 +221,6 @@ def upsert_vegetation_index_entity(
     elif index_type in INDEX_ATTRS:
         attr_mean, attr_min, attr_max, attr_std = INDEX_ATTRS[index_type]
     else:
-        # Fallback for unknown index types
         prefix = index_type.lower()
         attr_mean = f"{prefix}Mean"
         attr_min = f"{prefix}Min"
@@ -282,34 +272,25 @@ def upsert_vegetation_index_entity(
     }
 
     try:
-        # POST — create entity
-        url = f"{ORION_URL}/ngsi-ld/v1/entities"
-        response = requests.post(url, json=entity, headers=headers, timeout=10)
-
+        response = orion.post("/ngsi-ld/v1/entities", json=entity)
         result = None
 
         if response.status_code in (201, 204):
             logger.info("Created VegetationIndex entity %s", entity_id)
             result = entity_id
-
         elif response.status_code == 409:
-            # Entity already exists — PATCH attributes
             logger.debug("VegetationIndex %s already exists, updating...", entity_id)
-            result = _patch_vegetation_index(entity_id, entity, headers)
+            result = _patch_vegetation_index(entity_id, entity, orion)
         else:
             logger.error(
                 "Failed to create VegetationIndex entity: %s - %s",
                 response.status_code, response.text,
             )
 
-        # After successful VegetationIndex upsert, update the AgriParcel
         if result:
-            _patch_agriparcel_with_index(
-                parcel_id, entity_id, statistics, observed_at, headers
-            )
+            _patch_agriparcel_with_index(parcel_id, entity_id, statistics, observed_at, orion)
 
         return result
-
     except Exception as e:
         logger.error("Error upserting VegetationIndex entity: %s", e, exc_info=True)
         return None
@@ -318,23 +299,18 @@ def upsert_vegetation_index_entity(
 def _patch_vegetation_index(
     entity_id: str,
     entity: Dict[str, Any],
-    headers: Dict[str, str],
+    orion: SyncOrionClient,
 ) -> Optional[str]:
-    """PATCH attributes on an existing VegetationIndex entity.
-
-    Extracts all attributes except id/type and sends them as a PATCH.
-    """
+    """PATCH attributes on an existing VegetationIndex entity."""
     try:
         attrs = {
             k: v for k, v in entity.items()
             if k not in ("id", "type")
         }
-        # @context must be included in PATCH body for application/ld+json
         if "@context" not in attrs:
             attrs["@context"] = [CONTEXT_URL]
 
-        url = f"{ORION_URL}/ngsi-ld/v1/entities/{entity_id}/attrs"
-        response = requests.patch(url, json=attrs, headers=headers, timeout=10)
+        response = orion.patch(f"/ngsi-ld/v1/entities/{entity_id}/attrs", json=attrs)
 
         if response.status_code in (204, 207):
             logger.info("Updated VegetationIndex entity %s", entity_id)
@@ -345,7 +321,6 @@ def _patch_vegetation_index(
             entity_id, response.status_code, response.text,
         )
         return None
-
     except Exception as e:
         logger.error("Error patching VegetationIndex entity: %s", e, exc_info=True)
         return None
@@ -356,7 +331,7 @@ def _patch_agriparcel_with_index(
     vegetation_index_id: str,
     statistics: Dict[str, Any],
     observed_at: str,
-    headers: Dict[str, str],
+    orion: SyncOrionClient,
 ) -> None:
     """PATCH the AgriParcel entity with latest NDVI summary and back-reference."""
     try:
@@ -377,8 +352,9 @@ def _patch_agriparcel_with_index(
     }
 
     try:
-        url = f"{ORION_URL}/ngsi-ld/v1/entities/{parcel_id}/attrs"
-        resp = requests.patch(url, json=parcel_patch, headers=headers, timeout=10)
+        resp = orion.patch(
+            f"/ngsi-ld/v1/entities/{parcel_id}/attrs", json=parcel_patch
+        )
         if resp.status_code in (204, 207):
             logger.debug(
                 "Patched AgriParcel %s with latestNDVI=%s from %s",
@@ -395,10 +371,9 @@ def _patch_agriparcel_with_index(
 
 def delete_eo_product(tenant_id: str, entity_id: str) -> bool:
     """Delete an EOProduct entity from Orion-LD."""
-    headers = _make_headers(tenant_id)
+    orion = SyncOrionClient(tenant_id)
     try:
-        url = f"{ORION_URL}/ngsi-ld/v1/entities/{entity_id}"
-        response = requests.delete(url, headers=headers, timeout=10)
+        response = orion.delete(f"/ngsi-ld/v1/entities/{entity_id}")
         if response.status_code in (204, 200):
             logger.info("Deleted EOProduct %s", entity_id)
             return True
@@ -418,14 +393,13 @@ def query_vegetation_index_entities(
 
     Args:
         tenant_id: Tenant identifier
-        parcel_id: Optional — filter by refAgriParcel
+        parcel_id: Optional — filter by hasAgriParcel
         limit: Max results
 
     Returns:
         List of NGSI-LD entities
     """
-    headers = _make_headers(tenant_id)
-
+    orion = SyncOrionClient(tenant_id)
     params: Dict[str, Any] = {
         "type": "VegetationIndex",
         "limit": limit,
@@ -434,8 +408,7 @@ def query_vegetation_index_entities(
         params["q"] = f"hasAgriParcel=={parcel_id}"
 
     try:
-        url = f"{ORION_URL}/ngsi-ld/v1/entities"
-        response = requests.get(url, params=params, headers=headers, timeout=10)
+        response = orion.get("/ngsi-ld/v1/entities", params=params)
         response.raise_for_status()
         return response.json()
     except Exception as e:
@@ -451,17 +424,18 @@ class FIWAREClient:
     """Legacy client for interacting with FIWARE Context Broker.
 
     Kept for backward compatibility during the dual-write transition period.
-    New code should use upsert_vegetation_index_entity() directly.
+    New code should use upsert_vegetation_index_entity() or SyncOrionClient directly.
     """
 
     def __init__(self, context_broker_url: str, tenant_id: str, auth_token: Optional[str] = None):
+        import requests
         self.context_broker_url = context_broker_url.rstrip('/')
         self.tenant_id = tenant_id
         self.session = requests.Session()
         if auth_token:
             self.session.headers['Authorization'] = f'Bearer {auth_token}'
         n = tenant_id.lower().strip()
-        n = re.sub(r'[^a-z0-9-]', '', n)  # preserve hyphens
+        n = re.sub(r'[^a-z0-9-]', '', n)
         n = n.strip('-') or tenant_id
         self.session.headers.update({
             'NGSILD-Tenant': n,
