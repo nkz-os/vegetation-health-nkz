@@ -45,11 +45,13 @@ export class VegetationApiClient {
     });
 
     // Separate client for Orion-LD queries (different base URL)
+    // Must include @context Link header to avoid false-zero (Incident 2026-06-16)
     this.orionClient = axios.create({
       baseURL: '/',
       withCredentials: true,
       headers: {
         'Accept': 'application/json',
+        'Link': `<https://nekazari.robotika.cloud/ngsi-ld-context.json>; rel="http://www.w3.org/ns/json-ld#context"; type="application/ld+json"`,
       },
     });
 

@@ -739,7 +739,11 @@
     "bulkDelete": "Eliminar seleccionados",
     "bulkDeleting": "Eliminando…",
     "bulkDeleteFailed": "Error en eliminación masiva: {{msg}}",
-    "bulkDeletePartial": "Eliminados {{ok}}, {{fail}} fallaron."
+    "bulkDeletePartial": "Eliminados {{ok}}, {{fail}} fallaron.",
+    "sarTitle": "Radar SAR (Sentinel-1)",
+    "sarHint": "Penetra nubes y mide humedad del suelo y biomasa. Útil cuando hay cobertura nubosa continua.",
+    "sarAnalyze": "Analizar con SAR",
+    "sarDispatched": "Análisis SAR: {{n}} trabajo(s) lanzados, {{s}} escena(s) encontradas."
   },
   "campaignList": {
     "empty": "Sin campañas activas",
@@ -751,11 +755,5 @@
     "stopTooltip": "Detener campaña y cancelar trabajos pendientes",
     "delete": "Eliminar",
     "deleteTooltip": "Eliminar campaña y todos los datos asociados"
-  },
-  "parcelDetail": {
-    "sarTitle": "Radar SAR (Sentinel-1)",
-    "sarHint": "Penetra nubes y mide humedad del suelo y biomasa. Útil cuando hay cobertura nubosa continua.",
-    "sarAnalyze": "Analizar con SAR",
-    "sarDispatched": "Análisis SAR: {{n}} trabajo(s) lanzados, {{s}} escena(s) encontradas."
   }
 }
