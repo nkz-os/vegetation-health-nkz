@@ -59,7 +59,7 @@ async def create_roi(request: dict, current_user: dict = Depends(require_auth)):
         }
         
         if request.get("parent_id"):
-            entity["refParent"] = {"type": "Relationship", "object": request.get("parent_id")}
+            entity["hasParent"] = {"type": "Relationship", "object": request.get("parent_id")}
             
         client.create_entity(entity)
         return {"id": entity_id, "message": "ROI created successfully"}
