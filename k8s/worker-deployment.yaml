@@ -28,17 +28,29 @@ spec:
         component: worker
         module: vegetation-prime
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
       tolerations:
         - key: "node.kubernetes.io/disk-pressure"
           operator: "Exists"
           effect: "NoSchedule"
       containers:
         - name: worker
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop: ["ALL"]
           image: ghcr.io/nkz-os/vegetation-health-nkz/vegetation-prime-api:34960be9ae64f009fcdf0d00377f9935c2845aa9
           imagePullPolicy: Always
           # concurrency=1: one task per pod avoids OOM with heavy Sentinel-2 scenes.
           # Scale horizontally (increase replicas) for more throughput.
-          # --max-memory-per-child 1.2GB recycles workers before cgroup OOM.
+          # --max-memory-per-child 2GB recycles workers before cgroup OOM.
+          # Sen2Res (super-resolution 20m→10m) disabled by default — set
+          # ENABLE_SUPER_RESOLUTION=true to enable (requires 8Gi+ memory).
           command:
             [
               "celery",
@@ -48,7 +60,7 @@ spec:
               "--loglevel=info",
               "--concurrency=1",
               "--max-memory-per-child",
-              "1200000",
+              "2000000",
             ]
           env:
             - name: DATABASE_URL
@@ -119,8 +131,8 @@ spec:
               value: "50"
           resources:
             requests:
-              memory: "1Gi"
-              cpu: "200m"
+              memory: "2Gi"
+              cpu: "500m"
             limits:
-              memory: "4Gi"
-              cpu: "1000m"
+              memory: "8Gi"
+              cpu: "2"
