@@ -20,6 +20,7 @@ from app.api.tiles import router as tiles_router
 from app.api.entities import router as entities_router
 from app.api.subscriptions import router as subscriptions_router
 from app.api.internal import router as internal_router
+from app.api.internal_setup import router as internal_setup_router
 from app.api.timeseries_adapter import router as timeseries_adapter_router
 from app.api.scenes import router as scenes_router
 from app.api.sync import router as sync_router
@@ -81,6 +82,7 @@ app.include_router(entities_router)
 app.include_router(subscriptions_router, prefix="/api/vegetation", tags=["subscriptions"])
 app.include_router(scenes_router)
 app.include_router(internal_router)
+app.include_router(internal_setup_router)
 app.include_router(timeseries_adapter_router)
 app.include_router(sync_router)
 app.include_router(custom_formulas_router)
