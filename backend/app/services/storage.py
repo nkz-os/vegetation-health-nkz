@@ -488,7 +488,7 @@ def create_storage_service(
         StorageService instance
     """
     if storage_type in ('s3', 'minio'):
-        use_ssl = storage_type == 's3'  # MinIO might not use SSL in dev
+        use_ssl = storage_type == 's3' or (endpoint_url and endpoint_url.startswith('https'))
         return S3StorageService(
             endpoint_url=endpoint_url,
             access_key_id=access_key_id,
