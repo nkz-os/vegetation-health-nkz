@@ -257,9 +257,9 @@ def download_sentinel1_scene(
             db.commit()
 
     except Exception as e:
-        logger.error("SAR download failed: %s", e, exc_info=True)
+        logger.warning("SAR download failed (will retry): %s", e)
         if download_job:
-            download_job.mark_completed({"error": str(e)})
+            download_job.mark_failed(str(e))
             db.commit()
         raise self.retry(exc=e)
 
