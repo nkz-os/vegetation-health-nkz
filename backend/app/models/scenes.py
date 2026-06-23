@@ -33,7 +33,7 @@ class VegetationScene(BaseModel, TenantMixin):
     centroid = Column(Geometry('POINT', srid=4326), nullable=True)
     
     # Cloud information
-    cloud_coverage = Column(Numeric(5, 2), nullable=True)
+    cloud_coverage = Column(Text, nullable=True)
     snow_coverage = Column(Text, nullable=True)
     
     # Storage information
