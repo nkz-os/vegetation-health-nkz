@@ -9,6 +9,10 @@ from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
+from sqlalchemy import text
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 # Database and Middleware
 from app.database import init_db
@@ -68,11 +72,31 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type", "X-Tenant-ID", "Fiware-Service"],
 )
 
-# Health checks
+# Rate limiter
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# Health checks (exempt from rate limiting)
+@limiter.exempt
 @app.get("/health")
+@app.get("/healthz")
 @app.get("/api/vegetation/health")
 async def health():
     return {"status": "healthy", "module": "vegetation-prime"}
+
+@limiter.exempt
+@app.get("/readyz")
+async def readyz():
+    """Readiness probe — checks DB connectivity."""
+    from app.database import get_db_session
+    try:
+        db = next(get_db_session())
+        db.execute(text("SELECT 1"))
+        return {"status": "ready"}
+    except Exception as e:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=503, detail=str(e))
 
 # Include Routers (The core of the platform)
 app.include_router(jobs_router)

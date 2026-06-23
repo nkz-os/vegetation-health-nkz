@@ -63,12 +63,16 @@ def get_db_with_tenant(tenant_id: str = Depends(get_tenant_id)):
     """
     db = SessionLocal()
     try:
-        # Set tenant context for RLS (if extension is enabled)
-        # Note: This requires the pg_trgm extension and RLS policies to be set up
-        # For now, we'll just use the session without setting tenant context
-        # as the models filter by tenant_id directly
-        # db.execute(text(f"SET app.current_tenant = '{tenant_id}'"))
-        # db.commit()
+        # Set tenant context for RLS (tenant-scoped row-level security)
+        # Requires RLS policies to be set up per migration 012
+        if tenant_id:
+            try:
+                # Escape single quotes to prevent SQL injection
+                safe_tenant = tenant_id.replace("'", "''")
+                db.execute(text(f"SET app.current_tenant = '{safe_tenant}'"))
+                db.commit()
+            except Exception as e:
+                logger.warning("Failed to set app.current_tenant: %s", e)
         yield db
     finally:
         db.close()
