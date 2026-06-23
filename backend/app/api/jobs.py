@@ -14,6 +14,7 @@ from app.services.limits import LimitsValidator
 from app.services.usage_tracker import UsageTracker
 from app.schemas import JobCreateRequest, JobResponse
 import logging
+import os
 
 router = APIRouter(prefix="/api/vegetation/jobs", tags=["jobs"])
 logger = logging.getLogger(__name__)
@@ -274,9 +275,15 @@ async def bulk_delete_jobs(
             raster_url = (job.parameters or {}).get("raster_url", "")
             if raster_url and raster_url.startswith("s3://"):
                 try:
-                    from app.services.storage import storage_service
-                    key = raster_url.replace("s3://vegetation-prime-global/", "")
-                    storage_service.delete_object("vegetation-prime-global", key)
+                    parts = raster_url.replace("s3://", "").split("/", 1)
+                    bucket = parts[0]
+                    key = parts[1] if len(parts) > 1 else ""
+                    from app.services.storage import create_storage_service
+                    storage = create_storage_service(
+                        storage_type=os.getenv('STORAGE_TYPE', 's3'),
+                        default_bucket=bucket
+                    )
+                    storage.delete_file(key, bucket)
                 except Exception as e:
                     logger.warning("Raster cleanup failed for job %s: %s", job_id, e)
 

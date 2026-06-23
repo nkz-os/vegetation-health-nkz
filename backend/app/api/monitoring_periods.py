@@ -249,7 +249,8 @@ async def delete_monitoring_period(
     if cascade:
         from app.models.jobs import VegetationJob
         from app.services.fiware_integration import delete_eo_product
-        from app.services.storage import storage_service
+        import os
+        from app.services.storage import create_storage_service
 
         jobs = (
             db.query(VegetationJob)
@@ -276,8 +277,15 @@ async def delete_monitoring_period(
             raster_url = (job.parameters or {}).get("raster_url", "")
             if raster_url and raster_url.startswith("s3://"):
                 try:
-                    key = raster_url.replace("s3://vegetation-prime-global/", "")
-                    storage_service.delete_object("vegetation-prime-global", key)
+                    parts = raster_url.replace("s3://", "").split("/", 1)
+                    bucket = parts[0]
+                    key = parts[1] if len(parts) > 1 else ""
+                    from app.services.storage import create_storage_service
+                    storage = create_storage_service(
+                        storage_type=os.getenv('STORAGE_TYPE', 's3'),
+                        default_bucket=bucket
+                    )
+                    storage.delete_file(key, bucket)
                     deleted_rasters += 1
                 except Exception as e:
                     logger.warning("Failed to delete raster %s: %s", raster_url, e)
