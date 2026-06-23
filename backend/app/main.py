@@ -43,6 +43,9 @@ async def lifespan(app: FastAPI):
     """Lifecycle events for the module."""
     logger.info("Starting Vegetation Prime API...")
     init_db()
+    # Fail-fast: INTERNAL_SERVICE_SECRET is required for internal auth
+    if not os.getenv("INTERNAL_SERVICE_SECRET"):
+        logger.warning("INTERNAL_SERVICE_SECRET not set — internal endpoints will reject all requests")
     yield
     logger.info("Shutting down Vegetation Prime API...")
 
@@ -89,14 +92,16 @@ async def health():
 @app.get("/readyz")
 async def readyz():
     """Readiness probe — checks DB connectivity."""
-    from app.database import get_db_session
+    from app.database import SessionLocal
+    db = SessionLocal()
     try:
-        db = next(get_db_session())
         db.execute(text("SELECT 1"))
         return {"status": "ready"}
     except Exception as e:
         from fastapi import HTTPException
         raise HTTPException(status_code=503, detail=str(e))
+    finally:
+        db.close()
 
 # Include Routers (The core of the platform)
 app.include_router(jobs_router)
