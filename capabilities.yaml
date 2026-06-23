@@ -7,7 +7,7 @@ publishes:
     sdmStatus: draft-proposal
     sdmProposal: SDM-005
     scope: per-parcel
-    refRelationship: refAgriParcel
+    refRelationship: hasAgriParcel
     attributes:
       - name: ndviMean
         unitCode: C62
@@ -83,5 +83,5 @@ publishes:
         sources: [Sentinel2-L2A]
         entitlement: open
     relationships:
-      - name: refAgriParcel
+      - name: hasAgriParcel
         target: AgriParcel

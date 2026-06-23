@@ -17,4 +17,4 @@ CREATE TABLE IF NOT EXISTS vegetation_crop_seasons (
     CONSTRAINT uq_entity_crop_period UNIQUE (tenant_id, entity_id, crop_type, start_date)
 );
 
-CREATE INDEX idx_crop_seasons_tenant_entity ON vegetation_crop_seasons(tenant_id, entity_id);
+CREATE INDEX IF NOT EXISTS idx_crop_seasons_tenant_entity ON vegetation_crop_seasons(tenant_id, entity_id);

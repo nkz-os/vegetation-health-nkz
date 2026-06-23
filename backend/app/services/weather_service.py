@@ -275,11 +275,23 @@ class WeatherService:
                 f"{self.orion_url}/ngsi-ld/v1/entities",
                 params={
                     "type": "SoilProbe",
-                    "q": f"refParcel=={entity_id}",
+                    "q": f"hasAgriParcel=={entity_id}",
                     "attrs": "soilMoisture,soilTemperature,soilEC,soilPH,leafWetness,location"
                 },
                 headers=_make_headers(tenant_id),
             )
+
+            # Fallback to legacy refParcel if new name returns nothing
+            if response.status_code == 200 and not response.json():
+                response = await client.get(
+                    f"{self.orion_url}/ngsi-ld/v1/entities",
+                    params={
+                        "type": "SoilProbe",
+                        "q": f"refParcel=={entity_id}",
+                        "attrs": "soilMoisture,soilTemperature,soilEC,soilPH,leafWetness,location"
+                    },
+                    headers=_make_headers(tenant_id),
+                )
 
             if response.status_code == 200:
                 entities = response.json()
