@@ -20,6 +20,18 @@ from app.database import get_db_session
 logger = logging.getLogger(__name__)
 
 
+def _select_best_scene(scenes: list) -> dict:
+    """Select the scene with least cloud cover; tie-break by most recent sensing date.
+
+    For agricultural monitoring, the most recent clear image is preferred
+    to reflect current crop state.
+    """
+    return sorted(scenes, key=lambda s: (
+        s['cloud_cover'],
+        -datetime.fromisoformat(s['sensing_date']).timestamp()
+    ))[0]
+
+
 def _set_band_cleanup_counter(scene_product_id: str, tenant_id: str, tenant_bucket: str, storage_prefix: str, total: int) -> None:
     """Set Redis counter for band cleanup after all index calculations complete.
 
@@ -235,7 +247,7 @@ def download_sentinel2_scene(self, job_id: str, tenant_id: str, parameters: Dict
             )
             if not scenes:
                 raise ValueError("No scenes found matching criteria")
-            best_scene = sorted(scenes, key=lambda s: (s['cloud_cover'], s['sensing_date']), reverse=True)[0]
+            best_scene = _select_best_scene(scenes)
             scene_id = best_scene['id']
             self.update_state(state='PROGRESS', meta={'progress': 30, 'message': f'Found scene {scene_id}'})
         
