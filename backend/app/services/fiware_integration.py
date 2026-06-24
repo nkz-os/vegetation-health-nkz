@@ -74,6 +74,73 @@ def _entity_id_for_optical_eo_product(
     return f"urn:ngsi-ld:EOProduct:{tenant_id}:{parcel_short}:{product_type}:{sensing_date_str}"
 
 
+def _entity_id_for_acquisition(tenant_id: str, parcel_id: str, sensing_date_str: str) -> str:
+    """EOProduct id at acquisition granularity (no productType segment)."""
+    parcel_short = parcel_id.split(":")[-1] if ":" in parcel_id else parcel_id
+    parcel_short = parcel_short[:10]
+    return f"urn:ngsi-ld:EOProduct:{tenant_id}:{parcel_short}:{sensing_date_str}"
+
+
+def _index_attribute(index_type: str, statistics: dict, observed_at: str,
+                     raster_url: Optional[str], preview_url: Optional[str]) -> dict:
+    attr = {
+        "type": "Property",
+        "value": round(float(statistics.get("mean", 0)), 6),
+        "observedAt": observed_at,
+        "min": {"type": "Property", "value": round(float(statistics.get("min", 0)), 6)},
+        "max": {"type": "Property", "value": round(float(statistics.get("max", 0)), 6)},
+        "std": {"type": "Property", "value": round(float(statistics.get("std", 0)), 6)},
+    }
+    if raster_url:
+        attr["rasterUrl"] = {"type": "Property", "value": raster_url}
+    if preview_url:
+        attr["previewUrl"] = {"type": "Property", "value": preview_url}
+    return attr
+
+
+def upsert_eo_index(tenant_id, parcel_id, index_type, statistics, sensing_date,
+                    raster_url=None, preview_url=None, cloud_cover=None):
+    """Approach A: one EOProduct per (parcel, sensingDate); merge one named index Property."""
+    orion = SyncOrionClient(tenant_id)
+    sensing_date_str = sensing_date.isoformat()
+    entity_id = _entity_id_for_acquisition(tenant_id, parcel_id, sensing_date_str)
+    observed_at = datetime(sensing_date.year, sensing_date.month, sensing_date.day,
+                           10, 50, 0, tzinfo=timezone.utc).isoformat().replace("+00:00", "Z")
+    index_key = index_type.lower()
+    index_attr = _index_attribute(index_type, statistics, observed_at, raster_url, preview_url)
+
+    entity = {
+        "@context": [CONTEXT_URL],
+        "id": entity_id,
+        "type": "EOProduct",
+        "hasAgriParcel": {"type": "Relationship", "object": parcel_id},
+        "sensingDate": {"type": "Property", "value": sensing_date_str},
+        "pixelCount": {"type": "Property", "value": int(statistics.get("pixel_count", 0))},
+        "source": {"type": "Property", "value": "vegetation_health"},
+        index_key: index_attr,
+    }
+    if cloud_cover is not None:
+        entity["cloudCoverPercentage"] = {"type": "Property", "value": round(float(cloud_cover), 2)}
+    try:
+        resp = orion.post("/ngsi-ld/v1/entities", json=entity)
+        if resp.status_code in (201, 204):
+            logger.info("Created EOProduct %s (%s)", entity_id, index_key)
+            return entity_id
+        if resp.status_code == 409:
+            attrs = {k: v for k, v in entity.items() if k not in ("id", "type")}
+            patch = orion.patch(f"/ngsi-ld/v1/entities/{entity_id}/attrs", json=attrs)
+            if patch.status_code in (204, 207):
+                logger.info("Merged %s into EOProduct %s", index_key, entity_id)
+                return entity_id
+            logger.error("PATCH EOProduct %s failed: %s", entity_id, patch.status_code)
+            return None
+        logger.error("POST EOProduct %s failed: %s - %s", entity_id, resp.status_code, resp.text)
+        return None
+    except Exception as exc:
+        logger.error("Error upserting EOProduct %s: %s", entity_id, exc, exc_info=True)
+        return None
+
+
 def upsert_eo_product(
     tenant_id: str,
     parcel_id: str,
