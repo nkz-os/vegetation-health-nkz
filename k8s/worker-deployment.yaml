@@ -49,8 +49,8 @@ spec:
           # concurrency=1: one task per pod avoids OOM with heavy Sentinel-2 scenes.
           # Scale horizontally (increase replicas) for more throughput.
           # --max-memory-per-child 2GB recycles workers before cgroup OOM.
-          # Sen2Res (super-resolution 20m→10m) disabled by default — set
-          # ENABLE_SUPER_RESOLUTION=true to enable (requires 8Gi+ memory).
+          # Sen2Res (super-resolution 20m→10m): code default off; enabled here
+          # via env SEN2RES_ENABLED=true (see env below). Requires 8Gi+ memory.
           command:
             [
               "celery",
@@ -129,6 +129,11 @@ spec:
               value: "false"
             - name: LOCAL_CLOUD_THRESHOLD_PCT
               value: "50"
+            # Sen2Res super-resolution ON (quality: red-edge/SWIR indices at 10m).
+            # Code default is 'false'; declared here so the setting is durable
+            # (was a manual `kubectl set env` that an ArgoCD replace would drop).
+            - name: SEN2RES_ENABLED
+              value: "true"
           resources:
             requests:
               memory: "2Gi"
