@@ -174,13 +174,14 @@ class TestCopernicusS1Methods:
 class TestEOProductUpsert:
     """EOProduct upsert for crop-health integration."""
 
-    @patch("app.services.fiware_integration.requests.post")
-    def test_eo_product_has_correct_type(self, mock_post):
+    @patch("app.services.fiware_integration.SyncOrionClient")
+    def test_eo_product_has_correct_type(self, mock_client):
         """EOProduct entity payload has type EOProduct and productType GRD."""
         from app.services.fiware_integration import upsert_eo_product
         from datetime import datetime, timezone
 
-        mock_post.return_value.status_code = 201
+        orion = mock_client.return_value
+        orion.post.return_value = MagicMock(status_code=201, text="Created")
 
         upsert_eo_product(
             tenant_id="test",
@@ -190,6 +191,6 @@ class TestEOProductUpsert:
             acquisition_date=datetime(2026, 6, 1, 18, 0, 0, tzinfo=timezone.utc),
         )
 
-        call_json = mock_post.call_args[1]["json"]
+        call_json = orion.post.call_args.kwargs["json"]
         assert call_json["type"] == "EOProduct"
         assert call_json["productType"]["value"] == "GRD"

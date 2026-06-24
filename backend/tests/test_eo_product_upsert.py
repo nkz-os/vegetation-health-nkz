@@ -30,12 +30,11 @@ class TestEntityIdForEOProduct:
 class TestUpsertEOProduct:
     """upsert_eo_product() — create or update EOProduct in Orion-LD."""
 
-    @patch("app.services.fiware_integration.requests.post")
-    @patch("app.services.fiware_integration.requests.patch")
-    def test_create_new_eo_product(self, mock_patch, mock_post):
+    @patch("app.services.fiware_integration.SyncOrionClient")
+    def test_create_new_eo_product(self, mock_client):
         """POST returns 201 → entity created, no PATCH needed."""
-        mock_post.return_value.status_code = 201
-        mock_post.return_value.text = "Created"
+        orion = mock_client.return_value
+        orion.post.return_value = MagicMock(status_code=201, text="Created")
 
         result = upsert_eo_product(
             tenant_id="test_tenant",
@@ -46,15 +45,15 @@ class TestUpsertEOProduct:
         )
 
         assert result is not None
-        assert mock_post.called
-        mock_patch.assert_not_called()
+        assert orion.post.called
+        orion.patch.assert_not_called()
 
-    @patch("app.services.fiware_integration.requests.post")
-    @patch("app.services.fiware_integration.requests.patch")
-    def test_update_existing_eo_product(self, mock_patch, mock_post):
+    @patch("app.services.fiware_integration.SyncOrionClient")
+    def test_update_existing_eo_product(self, mock_client):
         """POST returns 409 → PATCH /attrs."""
-        mock_post.return_value.status_code = 409
-        mock_patch.return_value.status_code = 204
+        orion = mock_client.return_value
+        orion.post.return_value = MagicMock(status_code=409, text="")
+        orion.patch.return_value = MagicMock(status_code=204, text="")
 
         result = upsert_eo_product(
             tenant_id="test_tenant",
@@ -65,13 +64,14 @@ class TestUpsertEOProduct:
         )
 
         assert result is not None
-        assert mock_post.called
-        mock_patch.assert_called_once()
+        assert orion.post.called
+        orion.patch.assert_called_once()
 
-    @patch("app.services.fiware_integration.requests.post")
-    def test_eo_product_contains_correct_attributes(self, mock_post):
+    @patch("app.services.fiware_integration.SyncOrionClient")
+    def test_eo_product_contains_correct_attributes(self, mock_client):
         """EOProduct entity payload has required SAR attributes."""
-        mock_post.return_value.status_code = 201
+        orion = mock_client.return_value
+        orion.post.return_value = MagicMock(status_code=201, text="Created")
 
         upsert_eo_product(
             tenant_id="test_tenant",
@@ -81,7 +81,7 @@ class TestUpsertEOProduct:
             acquisition_date=datetime(2026, 6, 1, 18, 0, 0, tzinfo=timezone.utc),
         )
 
-        call_json = mock_post.call_args[1]["json"]
+        call_json = orion.post.call_args.kwargs["json"]
         assert call_json["type"] == "EOProduct"
         assert call_json["productType"]["value"] == "GRD"
         assert call_json["processingLevel"]["value"] == "L1"
