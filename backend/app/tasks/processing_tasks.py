@@ -1,9 +1,9 @@
 """
 Celery tasks for processing vegetation indices.
 
-Orion-LD is the source of truth. Results are persisted as VegetationIndex
-entities via upsert_vegetation_index_entity(). TimescaleDB is populated
-automatically by the telemetry-worker subscription on Orion-LD.
+Orion-LD is the source of truth. Results are persisted as EOProduct
+entities via upsert_eo_index(). TimescaleDB is populated automatically
+by the telemetry-worker subscription on Orion-LD.
 """
 
 import logging

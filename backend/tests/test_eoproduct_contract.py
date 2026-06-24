@@ -61,3 +61,11 @@ def test_persist_results_writes_eoproduct_only():
     eo.assert_called_once()
     assert eo.call_args.kwargs["index_type"] == "NDVI"
     assert eo.call_args.kwargs["raster_url"].endswith("path/ndvi.tif")
+
+
+def test_vegetationindex_writers_removed():
+    assert not hasattr(fi, "upsert_vegetation_index_entity")
+    assert not hasattr(fi, "_entity_id_for_parcel")
+    import inspect
+    src = inspect.getsource(fi)
+    assert "\"type\": \"VegetationIndex\"" not in src and "'type': 'VegetationIndex'" not in src
