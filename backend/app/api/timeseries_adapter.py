@@ -157,11 +157,6 @@ def _get_postgres_url() -> str:
     return url
 
 
-def _attribute_to_metric_name(attribute: str) -> str:
-    """Map DataHub attribute to telemetry.metric_name (e.g. ndvi -> NDVI)."""
-    return (attribute or "").strip().upper() or "NDVI"
-
-
 @router.get("/api/timeseries/entities/{entity_id}/data")
 async def get_timeseries_data(
     entity_id: str,
@@ -177,6 +172,11 @@ async def get_timeseries_data(
 
     DataHub BFF calls this with Fiware-Service and Authorization. Tenant from JWT.
     Timestamp column is Unix epoch **seconds** (float64) per ADAPTER_SPEC.
+
+    {entity_id} is the parcel URN (spec §4.1: per-parcel timeseries). EOProduct
+    rows are matched by id prefix urn:ngsi-ld:EOProduct:{tenant}:{parcel_short10}:
+    — same scheme as _history_from_telemetry_events — so all acquisitions for
+    the parcel are returned, not just one exact EOProduct id.
     """
     if format != "arrow":
         raise HTTPException(
@@ -210,6 +210,8 @@ async def get_timeseries_data(
     from psycopg2.extras import RealDictCursor
 
     index_key = attribute.lower()
+    parcel_short = (entity_id.split(":")[-1] if ":" in entity_id else entity_id)[:10]
+    eo_prefix = f"urn:ngsi-ld:EOProduct:{tenant_id}:{parcel_short}:"
 
     conn = None
     try:
@@ -221,12 +223,12 @@ async def get_timeseries_data(
             FROM telemetry_events
             WHERE tenant_id = %s
               AND entity_type = 'EOProduct'
-              AND entity_id = %s
+              AND entity_id LIKE %s
               AND observed_at >= %s
               AND observed_at < %s
             ORDER BY observed_at ASC
             """,
-            (tenant_id, entity_id, start_dt, end_dt),
+            (tenant_id, eo_prefix + "%", start_dt, end_dt),
         )
         rows = cur.fetchall()
         cur.close()
