@@ -78,3 +78,32 @@ def test_historical_baseline_writes_eoproduct():
     assert not hasattr(hb, "_upsert_agri_parcel_record")
     import inspect
     assert "upsert_eo_index" in inspect.getsource(hb._process_window)
+
+
+def test_upsert_eo_index_cloud_cover_na_does_not_raise():
+    orion = MagicMock()
+    orion.post.return_value = _resp(201)
+    stats = {"mean": 0.5, "min": 0.1, "max": 0.9, "std": 0.2, "pixel_count": 100}
+    with patch.object(fi, "SyncOrionClient", return_value=orion):
+        eid = fi.upsert_eo_index(
+            "montiko", "urn:ngsi-ld:AgriParcel:p", "NDVI", stats, date(2025, 9, 6),
+            cloud_cover="N/A",
+        )
+    assert eid is not None
+    body = orion.post.call_args.kwargs["json"]
+    assert "cloudCoverPercentage" not in body
+    assert body["ndvi"]["value"] == 0.5
+
+
+def test_upsert_eo_index_cloud_cover_empty_string_does_not_raise():
+    orion = MagicMock()
+    orion.post.return_value = _resp(201)
+    stats = {"mean": 0.5, "min": 0.1, "max": 0.9, "std": 0.2, "pixel_count": 100}
+    with patch.object(fi, "SyncOrionClient", return_value=orion):
+        eid = fi.upsert_eo_index(
+            "montiko", "urn:ngsi-ld:AgriParcel:p", "NDVI", stats, date(2025, 9, 6),
+            cloud_cover="",
+        )
+    assert eid is not None
+    body = orion.post.call_args.kwargs["json"]
+    assert "cloudCoverPercentage" not in body

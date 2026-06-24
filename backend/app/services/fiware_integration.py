@@ -91,7 +91,10 @@ def upsert_eo_index(tenant_id, parcel_id, index_type, statistics, sensing_date,
         index_key: index_attr,
     }
     if cloud_cover is not None:
-        entity["cloudCoverPercentage"] = {"type": "Property", "value": round(float(cloud_cover), 2)}
+        try:
+            entity["cloudCoverPercentage"] = {"type": "Property", "value": round(float(cloud_cover), 2)}
+        except (TypeError, ValueError):
+            pass
     try:
         resp = orion.post("/ngsi-ld/v1/entities", json=entity)
         if resp.status_code in (201, 204):
