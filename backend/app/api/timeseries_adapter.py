@@ -27,7 +27,7 @@ router = APIRouter(tags=["timeseries-adapter"])
 ARROW_MIME = "application/vnd.apache.arrow.stream"
 
 # ---------------------------------------------------------------------------
-# BFF: JSON historical endpoint for VegetationIndex entities (reads from
+# BFF: JSON historical endpoint for EOProduct entities (reads from
 # telemetry_events hypertable populated via NGSI-LD subscription).
 # Only SELECT — zero INSERT. Used by the frontend timeseries chart.
 # ---------------------------------------------------------------------------
@@ -48,14 +48,10 @@ async def get_vegetation_history(
 ):
     """Return historical vegetation index data from telemetry_events.
 
-    Queries the telemetry_events hypertable for VegetationIndex entities
-    linked to the given parcel. Returns JSON points for the frontend chart.
-
-    Available when FIWARE_NATIVE_MODE is 'dual' or 'true'. Falls back to
-    the legacy vegetation_indices_cache table when 'false'.
+    Queries the telemetry_events hypertable for EOProduct entities linked to
+    the given parcel (canonical vegetation-index entity, see Task 1/5).
+    Returns JSON points for the frontend chart.
     """
-    import json as json_mod
-
     tenant_id = current_user["tenant_id"]
 
     try:
@@ -69,16 +65,9 @@ async def get_vegetation_history(
     if end_dt.tzinfo is None:
         end_dt = end_dt.replace(tzinfo=timezone.utc)
 
-    fiware_mode = os.getenv("FIWARE_NATIVE_MODE", "false").lower().strip()
-
-    if fiware_mode in ("dual", "true"):
-        points = await _history_from_telemetry_events(
-            tenant_id, entity_id, index_type, start_dt, end_dt,
-        )
-    else:
-        points = await _history_from_legacy_cache(
-            tenant_id, entity_id, index_type, start_dt, end_dt,
-        )
+    points = await _history_from_telemetry_events(
+        tenant_id, entity_id, index_type, start_dt, end_dt,
+    )
 
     if not points:
         return {"points": []}
@@ -93,21 +82,21 @@ async def _history_from_telemetry_events(
     start_dt: datetime,
     end_dt: datetime,
 ) -> list:
-    """Read from telemetry_events hypertable (FIWARE native path)."""
+    """Read from telemetry_events hypertable: EOProduct entities for this parcel.
+
+    EOProduct id pattern (Task 1 writer): urn:ngsi-ld:EOProduct:{tenant}:{parcel_short10}:{date}
+    where parcel_short10 = the parcel URN's last segment truncated to 10 chars.
+    The index attribute is the lowercased index name, a Property whose `value`
+    is the zonal mean, with sub-Properties min/max/std.
+    """
+    import json as json_mod
+
     import psycopg2
     from psycopg2.extras import RealDictCursor
 
-    # The entity_id in telemetry_events is the VegetationIndex entity URN.
-    # We need to find entities whose payload contains refAgriParcel matching parcel_id.
-    # Entity ID pattern: urn:ngsi-ld:VegetationIndex:{tenant}:{parcel_short}
-    parcel_short = parcel_id.split(":")[-1] if ":" in parcel_id else parcel_id
-    vegetation_entity_pattern = f"urn:ngsi-ld:VegetationIndex:{tenant_id}:{parcel_short}"
-
-    # Attribute name in the payload
-    attr_mean = f"{index_type.lower()}Mean"
-    attr_min = f"{index_type.lower()}Min"
-    attr_max = f"{index_type.lower()}Max"
-    attr_std = f"{index_type.lower()}StdDev"
+    parcel_short = (parcel_id.split(":")[-1] if ":" in parcel_id else parcel_id)[:10]
+    eo_prefix = f"urn:ngsi-ld:EOProduct:{tenant_id}:{parcel_short}:"
+    index_key = index_type.lower()
 
     conn = None
     try:
@@ -118,13 +107,13 @@ async def _history_from_telemetry_events(
             SELECT observed_at, payload
             FROM telemetry_events
             WHERE tenant_id = %s
-              AND entity_id = %s
-              AND entity_type = 'VegetationIndex'
+              AND entity_type = 'EOProduct'
+              AND entity_id LIKE %s
               AND observed_at >= %s
               AND observed_at < %s
             ORDER BY observed_at ASC
             """,
-            (tenant_id, vegetation_entity_pattern, start_dt, end_dt),
+            (tenant_id, eo_prefix + "%", start_dt, end_dt),
         )
         rows = cur.fetchall()
         cur.close()
@@ -139,76 +128,23 @@ async def _history_from_telemetry_events(
     for row in rows:
         payload = row.get("payload") or {}
         if isinstance(payload, str):
-            import json as json_mod
             payload = json_mod.loads(payload)
 
-        mean_prop = payload.get(attr_mean, {})
-        min_prop = payload.get(attr_min, {})
-        max_prop = payload.get(attr_max, {})
-        std_prop = payload.get(attr_std, {})
-
-        mean_val = mean_prop.get("value") if isinstance(mean_prop, dict) else None
+        idx = payload.get(index_key) or {}
+        mean_val = idx.get("value") if isinstance(idx, dict) else None
         if mean_val is None:
             continue
+
+        def _sub(key):
+            v = idx.get(key)
+            return float(v["value"]) if isinstance(v, dict) and v.get("value") is not None else None
 
         points.append({
             "date": row["observed_at"].isoformat() if hasattr(row["observed_at"], "isoformat") else str(row["observed_at"]),
             "mean": float(mean_val),
-            "min": float(min_prop.get("value", 0)) if isinstance(min_prop, dict) else None,
-            "max": float(max_prop.get("value", 0)) if isinstance(max_prop, dict) else None,
-            "std": float(std_prop.get("value", 0)) if isinstance(std_prop, dict) else None,
-        })
-
-    return points
-
-
-async def _history_from_legacy_cache(
-    tenant_id: str,
-    entity_id: str,
-    index_type: str,
-    start_dt: datetime,
-    end_dt: datetime,
-) -> list:
-    """Read from vegetation_indices_cache (legacy fallback)."""
-    import psycopg2
-    from psycopg2.extras import RealDictCursor
-
-    conn = None
-    try:
-        conn = psycopg2.connect(_get_postgres_url(), cursor_factory=RealDictCursor)
-        cur = conn.cursor()
-        cur.execute(
-            """
-            SELECT calculated_at, mean_value, min_value, max_value, std_dev
-            FROM vegetation_indices_cache
-            WHERE tenant_id = %s
-              AND entity_id = %s
-              AND index_type = %s
-              AND calculated_at >= %s
-              AND calculated_at < %s
-            ORDER BY calculated_at ASC
-            """,
-            (tenant_id, entity_id, index_type.upper(), start_dt.isoformat(), end_dt.isoformat()),
-        )
-        rows = cur.fetchall()
-        cur.close()
-    except Exception as e:
-        logger.exception("BFF legacy cache query failed: %s", e)
-        raise HTTPException(status_code=500, detail="Error querying historical data")
-    finally:
-        if conn:
-            conn.close()
-
-    points = []
-    for row in rows:
-        if row.get("mean_value") is None:
-            continue
-        points.append({
-            "date": str(row["calculated_at"]),
-            "mean": float(row["mean_value"]),
-            "min": float(row["min_value"]) if row.get("min_value") is not None else None,
-            "max": float(row["max_value"]) if row.get("max_value") is not None else None,
-            "std": float(row["std_dev"]) if row.get("std_dev") is not None else None,
+            "min": _sub("min"),
+            "max": _sub("max"),
+            "std": _sub("std"),
         })
 
     return points
@@ -249,7 +185,6 @@ async def get_timeseries_data(
         )
 
     tenant_id = current_user["tenant_id"]
-    metric_name = _attribute_to_metric_name(attribute)
 
     try:
         start_dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
@@ -269,47 +204,30 @@ async def get_timeseries_data(
             detail="start_time must be before end_time",
         )
 
+    import json as json_mod
+
     import psycopg2
     from psycopg2.extras import RealDictCursor
 
+    index_key = attribute.lower()
+
     conn = None
-    fiware_mode = os.getenv("FIWARE_NATIVE_MODE", "false").lower().strip()
     try:
         conn = psycopg2.connect(_get_postgres_url(), cursor_factory=RealDictCursor)
         cur = conn.cursor()
-
-        if fiware_mode in ("true", "dual"):
-            # SYNC-2: FIWARE native mode → query telemetry_events (canonical source)
-            cur.execute(
-                """
-                SELECT observed_at AS time,
-                       (payload->'measurements'->>%s)::float AS value_numeric
-                FROM telemetry_events
-                WHERE tenant_id = %s
-                  AND entity_type = 'VegetationIndex'
-                  AND entity_id = %s
-                  AND observed_at >= %s
-                  AND observed_at < %s
-                  AND payload->'measurements'->>%s IS NOT NULL
-                ORDER BY observed_at ASC
-                """,
-                (attribute, tenant_id, entity_id, start_dt, end_dt, attribute),
-            )
-        else:
-            # Legacy mode: query telemetry table
-            cur.execute(
-                """
-                SELECT time, value_numeric
-                FROM telemetry
-                WHERE tenant_id = %s
-                  AND entity_id = %s
-                  AND metric_name = %s
-                  AND time >= %s
-                  AND time < %s
-                ORDER BY time ASC
-                """,
-                (tenant_id, entity_id, metric_name, start_dt, end_dt),
-            )
+        cur.execute(
+            """
+            SELECT observed_at, payload
+            FROM telemetry_events
+            WHERE tenant_id = %s
+              AND entity_type = 'EOProduct'
+              AND entity_id = %s
+              AND observed_at >= %s
+              AND observed_at < %s
+            ORDER BY observed_at ASC
+            """,
+            (tenant_id, entity_id, start_dt, end_dt),
+        )
         rows = cur.fetchall()
         cur.close()
     except Exception as e:
@@ -322,20 +240,24 @@ async def get_timeseries_data(
         if conn:
             conn.close()
 
-    if not rows:
-        return Response(status_code=status.HTTP_204_NO_CONTENT)
-
     timestamps_sec = []
+    values = []
     for r in rows:
-        t = r["time"]
-        if hasattr(t, "timestamp"):
-            timestamps_sec.append(float(t.timestamp()))
-        else:
-            timestamps_sec.append(float(t))
-    values = [
-        float(r["value_numeric"]) if r["value_numeric"] is not None else float("nan")
-        for r in rows
-    ]
+        payload = r.get("payload") or {}
+        if isinstance(payload, str):
+            payload = json_mod.loads(payload)
+
+        idx = payload.get(index_key) or {}
+        value_numeric = idx.get("value") if isinstance(idx, dict) else None
+        if value_numeric is None:
+            continue
+
+        t = r["observed_at"]
+        timestamps_sec.append(float(t.timestamp()) if hasattr(t, "timestamp") else float(t))
+        values.append(float(value_numeric))
+
+    if not timestamps_sec:
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     if resolution and resolution > 0 and len(timestamps_sec) > resolution:
         step = max(1, len(timestamps_sec) // resolution)
