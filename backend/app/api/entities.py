@@ -21,18 +21,16 @@ logger = logging.getLogger(__name__)
 async def _resolve_entity_name(entity_id: str, tenant_id: str) -> Optional[str]:
     """Query Orion-LD for the entity's name attribute."""
     try:
-        async with OrionClient(tenant_id) as orion:
-            resp = await orion.get(
-                f"/ngsi-ld/v1/entities/{entity_id}",
-                params={"attrs": "name"},
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                name_attr = data.get("name", {})
-                if isinstance(name_attr, dict) and "value" in name_attr:
-                    return name_attr["value"]
-                if isinstance(name_attr, str):
-                    return name_attr
+        orion = OrionClient(tenant_id)
+        try:
+            data = await orion.get_entity(entity_id)
+        finally:
+            await orion.close()
+        name_attr = data.get("name", {})
+        if isinstance(name_attr, dict) and "value" in name_attr:
+            return name_attr["value"]
+        if isinstance(name_attr, str):
+            return name_attr
     except Exception:
         pass
     return None

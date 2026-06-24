@@ -260,42 +260,38 @@ class WeatherService:
             List of SoilSensorData from IoT sensors
         """
         try:
-            async with OrionClient(tenant_id) as orion:
+            orion = OrionClient(tenant_id)
+            try:
+                attrs = "soilMoisture,soilTemperature,soilEC,soilPH,leafWetness,location"
                 # Query Orion-LD for SoilProbe devices in this parcel
-                response = await orion.get("/ngsi-ld/v1/entities", params={
-                    "type": "SoilProbe",
-                    "q": f"hasAgriParcel=={entity_id}",
-                    "attrs": "soilMoisture,soilTemperature,soilEC,soilPH,leafWetness,location"
-                })
-
+                entities = await orion.query_entities(
+                    type="SoilProbe", q=f"hasAgriParcel=={entity_id}", attrs=attrs,
+                )
                 # Fallback to legacy refParcel if new name returns nothing
-                if response.status_code == 200 and not response.json():
-                    response = await orion.get("/ngsi-ld/v1/entities", params={
-                        "type": "SoilProbe",
-                        "q": f"refParcel=={entity_id}",
-                        "attrs": "soilMoisture,soilTemperature,soilEC,soilPH,leafWetness,location"
-                    })
+                if not entities:
+                    entities = await orion.query_entities(
+                        type="SoilProbe", q=f"refParcel=={entity_id}", attrs=attrs,
+                    )
+            finally:
+                await orion.close()
 
-                if response.status_code == 200:
-                    entities = response.json()
-                    sensor_data = []
+            sensor_data = []
+            for entity in entities:
+                sensor_data.append(SoilSensorData(
+                    sensor_id=entity.get("id", "unknown"),
+                    timestamp=datetime.fromisoformat(
+                        entity.get("soilMoisture", {}).get("observedAt", datetime.now(timezone.utc).isoformat()).replace("Z", "+00:00")
+                    ) if "soilMoisture" in entity else datetime.now(timezone.utc),
+                    soil_moisture=entity.get("soilMoisture", {}).get("value"),
+                    soil_temperature=entity.get("soilTemperature", {}).get("value"),
+                    soil_ec=entity.get("soilEC", {}).get("value"),
+                    soil_ph=entity.get("soilPH", {}).get("value"),
+                    leaf_wetness=entity.get("leafWetness", {}).get("value"),
+                    location=entity.get("location", {}).get("value", {}).get("coordinates")
+                ))
 
-                    for entity in entities:
-                        sensor_data.append(SoilSensorData(
-                            sensor_id=entity.get("id", "unknown"),
-                            timestamp=datetime.fromisoformat(
-                                entity.get("soilMoisture", {}).get("observedAt", datetime.now(timezone.utc).isoformat()).replace("Z", "+00:00")
-                            ) if "soilMoisture" in entity else datetime.now(timezone.utc),
-                            soil_moisture=entity.get("soilMoisture", {}).get("value"),
-                            soil_temperature=entity.get("soilTemperature", {}).get("value"),
-                            soil_ec=entity.get("soilEC", {}).get("value"),
-                            soil_ph=entity.get("soilPH", {}).get("value"),
-                            leaf_wetness=entity.get("leafWetness", {}).get("value"),
-                            location=entity.get("location", {}).get("value", {}).get("coordinates")
-                        ))
-
-                    logger.info(f"Retrieved {len(sensor_data)} soil sensors for {entity_id}")
-                    return sensor_data
+            logger.info(f"Retrieved {len(sensor_data)} soil sensors for {entity_id}")
+            return sensor_data
 
         except Exception as e:
             logger.debug(f"Could not fetch soil sensors: {e}")

@@ -210,17 +210,12 @@ async def _get_crop_species_from_orion(tenant_id: str, entity_id: str) -> Option
     is assigned or Orion-LD is unreachable. Never raises.
     """
     try:
-        async with OrionClient(tenant_id) as orion:
-            # Query parcel entity for hasAgriCrop relationship
-            resp = await orion.get(
-                f"/ngsi-ld/v1/entities/{entity_id}?attrs=hasAgriCrop,refAgriCrop",
-            )
-            if resp.status_code != 200:
-                return None
-
-            parcel = resp.json()
+        orion = OrionClient(tenant_id)
+        try:
+            # Read parcel entity for hasAgriCrop relationship
+            parcel = await orion.get_entity(entity_id)
             crop_rel = parcel.get("hasAgriCrop") or parcel.get("refAgriCrop")
-            if not crop_rel:
+            if not isinstance(crop_rel, dict):
                 return None
 
             crop_id = crop_rel.get("object") or crop_rel.get("value")
@@ -228,17 +223,13 @@ async def _get_crop_species_from_orion(tenant_id: str, entity_id: str) -> Option
                 return None
 
             # Read AgriCrop entity for species name
-            resp2 = await orion.get(
-                f"/ngsi-ld/v1/entities/{crop_id}?attrs=cropSpecies,name",
-            )
-            if resp2.status_code != 200:
-                return None
-
-            crop = resp2.json()
+            crop = await orion.get_entity(crop_id)
             return (
                 (crop.get("cropSpecies") or {}).get("value")
                 or (crop.get("name") or {}).get("value")
             )
+        finally:
+            await orion.close()
     except Exception:
         logger.debug("Failed to read AgriCrop for %s", entity_id)
         return None
@@ -291,17 +282,18 @@ async def _dispatch_analyze_for_parcel(
     geometry = None
     bbox = None
     try:
-        async with OrionClient(tenant_id) as orion:
-            resp = await orion.get(f"/ngsi-ld/v1/entities/{entity_id}")
-            if resp.status_code == 200:
-                entity = resp.json()
-                loc = entity.get("location", {})
-                geom = loc.get("value") or loc
-                if geom and "coordinates" in geom:
-                    geometry = geom
-                    from shapely.geometry import shape as shp
-                    geom_obj = shp(geom)
-                    bbox = list(geom_obj.bounds)
+        orion = OrionClient(tenant_id)
+        try:
+            entity = await orion.get_entity(entity_id)
+        finally:
+            await orion.close()
+        loc = entity.get("location", {})
+        geom = (loc.get("value") if isinstance(loc, dict) else None) or loc
+        if isinstance(geom, dict) and "coordinates" in geom:
+            geometry = geom
+            from shapely.geometry import shape as shp
+            geom_obj = shp(geom)
+            bbox = list(geom_obj.bounds)
     except Exception as exc:
         logger.warning("Could not fetch entity geometry from Orion-LD: %s", exc)
 
