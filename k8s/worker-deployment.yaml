@@ -44,7 +44,7 @@ spec:
             readOnlyRootFilesystem: false
             capabilities:
               drop: ["ALL"]
-          image: ghcr.io/nkz-os/vegetation-health-nkz/vegetation-prime-api:4b202b7a313d131cf68b441c7ca467d99fb385e1
+          image: ghcr.io/nkz-os/vegetation-health-nkz/vegetation-prime-api:4eb637651d1c29441fc63fda80002db8db3be988
           imagePullPolicy: Always
           # concurrency=1: one task per pod avoids OOM with heavy Sentinel-2 scenes.
           # Scale horizontally (increase replicas) for more throughput.
