@@ -2,13 +2,16 @@
 Database configuration and session management.
 """
 
+import logging
 import os
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.pool import NullPool
 from app.models.base import Base
 from fastapi import Depends
 from app.middleware.auth import get_tenant_id
+
+logger = logging.getLogger(__name__)
 
 # Database URL
 DATABASE_URL = os.getenv('DATABASE_URL')
@@ -72,6 +75,7 @@ def get_db_with_tenant(tenant_id: str = Depends(get_tenant_id)):
                 db.execute(text(f"SET app.current_tenant = '{safe_tenant}'"))
                 db.commit()
             except Exception as e:
+                db.rollback()
                 logger.warning("Failed to set app.current_tenant: %s", e)
         yield db
     finally:
