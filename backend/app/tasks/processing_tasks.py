@@ -37,11 +37,18 @@ def _get_redis():
     return _redis_client
 
 
-def _decrement_and_cleanup_bands(scene_product_id: str) -> bool:
+def _decrement_and_cleanup_bands(scene_product_id: str, local_processing_dir=None) -> bool:
     """Decrement Redis counter and cleanup tenant band files if this is the last calculation.
+
+    When this is the last index calculation for the scene, also frees the local
+    Sen2Res/band working dir (``/tmp/vegetation_processing/<tenant>/<scene>``).
+    Deleting it only at this point is race-free: no concurrent calc_index task
+    still needs the shared bands. (Child recycling via max_tasks_per_child does
+    NOT free pod /tmp, so without this the dir grows unbounded -> disk pressure.)
 
     Returns True if bands were cleaned up, False otherwise.
     """
+    import shutil
     try:
         key = f"vegetation:bandclean:{scene_product_id}"
         r = _get_redis()
@@ -62,6 +69,12 @@ def _decrement_and_cleanup_bands(scene_product_id: str) -> bool:
                     deleted, tenant_bucket, band_prefix,
                 )
             r.delete(key, key + ":meta")
+            if local_processing_dir is not None and os.path.isdir(str(local_processing_dir)):
+                try:
+                    shutil.rmtree(str(local_processing_dir), ignore_errors=True)
+                    logger.info("Freed local processing dir %s", local_processing_dir)
+                except Exception as fs_err:
+                    logger.debug("Local processing dir cleanup failed %s: %s", local_processing_dir, fs_err)
             return True
         elif remaining is None:
             logger.debug("Band cleanup counter not found for scene %s (may have expired)", scene_product_id)
@@ -364,7 +377,10 @@ def calculate_vegetation_index(
                     "skipped": True,
                 })
                 db.commit()
-                _decrement_and_cleanup_bands(scene.scene_id)
+                _decrement_and_cleanup_bands(
+                    scene.scene_id,
+                    local_processing_dir=Path(f"/tmp/vegetation_processing/{tenant_id}/{scene.id}"),
+                )
                 return
 
             scenes_to_process = [scene]
@@ -565,7 +581,10 @@ def calculate_vegetation_index(
 
         # Band cleanup: delete raw bands from tenant bucket after last index calc
         if not is_temporal_composite and primary_scene:
-            _decrement_and_cleanup_bands(primary_scene.scene_id)
+            _decrement_and_cleanup_bands(
+                primary_scene.scene_id,
+                local_processing_dir=Path(f"/tmp/vegetation_processing/{tenant_id}/{primary_scene.id}"),
+            )
 
         mode_str = "temporal composite" if is_temporal_composite else "single scene"
         logger.info(
@@ -598,12 +617,12 @@ def calculate_vegetation_index(
                 pass
         raise
     finally:
-        # Clean up temporary files. ONLY the job-specific indices dir is safe
-        # to wipe here — the tenant-level processing dir (/tmp/vegetation_processing/<tenant>)
-        # is shared by concurrent calc_index tasks for the same scene, and
-        # erasing it caused 'Band file not found: B08.tif' races between
-        # NDVI/EVI/SAVI/GNDVI/NDRE running on the same worker. Bands accumulate
-        # under /tmp until the pod recycles (worker_max_tasks_per_child=50).
+        # Clean up temporary files. ONLY the job-specific indices dir is wiped
+        # here — the per-scene processing dir (/tmp/vegetation_processing/<tenant>/<scene>)
+        # is shared by concurrent calc_index tasks for the same scene, so it is
+        # freed exactly once, at the LAST index, inside _decrement_and_cleanup_bands
+        # (race-free). A worker-boot sweep (see celery_app) catches orphans left
+        # by jobs that died before their last index.
         import shutil
         job_indices_dir = Path(f"/tmp/vegetation_indices/{tenant_id}/{job_id}")
         if job_indices_dir.exists():
