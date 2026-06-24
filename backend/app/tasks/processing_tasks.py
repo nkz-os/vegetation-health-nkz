@@ -20,7 +20,7 @@ from app.models import VegetationJob, VegetationScene
 from app.services.processor import VegetationIndexProcessor
 from app.services.storage import create_storage_service, generate_tenant_bucket_name
 from app.database import get_db_session
-from app.services.fiware_integration import upsert_eo_product, upsert_vegetation_index_entity
+from app.services.fiware_integration import upsert_eo_index
 
 logger = logging.getLogger(__name__)
 
@@ -140,55 +140,35 @@ def _persist_results(
     remote_raster_path: str,
     primary_scene: VegetationScene,
 ) -> None:
-    """Persist analysis results to Orion-LD as VegetationIndex entity.
+    """Persist analysis results to Orion-LD as an EOProduct entity.
 
     Orion-LD is the source of truth. TimescaleDB is populated automatically
     via the NGSI-LD subscription from Orion-LD to telemetry-worker.
     """
-    custom_attr_name = None
-    if index_type == 'CUSTOM' and formula:
-        formula_hash = hashlib.md5(formula.encode()).hexdigest()[:8]
-        custom_attr_name = f"custom_{formula_hash}"
-
     if not job.entity_id:
-        logger.warning("No entity_id on job %s — cannot upsert VegetationIndex", job.id)
+        logger.warning("No entity_id on job %s — cannot upsert EOProduct", job.id)
+        return
+    if index_type == 'CUSTOM':
+        logger.info("CUSTOM index %s not persisted to EOProduct (skipped)", formula)
         return
 
     bucket_used = os.getenv("VEGETATION_COG_BUCKET") or generate_tenant_bucket_name(tenant_id)
     raster_url = f"s3://{bucket_used}/{remote_raster_path}"
-    result = upsert_vegetation_index_entity(
+    preview_url = raster_url[:-4] + ".png" if raster_url.endswith(".tif") else None
+    eid = upsert_eo_index(
         tenant_id=tenant_id,
         parcel_id=job.entity_id,
         index_type=index_type,
         statistics=statistics,
-        raster_url=raster_url,
         sensing_date=primary_scene.sensing_date,
-        custom_attr_name=custom_attr_name,
+        raster_url=raster_url,
+        preview_url=preview_url,
+        cloud_cover=primary_scene.cloud_coverage if hasattr(primary_scene, "cloud_coverage") else None,
     )
-    if result:
-        logger.info("VegetationIndex entity upserted: %s", result)
+    if eid:
+        logger.info("EOProduct upserted: %s (%s)", eid, index_type)
     else:
-        logger.error("Failed to upsert VegetationIndex entity")
-
-    # Dual-write (migration window): publish same analysis as EOProduct.
-    # VegetationIndex writes removed in Phase 5 once crop-health reads EOProduct.
-    if index_type != 'CUSTOM':
-        try:
-            eo_result = upsert_eo_product(
-                tenant_id=tenant_id,
-                parcel_id=job.entity_id,
-                product_type=index_type,
-                statistics=statistics,
-                raster_url=raster_url,
-                sensing_date=primary_scene.sensing_date,
-                pixel_count=int(statistics.get('pixel_count', 0)),
-            )
-            if eo_result:
-                logger.info("EOProduct dual-write upserted: %s", eo_result)
-            else:
-                logger.error("EOProduct dual-write failed (non-blocking)")
-        except Exception as exc:
-            logger.error("EOProduct dual-write error (non-blocking): %s", exc)
+        logger.error("Failed to upsert EOProduct for %s/%s", job.entity_id, index_type)
 
 
 @celery_app.task(

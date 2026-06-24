@@ -43,3 +43,21 @@ def test_upsert_eo_index_merges_second_index_via_patch():
     attrs = orion.patch.call_args.kwargs["json"]
     assert "ndre" in attrs and attrs["ndre"]["value"] == 0.41
     assert "id" not in attrs and "type" not in attrs
+
+
+from unittest.mock import MagicMock, patch
+from datetime import date as _d
+from app.tasks import processing_tasks as pt
+
+
+def test_persist_results_writes_eoproduct_only():
+    job = MagicMock(); job.entity_id = "urn:ngsi-ld:AgriParcel:p"; job.id = "j1"
+    scene = MagicMock(); scene.sensing_date = _d(2025, 9, 6)
+    stats = {"mean": 0.7, "min": 0.2, "max": 0.9, "std": 0.1, "pixel_count": 10}
+    with patch.object(pt, "upsert_eo_index", return_value="eid") as eo, \
+         patch.object(pt, "generate_tenant_bucket_name", return_value="bkt"):
+        assert not hasattr(pt, "upsert_vegetation_index_entity")  # removed in Task 3
+        pt._persist_results("montiko", job, "NDVI", None, stats, "path/ndvi.tif", scene)
+    eo.assert_called_once()
+    assert eo.call_args.kwargs["index_type"] == "NDVI"
+    assert eo.call_args.kwargs["raster_url"].endswith("path/ndvi.tif")
