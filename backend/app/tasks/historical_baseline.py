@@ -127,13 +127,10 @@ def _process_window(
             logger.warning("Raster processing failed for %s: %s", best["id"], e)
             return False
 
-    # Calculate year and DOY from sensing date
     try:
         sensing_dt = date.fromisoformat(best["sensing_date"])
     except (ValueError, TypeError):
         sensing_dt = window_start
-    year = sensing_dt.year
-    doy_start = sensing_dt.timetuple().tm_yday
 
     # Persist to Orion-LD as EOProduct
     upsert_eo_index(

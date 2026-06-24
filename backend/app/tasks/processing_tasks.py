@@ -8,7 +8,6 @@ by the telemetry-worker subscription on Orion-LD.
 
 import logging
 import os
-import hashlib
 from typing import Dict, Any, List, Optional
 from datetime import datetime, date, timezone
 import uuid

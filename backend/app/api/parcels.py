@@ -291,10 +291,10 @@ async def _delete_orion_entity_if_orphan(
     """Drop the per-parcel VegetationIndex entity from Orion-LD ONLY when no
     completed calc_index jobs remain for this parcel.
 
-    Per fiware_integration._entity_id_for_parcel, there is exactly one
-    VegetationIndex entity per parcel; it is PATCH-updated on each analysis.
-    We only DELETE it when the parcel has truly nothing left to surface,
-    otherwise we'd lie about the entity having been wiped.
+    Legacy cleanup: VegetationIndex was the deprecated per-parcel entity
+    (superseded by EOProduct, one per parcel+sensingDate). We only DELETE
+    it when the parcel has truly nothing left to surface, otherwise we'd
+    lie about the entity having been wiped.
     """
     remaining = (
         db.query(func.count(VegetationJob.id))
