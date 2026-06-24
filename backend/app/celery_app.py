@@ -2,10 +2,42 @@
 Celery application configuration for Vegetation Prime module.
 """
 
+import logging
 import os
+import shutil
+
 from celery import Celery
 from celery.schedules import crontab
+from celery.signals import worker_ready
 from kombu import Queue
+
+logger = logging.getLogger(__name__)
+
+# Root for ephemeral per-scene band/Sen2Res working dirs (pod-local /tmp).
+PROCESSING_ROOT = "/tmp/vegetation_processing"
+
+
+def _sweep_processing_root(root: str = PROCESSING_ROOT) -> bool:
+    """Remove the per-scene processing root. Returns True if something was removed.
+
+    Called once at worker boot (worker_ready) — never per child recycle — so no
+    concurrent calc_index task is using the shared bands. Catches orphans left by
+    jobs that died before their last index; the per-job last-index cleanup in
+    processing_tasks handles the normal case.
+    """
+    try:
+        if os.path.isdir(root):
+            shutil.rmtree(root, ignore_errors=True)
+            logger.info("Worker boot: swept stale processing dir %s", root)
+            return True
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("Worker boot sweep failed for %s: %s", root, exc)
+    return False
+
+
+@worker_ready.connect
+def _on_worker_ready(**_kwargs):
+    _sweep_processing_root()
 
 # Create Celery app
 celery_app = Celery(
