@@ -262,11 +262,10 @@ async def bulk_delete_jobs(
 
             # Clean Orion-LD EOProduct
             if job.sensing_date:
-                from app.services.fiware_integration import delete_eo_product, _entity_id_for_optical_eo_product
+                from app.services.fiware_integration import delete_eo_product, _entity_id_for_acquisition
                 try:
-                    index_type = (job.parameters or {}).get("index", "NDVI")
                     sensing_str = job.sensing_date.isoformat() if hasattr(job.sensing_date, 'isoformat') else str(job.sensing_date)
-                    eo_id = _entity_id_for_optical_eo_product(tenant_id, job.entity_id, index_type, sensing_str)
+                    eo_id = _entity_id_for_acquisition(tenant_id, job.entity_id, sensing_str)
                     delete_eo_product(tenant_id, eo_id)
                 except Exception as e:
                     logger.warning("EOProduct cleanup failed for job %s: %s", job_id, e)

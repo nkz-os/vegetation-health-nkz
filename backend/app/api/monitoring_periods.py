@@ -268,10 +268,9 @@ async def delete_monitoring_period(
 
             # Delete EOProduct from Orion-LD
             if job.sensing_date:
-                index_type = (job.parameters or {}).get("index", "NDVI")
                 sensing_str = job.sensing_date.isoformat() if hasattr(job.sensing_date, 'isoformat') else str(job.sensing_date)
-                from app.services.fiware_integration import _entity_id_for_optical_eo_product
-                eo_id = _entity_id_for_optical_eo_product(tenant_id, entity_id, index_type, sensing_str)
+                from app.services.fiware_integration import _entity_id_for_acquisition
+                eo_id = _entity_id_for_acquisition(tenant_id, entity_id, sensing_str)
                 delete_eo_product(tenant_id, eo_id)
 
             # Delete raster from MinIO

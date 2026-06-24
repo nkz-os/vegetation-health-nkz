@@ -202,7 +202,6 @@ async def export_arrow(
 # Parcel lifecycle: setup/teardown
 # ---------------------------------------------------------------------------
 
-from nkz_platform_sdk.activation import ModuleActivation
 from nkz_platform_sdk.subscriptions import SubscriptionRegistrar
 
 INTERNAL_SECRET = os.getenv("INTERNAL_SERVICE_SECRET", "")
@@ -220,8 +219,8 @@ async def setup_parcel(request: Request, body: SetupParcelRequest):
     """Internal endpoint called by entity-manager on parcel activation.
 
     Validates X-Internal-Service-Secret (defense-in-depth, primary auth is
-    api-gateway OIDC). Creates placeholder entities in Orion-LD and ensures
-    the VegetationIndex subscription for the tenant.
+    api-gateway OIDC). Ensures the EOProduct subscription for the tenant.
+    EOProduct entities themselves are created on first analysis, not here.
     """
     secret = request.headers.get("X-Internal-Service-Secret", "")
     if not INTERNAL_SECRET or not hmac.compare_digest(secret, INTERNAL_SECRET):
@@ -238,28 +237,7 @@ async def setup_parcel(request: Request, body: SetupParcelRequest):
         logger.info("Deactivated vegetation-health for parcel %s", parcel_urn)
         return {"message": "deactivated", "parcel_id": body.parcel_id}
 
-    # Create placeholder entities in Orion-LD
-    activation = ModuleActivation(tenant_id=body.tenant_id)
-    try:
-        result = await activation.ensure_entities(
-            parcel_id=parcel_urn,
-            entities=[{"type": "VegetationIndex", "id_suffix": "latest"}],
-        )
-    finally:
-        await activation.close()
-
-    logger.info(
-        "setup-parcel %s tenant=%s: created=%d skipped=%d errors=%d",
-        body.parcel_id, body.tenant_id,
-        result["created"], result["skipped"], len(result["errors"]),
-    )
-    if result["errors"] and not (result["created"] or result["skipped"]):
-        raise HTTPException(
-            status_code=502,
-            detail=f"Orion-LD entity creation failed: {result['errors'][:3]}",
-        )
-
-    # Ensure the VegetationIndex subscription for this tenant
+    # Ensure the EOProduct subscription for this tenant
     orion_url = os.getenv("ORION_LD_URL", "http://orion-ld-service:1026")
     context_url = os.getenv("ORION_LD_CONTEXT", "http://api-gateway-service:5000/ngsi-ld-context.json")
     notification_url = os.getenv(
@@ -282,7 +260,6 @@ async def setup_parcel(request: Request, body: SetupParcelRequest):
     return {
         "message": "activated",
         "parcel_id": body.parcel_id,
-        "created": result["created"],
-        "skipped": result["skipped"],
-        "entity_ids": result["entity_ids"],
+        "subscription_created": sub_result["created"],
+        "subscription_skipped": sub_result["skipped"],
     }
