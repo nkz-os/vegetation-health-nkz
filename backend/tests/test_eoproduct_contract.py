@@ -69,3 +69,12 @@ def test_vegetationindex_writers_removed():
     import inspect
     src = inspect.getsource(fi)
     assert "\"type\": \"VegetationIndex\"" not in src and "'type': 'VegetationIndex'" not in src
+
+
+from app.tasks import historical_baseline as hb
+
+
+def test_historical_baseline_writes_eoproduct():
+    assert not hasattr(hb, "_upsert_agri_parcel_record")
+    import inspect
+    assert "upsert_eo_index" in inspect.getsource(hb._process_window)

@@ -2,18 +2,18 @@
 Celery task for building historical NDVI baseline per parcel.
 
 Ephemeral processing: downloads Sentinel-2 bands to /tmp, calculates zonal
-statistics over the parcel geometry, writes AgriParcelRecord to Orion-LD,
+statistics over the parcel geometry, writes an EOProduct to Orion-LD,
 then discards the bands. No rasters are stored in MinIO.
 """
 import logging
 import os
 import tempfile
 from datetime import date, timedelta
-from typing import Optional
 
 import numpy as np
 
 from app.celery_app import celery_app
+from app.services.fiware_integration import upsert_eo_index
 
 logger = logging.getLogger(__name__)
 
@@ -53,61 +53,6 @@ def _get_parcel_geometry(tenant_id: str, entity_id: str) -> tuple:
         intersects = geom_obj.__geo_interface__
 
     return intersects, bbox
-
-
-def _upsert_agri_parcel_record(
-    tenant_id: str,
-    entity_id: str,
-    sensing_date: str,
-    index: str,
-    mean_val: float,
-    min_val: float,
-    max_val: float,
-    std_val: float,
-    window_days: int,
-    year: int,
-    doy_start: int,
-) -> Optional[str]:
-    """Write an AgriParcelRecord entity to Orion-LD."""
-    from nkz_platform_sdk import SyncOrionClient
-
-    parcel_short = entity_id.split(":")[-1] if ":" in entity_id else entity_id
-    record_id = f"urn:ngsi-ld:AgriParcelRecord:{tenant_id}:{parcel_short}:{index.lower()}:{year}-{doy_start}"
-
-    # entity_id may be full URN or short ID
-    parcel_urn = entity_id if entity_id.startswith("urn:ngsi-ld:AgriParcel:") else f"urn:ngsi-ld:AgriParcel:{entity_id}"
-    entity = {
-        "id": record_id,
-        "type": "AgriParcelRecord",
-        "observedAt": {"type": "Property", "value": sensing_date},
-        "hasAgriParcel": {
-            "type": "Relationship",
-            "object": parcel_urn,
-        },
-        f"{index.lower()}Mean": {"type": "Property", "value": round(mean_val, 4)},
-        f"{index.lower()}Min": {"type": "Property", "value": round(min_val, 4)},
-        f"{index.lower()}Max": {"type": "Property", "value": round(max_val, 4)},
-        f"{index.lower()}Std": {"type": "Property", "value": round(std_val, 4)},
-        "windowSize": {"type": "Property", "value": window_days},
-        "year": {"type": "Property", "value": year},
-        "@context": "https://nekazari.robotika.cloud/ngsi-ld-context.json",
-    }
-
-    try:
-        orion = SyncOrionClient(tenant_id)
-        resp = orion.post("/ngsi-ld/v1/entities", json=entity)
-        if resp.status_code in (201, 204):
-            logger.debug("Upserted AgriParcelRecord %s", record_id)
-            return record_id
-        else:
-            logger.warning(
-                "Failed to upsert AgriParcelRecord %s: %s %s",
-                record_id, resp.status_code, resp.text[:200],
-            )
-            return None
-    except Exception as e:
-        logger.warning("Orion-LD write failed for %s: %s", record_id, e)
-        return None
 
 
 def _process_window(
@@ -190,19 +135,13 @@ def _process_window(
     year = sensing_dt.year
     doy_start = sensing_dt.timetuple().tm_yday
 
-    # Persist to Orion-LD
-    _upsert_agri_parcel_record(
+    # Persist to Orion-LD as EOProduct
+    upsert_eo_index(
         tenant_id=tenant_id,
-        entity_id=entity_id,
-        sensing_date=best["sensing_date"],
-        index=index,
-        mean_val=mean_val,
-        min_val=min_val,
-        max_val=max_val,
-        std_val=std_val,
-        window_days=(window_end - window_start).days,
-        year=year,
-        doy_start=doy_start,
+        parcel_id=entity_id if entity_id.startswith("urn:ngsi-ld:AgriParcel:") else f"urn:ngsi-ld:AgriParcel:{entity_id}",
+        index_type=index,
+        statistics={"mean": mean_val, "min": min_val, "max": max_val, "std": std_val, "pixel_count": int(np.sum(valid))},
+        sensing_date=sensing_dt,
     )
 
     return True
@@ -228,7 +167,7 @@ def build_historical_baseline(
 
     For each year going back, divides the year into windows of window_days,
     searches for the best Sentinel-2 scene in each window, calculates zonal
-    statistics over the parcel, and writes an AgriParcelRecord to Orion-LD.
+    statistics over the parcel, and writes an EOProduct to Orion-LD.
 
     Ephemeral: bands are downloaded to /tmp and discarded after processing.
     No rasters are stored in MinIO.
