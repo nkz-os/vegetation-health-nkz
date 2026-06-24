@@ -44,7 +44,7 @@ spec:
             readOnlyRootFilesystem: false
             capabilities:
               drop: ["ALL"]
-          image: ghcr.io/nkz-os/vegetation-health-nkz/vegetation-prime-api:0f12d66e612369b8d08653872797108353817050
+          image: ghcr.io/nkz-os/vegetation-health-nkz/vegetation-prime-api:71196d11ac4d26c5fb3e0380e671e20fe9ee8c3f
           imagePullPolicy: Always
           command: ["celery", "-A", "app.celery_app", "beat", "--loglevel=info", "--schedule", "/tmp/celerybeat-schedule"]
           env:
