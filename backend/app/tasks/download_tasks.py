@@ -32,6 +32,15 @@ def _select_best_scene(scenes: list) -> dict:
     ))[0]
 
 
+def _is_raw_cache_entry(entry) -> bool:
+    """True when a GlobalSceneCache entry holds RAW bands (reusable by the
+    windowed calc path). Entries super-resolved at download time
+    (quality_flags.sen2res_applied) hold full-tile 10 m bands and MUST be
+    re-downloaded as raw, so they return False (one-time, self-healing)."""
+    flags = getattr(entry, "quality_flags", None) or {}
+    return not flags.get("sen2res_applied")
+
+
 def _set_band_cleanup_counter(scene_product_id: str, tenant_id: str, tenant_bucket: str, storage_prefix: str, total: int) -> None:
     """Set Redis counter for band cleanup after all index calculations complete.
 
@@ -280,7 +289,19 @@ def download_sentinel2_scene(self, job_id: str, tenant_id: str, parameters: Dict
             GlobalSceneCache.scene_id == scene_id,
             GlobalSceneCache.is_valid == True
         ).first()
-        
+
+        # A cached entry super-resolved at download time holds full-tile 10 m
+        # bands; the windowed calc path needs RAW bands. Force a fresh raw
+        # download for such entries (one-time, self-healing migration).
+        if global_cache_entry and not _is_raw_cache_entry(global_cache_entry):
+            logger.info(
+                "Scene %s cache is super-resolved (legacy) — re-downloading raw",
+                scene_id,
+            )
+            global_cache_entry.is_valid = False
+            db.commit()
+            global_cache_entry = None
+
         scene_downloaded_from_copernicus = False
         sr_applied = False
         all_bands_exist = False
@@ -348,28 +369,6 @@ def download_sentinel2_scene(self, job_id: str, tenant_id: str, parameters: Dict
             if not band_paths:
                 raise ValueError("Failed to download any bands")
 
-            # --- Sen2Res super-resolution (feature-flagged) ---
-            sr_applied = False
-            if os.getenv('SEN2RES_ENABLED', 'false').lower() == 'true':
-                logger.info("Sen2Res enabled — super-resolving 20 m bands to 10 m")
-                try:
-                    from app.services.superresolution import superresolve_bands
-
-                    scl_local = band_paths.get('SCL')
-                    band_paths = superresolve_bands(
-                        band_paths=band_paths,
-                        output_dir=str(temp_dir),
-                        scl_path=scl_local,
-                    )
-                    sr_applied = True
-                    logger.info("Sen2Res complete for scene %s", scene_id)
-                except Exception as exc:
-                    logger.warning(
-                        "Sen2Res failed for scene %s: %s — falling back to bilinear",
-                        scene_id, exc,
-                    )
-            # --- end Sen2Res ---
-
             # Upload to global bucket first (for future reuse)
             self.update_state(state='PROGRESS', meta={'progress': 60, 'message': 'Uploading to global cache'})
             global_band_paths = {}
@@ -394,7 +393,7 @@ def download_sentinel2_scene(self, job_id: str, tenant_id: str, parameters: Dict
                 global_cache_entry.sensing_date = date.fromisoformat(best_scene['sensing_date'])
                 if global_cache_entry.quality_flags is None:
                     global_cache_entry.quality_flags = {}
-                global_cache_entry.quality_flags['sen2res_applied'] = sr_applied
+                global_cache_entry.quality_flags['sen2res_applied'] = False
             else:
                 # Create new cache entry
                 global_cache_entry = GlobalSceneCache(
@@ -408,7 +407,7 @@ def download_sentinel2_scene(self, job_id: str, tenant_id: str, parameters: Dict
                     cloud_coverage=str(best_scene['cloud_cover']),
                     download_count=0,
                     is_valid=True,
-                    quality_flags={'sen2res_applied': sr_applied},
+                    quality_flags={'sen2res_applied': False},
                 )
                 db.add(global_cache_entry)
             
