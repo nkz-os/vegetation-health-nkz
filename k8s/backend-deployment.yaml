@@ -78,6 +78,13 @@ spec:
                 configMapKeyRef:
                   name: vegetation-prime-config
                   key: JWKS_URL
+            - name: REQUIRE_HMAC_SIGNATURE
+              value: "true"
+            - name: HMAC_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: jwt-secret
+                  key: secret
             - name: JWT_ALGORITHM
               value: "RS256"
             - name: FIWARE_CONTEXT_BROKER_URL
