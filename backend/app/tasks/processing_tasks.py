@@ -202,6 +202,11 @@ def calculate_vegetation_index(
     """
     db = next(get_db_session())
     job = None
+    # Exact idempotency key claimed for this run, captured so a later failure
+    # releases THIS key. The old release path rebuilt the key from
+    # job.result/parameters (no sensing_date there at failure time) → the lock
+    # leaked and every retry skipped as completed-with-no-raster.
+    claimed_lock: tuple | None = None
 
     try:
         # Get job
@@ -361,6 +366,9 @@ def calculate_vegetation_index(
                     local_processing_dir=Path(f"/tmp/vegetation_processing/{tenant_id}/{scene.id}"),
                 )
                 return
+
+            # Claim is fresh — record the exact key so a failure below releases it.
+            claimed_lock = (tenant_id, job.entity_id or "", idempotency_key, sensing_str)
 
             scenes_to_process = [scene]
 
@@ -577,23 +585,16 @@ def calculate_vegetation_index(
             job.mark_failed(str(e), str(e.__traceback__))
             db.commit()
             # Release the Redis idempotency lock so the user can retry without
-            # waiting 24h. Without this, a single failure would mark every
-            # subsequent calc_index for the same (tenant,parcel,index,date)
-            # as 'skipped:true' until the TTL expires (root cause of the
-            # 11/11-skipped NDRE the audit surfaced 2026-05-07).
-            try:
-                params = job.parameters or {}
-                idx_for_lock = params.get('index_type') or (job.result or {}).get('index_type')
-                sensing_for_lock = (
-                    (job.result or {}).get('sensing_date')
-                    or params.get('sensing_date')
-                )
-                if idx_for_lock and sensing_for_lock and job.entity_id:
-                    _release_idempotency(
-                        tenant_id, job.entity_id, idx_for_lock, sensing_for_lock,
-                    )
-            except Exception:
-                pass
+            # waiting 24h. Uses the EXACT key claimed for this run (captured in
+            # claimed_lock); the previous version rebuilt it from
+            # job.result/parameters, where sensing_date is absent at failure
+            # time → the lock leaked and every retry skipped as 'completed'
+            # with no raster (root cause of the no-map-layers incident).
+            if claimed_lock is not None:
+                try:
+                    _release_idempotency(*claimed_lock)
+                except Exception:
+                    pass
         raise
     finally:
         # Clean up temporary files. ONLY the job-specific indices dir is wiped

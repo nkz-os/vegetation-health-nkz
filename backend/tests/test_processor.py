@@ -151,6 +151,26 @@ class TestVegetationIndexProcessor:
         assert stats['pixel_count'] == 4
         assert np.isclose(stats['mean'], 0.25)
 
+    def test_calculate_statistics_resamples_mismatched_mask(self):
+        """A coarser geometry mask (e.g. 20m, built from band_meta) must be
+        resampled to the index grid (10m) instead of crashing numpy.ma with
+        'Mask and data not compatible' — the prod bug that left every
+        calculate_index without a raster.
+        """
+        # 10m index (4x4); 20m parcel mask (2x2), True = outside parcel.
+        data = np.array([
+            [0.2, 0.2, 0.9, 0.9],
+            [0.2, 0.2, 0.9, 0.9],
+            [0.5, 0.5, 0.5, 0.5],
+            [0.5, 0.5, 0.5, 0.5],
+        ], dtype=np.float32)
+        mask = np.array([[False, True], [False, True]], dtype=bool)
+        p = self._setup_processor({})
+        stats = p.calculate_statistics(data, mask=mask)
+        # mask upsampled to 4x4 includes the left half (8 px): four 0.2 + four 0.5
+        assert stats['pixel_count'] == 8
+        assert np.isclose(stats['mean'], 0.35)
+
     # ---- Temporal Composite Tests ----
 
     def test_temporal_composite_median(self):

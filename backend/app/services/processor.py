@@ -744,6 +744,16 @@ class VegetationIndexProcessor:
             Dictionary with statistics
         """
         if mask is not None:
+            if mask.shape != index_array.shape:
+                # The geometry mask is rasterized on band_meta's grid, which is
+                # set by the first band loaded and can be coarser (20m) than the
+                # index, which is always resampled to 10m. Nearest-resample the
+                # boolean mask to the index grid so numpy.ma doesn't raise
+                # "Mask and data not compatible" (same extent, different pixel
+                # size → spatially aligned after resampling).
+                rows = (np.arange(index_array.shape[0]) * mask.shape[0]) // index_array.shape[0]
+                cols = (np.arange(index_array.shape[1]) * mask.shape[1]) // index_array.shape[1]
+                mask = mask[np.ix_(rows, cols)]
             masked = np.ma.masked_array(index_array, mask=mask)
             valid_data = masked.compressed()  # removes masked values
             valid_data = valid_data[~np.isnan(valid_data)]
