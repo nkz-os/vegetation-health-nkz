@@ -110,6 +110,32 @@ def test_negative_buffer_collapses_window_raises(tmp_path):
                              output_dir=str(tmp_path / "e"))
 
 
+def test_multiband_10m_and_20m_same_extent(tmp_path):
+    # Production passes B04 (10 m) + B8A (20 m) together for the same parcel.
+    # Both must cover the same geographic extent, sharing the CRS, with the
+    # 20 m output at ~half the pixel dimensions of the 10 m one.
+    band_10m = str(tmp_path / "B04.tif")
+    band_20m = str(tmp_path / "B8A.tif")
+    _write_band(band_10m, res=10.0, size=100)
+    _write_band(band_20m, res=20.0, size=50)
+    geojson = _utm_subextent_to_4326_geojson(500200, 4599600, 500400, 4599800)
+
+    out = crop_bands_to_window(
+        {"B04": band_10m, "B8A": band_20m}, geojson, buffer_m=0.0,
+        output_dir=str(tmp_path / "win"),
+    )
+
+    assert "B04" in out and "B8A" in out
+    with rasterio.open(out["B04"]) as s10, rasterio.open(out["B8A"]) as s20:
+        assert str(s10.crs) == str(s20.crs) == _CRS
+        # Same top-left corner (within rounding tolerance).
+        assert s10.transform.c == pytest.approx(s20.transform.c, abs=15)
+        assert s10.transform.f == pytest.approx(s20.transform.f, abs=15)
+        # 20 m output has ~half the pixel dimensions of the 10 m one.
+        assert s20.width == pytest.approx(s10.width / 2, abs=1)
+        assert s20.height == pytest.approx(s10.height / 2, abs=1)
+
+
 def test_empty_window_raises(tmp_path):
     band = str(tmp_path / "B04.tif")
     _write_band(band)

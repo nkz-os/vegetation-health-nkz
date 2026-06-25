@@ -130,6 +130,18 @@ def _extract_formula_bands(formula: str) -> List[str]:
     return found
 
 
+_NATIVE_10M = ('B02', 'B03', 'B04', 'B08')
+
+
+def _order_bands_10m_first(required_bands):
+    """Stable-reorder required_bands so native-10 m bands come first.
+
+    band_meta is taken from the first band; ensure it is a native-10 m band
+    so the saved COG/mask grid matches the 10 m index array even when
+    Sen2Res is off or its windowed fallback triggers (e.g. NDRE's B8A/B08)."""
+    return sorted(required_bands, key=lambda b: 0 if b in _NATIVE_10M else 1)
+
+
 def _window_band_set(required_bands, scene_bands, sen2res_enabled):
     """Bands to window-crop for this index. Adds Sen2Res guide bands present
     in the scene only when a 20 m target band is actually required (so NDVI,
@@ -414,6 +426,7 @@ def calculate_vegetation_index(
             }.get(index_type, ['B04', 'B08'])
             if index_type == 'CUSTOM':
                 required_bands = _extract_formula_bands(formula) or ['B04', 'B08']
+            required_bands = _order_bands_10m_first(required_bands)
 
             storage = create_storage_service(
                 storage_type=storage_type,
@@ -465,7 +478,9 @@ def calculate_vegetation_index(
                     except Exception as sr_err:
                         logger.warning("Windowed Sen2Res failed: %s — bilinear fallback", sr_err)
             else:
-                logger.info("No parcel bounds — skipping window-crop (full-band calc)")
+                logger.warning(
+                    "No parcel bounds — skipping window-crop, running full-tile calc"
+                )
 
             processor = VegetationIndexProcessor(calc_band_paths, bbox=None)
             processor.load_bands(required_bands)

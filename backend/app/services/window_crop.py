@@ -68,6 +68,9 @@ def crop_bands_to_window(
                     f"Empty window for band {band}: parcel outside band footprint"
                 ) from exc
             win = win.round_offsets().round_lengths()
+            # Belt-and-suspenders: collapsed/empty windows are already raised as
+            # WindowError above; this guards only against rounding residuals
+            # from round_offsets()/round_lengths(). Do not delete as unreachable.
             if win.width <= 0 or win.height <= 0:
                 raise ValueError(
                     f"Empty window for band {band}: parcel outside band footprint"
