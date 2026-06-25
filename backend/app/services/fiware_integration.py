@@ -98,6 +98,12 @@ def upsert_eo_index(tenant_id, parcel_id, index_type, statistics, sensing_date,
     index_key = index_type.lower()
     index_attr = _index_attribute(index_type, statistics, observed_at, raster_url, preview_url)
 
+    # NOTE: pixelCount/source (and sensingDate) are top-level, per-acquisition attrs.
+    # Under options=update, when multiple indices (NDVI, NDRE, ...) merge into the
+    # same EOProduct entity_id, these top-level attrs are LAST-INDEX-WINS — each
+    # call overwrites them with its own values. The index Properties themselves
+    # (index_key, e.g. "ndvi"/"ndre") are each preserved as distinct attrs and do
+    # NOT clobber one another.
     entity = {
         "id": entity_id,
         "type": "EOProduct",

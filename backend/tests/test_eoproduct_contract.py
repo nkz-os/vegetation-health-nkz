@@ -119,6 +119,22 @@ def test_upsert_eo_index_cloud_cover_na_does_not_raise():
     assert body["ndvi"]["value"] == 0.5
 
 
+def test_upsert_eo_index_returns_none_on_upsert_failure():
+    """Locks in the error-surfacing branch: a failed upsert (errors present or
+    upserted==0) must return None, not silently report success. Characterization
+    test for the fix that replaced the old swallowed-failure behavior."""
+    stats = {"mean": 0.5, "min": 0.1, "max": 0.9, "std": 0.1, "pixel_count": 100}
+
+    class Failing(FakeAsyncOrion):
+        async def upsert_entities_batch(self, entities):
+            await super().upsert_entities_batch(entities)
+            return {"upserted": 0, "errors": [{"detail": "boom"}], "entity_ids": []}
+
+    with patch.object(fi, "OrionClient", Failing):
+        eid = fi.upsert_eo_index("montiko", "urn:ngsi-ld:AgriParcel:p", "NDVI", stats, date(2025, 9, 6))
+    assert eid is None
+
+
 def test_upsert_eo_index_cloud_cover_empty_string_does_not_raise():
     stats = {"mean": 0.5, "min": 0.1, "max": 0.9, "std": 0.2, "pixel_count": 100}
     with patch.object(fi, "OrionClient", FakeAsyncOrion):
