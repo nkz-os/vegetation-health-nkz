@@ -58,6 +58,12 @@ def test_upsert_eo_index_does_not_use_post_or_patch():
     assert ".post(" not in src and ".patch(" not in src, "upsert_eo_index must not call .post/.patch"
 
 
+def test_upsert_eo_product_does_not_use_post_or_patch():
+    import inspect
+    src = inspect.getsource(fi.upsert_eo_product)
+    assert ".post(" not in src and ".patch(" not in src, "upsert_eo_product must not call .post/.patch"
+
+
 def test_real_orion_client_has_upsert_batch():
     from nkz_platform_sdk import OrionClient, SyncOrionClient
     assert hasattr(OrionClient, "upsert_entities_batch")

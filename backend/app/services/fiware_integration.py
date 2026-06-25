@@ -6,7 +6,9 @@ Follows the platform convention:
   Property per vegetation index merged in via PATCH (see upsert_eo_index)
 - Orion-LD is the source of truth for analysis results
 - TimescaleDB receives historical snapshots via NGSI-LD subscription (telemetry-worker)
-- Uses SyncOrionClient from nkz-platform-sdk (no raw requests/httpx)
+- EOProduct writers (upsert_eo_index, upsert_eo_product) use the async
+  OrionClient.upsert_entities_batch from nkz-platform-sdk (no raw requests/
+  httpx); SyncOrionClient is still used for delete/legacy helpers.
 """
 
 import logging
@@ -135,10 +137,9 @@ def upsert_eo_product(
     """Create or update a SAR backscatter EOProduct entity in Orion-LD
     (product_type="GRD").
 
-    Uses SyncOrionClient: POST → 201 | 409 → PATCH pattern.
+    Uses the async OrionClient.upsert_entities_batch (options=update) via
+    the _upsert_eoproduct_entity bridge.
     """
-    orion = SyncOrionClient(tenant_id)
-
     if acquisition_date is None:
         logger.error("acquisition_date required for SAR EOProduct")
         return None
@@ -147,7 +148,6 @@ def upsert_eo_product(
     observed_at = acquisition_date.isoformat().replace("+00:00", "Z")
 
     entity: Dict[str, Any] = {
-        "@context": [CONTEXT_URL],
         "id": entity_id,
         "type": "EOProduct",
         "productType": {"type": "Property", "value": product_type},
@@ -172,32 +172,14 @@ def upsert_eo_product(
         entity["campaign"] = {"type": "Relationship", "object": campaign_urn}
 
     try:
-        response = orion.post("/ngsi-ld/v1/entities", json=entity)
-
-        if response.status_code in (201, 204):
-            logger.info("Created EOProduct entity %s", entity_id)
+        result = _upsert_eoproduct_entity(tenant_id, entity)
+        if result.get("upserted", 0) >= 1 and not result.get("errors"):
+            logger.info("Upserted SAR EOProduct %s", entity_id)
             return entity_id
-
-        if response.status_code == 409:
-            logger.debug("EOProduct %s exists, updating...", entity_id)
-            attrs = {k: v for k, v in entity.items() if k not in ("id", "type")}
-            if "@context" not in attrs:
-                attrs["@context"] = [CONTEXT_URL]
-            patch_resp = orion.patch(
-                f"/ngsi-ld/v1/entities/{entity_id}/attrs", json=attrs
-            )
-            if patch_resp.status_code in (204, 207):
-                logger.info("Updated EOProduct entity %s", entity_id)
-                return entity_id
-            logger.error("Failed PATCH EOProduct %s: %s", entity_id, patch_resp.status_code)
-        else:
-            logger.error(
-                "Failed POST EOProduct: %s — %s", response.status_code, response.text
-            )
-
+        logger.error("SAR EOProduct upsert %s failed: %s", entity_id, result.get("errors"))
         return None
-    except Exception as e:
-        logger.error("Error upserting EOProduct: %s", e, exc_info=True)
+    except Exception as exc:
+        logger.error("Error upserting SAR EOProduct %s: %s", entity_id, exc, exc_info=True)
         return None
 
 
