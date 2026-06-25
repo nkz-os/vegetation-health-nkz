@@ -60,8 +60,8 @@ def crop_bands_to_window(
             pmaxx += buffer_m
             pmaxy += buffer_m
 
-            win = from_bounds(pminx, pminy, pmaxx, pmaxy, src.transform)
             try:
+                win = from_bounds(pminx, pminy, pmaxx, pmaxy, src.transform)
                 win = win.intersection(Window(0, 0, src.width, src.height))
             except rasterio.errors.WindowError as exc:
                 raise ValueError(

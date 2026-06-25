@@ -98,6 +98,18 @@ def test_clamped_at_band_edge(tmp_path):
         assert src.height <= _SIZE
 
 
+def test_negative_buffer_collapses_window_raises(tmp_path):
+    band = str(tmp_path / "B04.tif")
+    _write_band(band)
+    # Valid 200 m parcel, but a -150 m buffer (> half the 200 m extent on each
+    # side) collapses the window: pminx > pmaxx. Must surface as ValueError,
+    # not an uncaught rasterio WindowError from window construction.
+    geojson = _utm_subextent_to_4326_geojson(500200, 4599600, 500400, 4599800)
+    with pytest.raises(ValueError):
+        crop_bands_to_window({"B04": band}, geojson, buffer_m=-150.0,
+                             output_dir=str(tmp_path / "e"))
+
+
 def test_empty_window_raises(tmp_path):
     band = str(tmp_path / "B04.tif")
     _write_band(band)
