@@ -16,10 +16,27 @@ from typing import Dict, Any, Optional, List
 from datetime import datetime, date, timezone
 
 from nkz_platform_sdk import SyncOrionClient
+import asyncio
+from nkz_platform_sdk import OrionClient
 
 logger = logging.getLogger(__name__)
 
 CONTEXT_URL = os.getenv("CONTEXT_URL", "http://api-gateway-service:5000/ngsi-ld-context.json")
+
+
+def _upsert_eoproduct_entity(tenant_id: str, entity: dict) -> dict:
+    """Create-or-merge one EOProduct via the async SDK (options=update).
+
+    TECH DEBT: this asyncio.run bridge exists only because the sync
+    SyncOrionClient has no bulk-upsert/attrs-merge. When the SDK exposes a
+    synchronous create-or-merge, delete this bridge and call it directly.
+    The OrionClient MUST be constructed inside the coroutine — its
+    httpx.AsyncClient binds to the event loop at __init__.
+    """
+    async def _go() -> dict:
+        async with OrionClient(tenant_id) as orion:
+            return await orion.upsert_entities_batch([entity])
+    return asyncio.run(_go())
 
 
 def _make_headers(tenant_id: str) -> Dict[str, str]:
@@ -72,7 +89,6 @@ def _index_attribute(index_type: str, statistics: dict, observed_at: str,
 def upsert_eo_index(tenant_id, parcel_id, index_type, statistics, sensing_date,
                     raster_url=None, preview_url=None, cloud_cover=None):
     """Approach A: one EOProduct per (parcel, sensingDate); merge one named index Property."""
-    orion = SyncOrionClient(tenant_id)
     sensing_date_str = sensing_date.isoformat()
     entity_id = _entity_id_for_acquisition(tenant_id, parcel_id, sensing_date_str)
     observed_at = datetime(sensing_date.year, sensing_date.month, sensing_date.day,
@@ -81,7 +97,6 @@ def upsert_eo_index(tenant_id, parcel_id, index_type, statistics, sensing_date,
     index_attr = _index_attribute(index_type, statistics, observed_at, raster_url, preview_url)
 
     entity = {
-        "@context": [CONTEXT_URL],
         "id": entity_id,
         "type": "EOProduct",
         "hasAgriParcel": {"type": "Relationship", "object": parcel_id},
@@ -96,19 +111,11 @@ def upsert_eo_index(tenant_id, parcel_id, index_type, statistics, sensing_date,
         except (TypeError, ValueError):
             pass
     try:
-        resp = orion.post("/ngsi-ld/v1/entities", json=entity)
-        if resp.status_code in (201, 204):
-            logger.info("Created EOProduct %s (%s)", entity_id, index_key)
+        result = _upsert_eoproduct_entity(tenant_id, entity)
+        if result.get("upserted", 0) >= 1 and not result.get("errors"):
+            logger.info("Upserted EOProduct %s (%s)", entity_id, index_key)
             return entity_id
-        if resp.status_code == 409:
-            attrs = {k: v for k, v in entity.items() if k not in ("id", "type")}
-            patch = orion.patch(f"/ngsi-ld/v1/entities/{entity_id}/attrs", json=attrs)
-            if patch.status_code in (204, 207):
-                logger.info("Merged %s into EOProduct %s", index_key, entity_id)
-                return entity_id
-            logger.error("PATCH EOProduct %s failed: %s", entity_id, patch.status_code)
-            return None
-        logger.error("POST EOProduct %s failed: %s - %s", entity_id, resp.status_code, resp.text)
+        logger.error("EOProduct upsert %s failed: %s", entity_id, result.get("errors"))
         return None
     except Exception as exc:
         logger.error("Error upserting EOProduct %s: %s", entity_id, exc, exc_info=True)
