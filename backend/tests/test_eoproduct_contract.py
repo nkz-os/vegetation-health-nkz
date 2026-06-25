@@ -146,3 +146,12 @@ def test_upsert_eo_index_cloud_cover_empty_string_does_not_raise():
     assert eid is not None
     body = fake.entities[0]
     assert "cloudCoverPercentage" not in body
+
+
+def test_real_orion_client_contract_for_wrapper():
+    # The wrapper uses upsert_entities_batch + close (no async context manager).
+    # Locks the real SDK surface so a reintroduced `async with` or a missing
+    # method is caught here, not silently in production.
+    from nkz_platform_sdk import OrionClient
+    assert hasattr(OrionClient, "upsert_entities_batch")
+    assert hasattr(OrionClient, "close")

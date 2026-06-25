@@ -33,11 +33,16 @@ def _upsert_eoproduct_entity(tenant_id: str, entity: dict) -> dict:
     SyncOrionClient has no bulk-upsert/attrs-merge. When the SDK exposes a
     synchronous create-or-merge, delete this bridge and call it directly.
     The OrionClient MUST be constructed inside the coroutine — its
-    httpx.AsyncClient binds to the event loop at __init__.
+    httpx.AsyncClient binds to the event loop at __init__. The deployed async
+    OrionClient (SDK 0.5.x) does NOT support `async with` (no __aenter__), so
+    instantiate and await close() in a finally block — never `async with`.
     """
     async def _go() -> dict:
-        async with OrionClient(tenant_id) as orion:
+        orion = OrionClient(tenant_id)
+        try:
             return await orion.upsert_entities_batch([entity])
+        finally:
+            await orion.close()
     return asyncio.run(_go())
 
 
