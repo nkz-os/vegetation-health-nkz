@@ -130,6 +130,21 @@ def _extract_formula_bands(formula: str) -> List[str]:
     return found
 
 
+def _window_band_set(required_bands, scene_bands, sen2res_enabled):
+    """Bands to window-crop for this index. Adds Sen2Res guide bands present
+    in the scene only when a 20 m target band is actually required (so NDVI,
+    which is 10 m-only, never triggers super-resolution)."""
+    from app.services.superresolution import GUIDE_BANDS, TARGET_BANDS
+
+    bands = list(required_bands)
+    needs_sr = sen2res_enabled and any(b in TARGET_BANDS for b in required_bands)
+    if needs_sr:
+        for g in GUIDE_BANDS:
+            if g in (scene_bands or {}) and g not in bands:
+                bands.append(g)
+    return bands
+
+
 def _persist_results(
     tenant_id: str,
     job: VegetationJob,
@@ -241,6 +256,8 @@ def calculate_vegetation_index(
 
         # Get storage service
         bucket_name = os.getenv("VEGETATION_COG_BUCKET") or generate_tenant_bucket_name(tenant_id)
+        sen2res_enabled = os.getenv('SEN2RES_ENABLED', 'false').lower() == 'true'
+        window_buffer_m = float(os.getenv('SEN2RES_WINDOW_BUFFER_M', '2560'))
         from app.models import VegetationConfig
         config = db.query(VegetationConfig).filter(
             VegetationConfig.tenant_id == tenant_id
@@ -406,8 +423,9 @@ def calculate_vegetation_index(
             local_band_dir = Path(f"/tmp/vegetation_processing/{tenant_id}/{scene.id}")
             local_band_dir.mkdir(parents=True, exist_ok=True)
 
+            window_bands = _window_band_set(required_bands, scene.bands or {}, sen2res_enabled)
             local_band_paths = {}
-            for band in required_bands:
+            for band in window_bands:
                 remote_path = (scene.bands or {}).get(band)
                 if not remote_path:
                     logger.error(f"Band {band} not found in metadata for scene {scene.id}")
@@ -424,8 +442,32 @@ def calculate_vegetation_index(
                 logger.error(f"No bands could be downloaded for scene {scene.id}")
                 continue
 
-            crop_bbox = job.parameters.get('bbox') if job.parameters else None
-            processor = VegetationIndexProcessor(local_band_paths, bbox=crop_bbox)
+            # Window-crop to the parcel BEFORE super-resolution: Sen2Res and the
+            # index now run on a small window (bbox + buffer) instead of the full
+            # 10980² tile. Bands keep their windowed transform so mask/COG align.
+            parcel_bounds = job.parameters.get('bounds') if job.parameters else None
+            calc_band_paths = local_band_paths
+            if parcel_bounds and isinstance(parcel_bounds, dict) and 'coordinates' in parcel_bounds:
+                from app.services.window_crop import crop_bands_to_window
+                win_dir = str(local_band_dir / "win")
+                calc_band_paths = crop_bands_to_window(
+                    local_band_paths, parcel_bounds, window_buffer_m, win_dir,
+                )
+                if sen2res_enabled:
+                    from app.services.superresolution import superresolve_bands
+                    try:
+                        scl_local = calc_band_paths.get('SCL')
+                        calc_band_paths = superresolve_bands(
+                            band_paths=calc_band_paths,
+                            output_dir=win_dir,
+                            scl_path=scl_local,
+                        )
+                    except Exception as sr_err:
+                        logger.warning("Windowed Sen2Res failed: %s — bilinear fallback", sr_err)
+            else:
+                logger.info("No parcel bounds — skipping window-crop (full-band calc)")
+
+            processor = VegetationIndexProcessor(calc_band_paths, bbox=None)
             processor.load_bands(required_bands)
 
             if reference_meta is None:
