@@ -1,8 +1,10 @@
 """Tests for EOProduct entity creation/update in Orion-LD."""
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 from datetime import datetime, timezone
 
+import app.services.fiware_integration as fi
 from app.services.fiware_integration import upsert_eo_product, _entity_id_for_eo_product, _make_headers
+from tests.fake_orion import FakeAsyncOrion
 
 
 class TestEntityIdForEOProduct:
@@ -30,64 +32,32 @@ class TestEntityIdForEOProduct:
 class TestUpsertEOProduct:
     """upsert_eo_product() — create or update EOProduct in Orion-LD."""
 
-    @patch("app.services.fiware_integration.SyncOrionClient")
-    def test_create_new_eo_product(self, mock_client):
-        """POST returns 201 → entity created, no PATCH needed."""
-        orion = mock_client.return_value
-        orion.post.return_value = MagicMock(status_code=201, text="Created")
-
-        result = upsert_eo_product(
-            tenant_id="test_tenant",
-            parcel_id="urn:ngsi-ld:AgriParcel:parcel-4",
-            vv_mean=-12.3,
-            vh_mean=-18.7,
-            acquisition_date=datetime(2026, 6, 1, 18, 0, 0, tzinfo=timezone.utc),
-        )
-
+    def test_upsert_eo_product_writes_via_upsert_batch(self):
+        with patch.object(fi, "OrionClient", FakeAsyncOrion):
+            result = fi.upsert_eo_product(
+                tenant_id="test_tenant",
+                parcel_id="urn:ngsi-ld:AgriParcel:parcel-4",
+                vv_mean=-12.3, vh_mean=-18.7,
+                acquisition_date=datetime(2026, 6, 1, 18, 0, 0, tzinfo=timezone.utc),
+            )
+            fake = FakeAsyncOrion.last_instance
         assert result is not None
-        assert orion.post.called
-        orion.patch.assert_not_called()
+        assert len(fake.calls) == 1 and len(fake.calls[0]) == 1
+        body = fake.entities[0]
+        assert body["type"] == "EOProduct"
+        assert "@context" not in body                       # SDK injects it
+        assert body["productType"]["value"] == "GRD"
+        assert body["processingLevel"]["value"] == "L1"
+        assert body["backscatterVV"]["value"] == -12.3
+        assert body["backscatterVH"]["value"] == -18.7
+        assert "observedAt" in body["backscatterVV"]
+        assert body["hasAgriParcel"]["object"] == "urn:ngsi-ld:AgriParcel:parcel-4"
+        assert body["source"]["value"] == "vegetation_health"
 
-    @patch("app.services.fiware_integration.SyncOrionClient")
-    def test_update_existing_eo_product(self, mock_client):
-        """POST returns 409 → PATCH /attrs."""
-        orion = mock_client.return_value
-        orion.post.return_value = MagicMock(status_code=409, text="")
-        orion.patch.return_value = MagicMock(status_code=204, text="")
-
-        result = upsert_eo_product(
-            tenant_id="test_tenant",
-            parcel_id="urn:ngsi-ld:AgriParcel:parcel-4",
-            vv_mean=-10.5,
-            vh_mean=-16.2,
-            acquisition_date=datetime(2026, 6, 1, 18, 0, 0, tzinfo=timezone.utc),
-        )
-
-        assert result is not None
-        assert orion.post.called
-        orion.patch.assert_called_once()
-
-    @patch("app.services.fiware_integration.SyncOrionClient")
-    def test_eo_product_contains_correct_attributes(self, mock_client):
-        """EOProduct entity payload has required SAR attributes."""
-        orion = mock_client.return_value
-        orion.post.return_value = MagicMock(status_code=201, text="Created")
-
-        upsert_eo_product(
-            tenant_id="test_tenant",
-            parcel_id="urn:ngsi-ld:AgriParcel:parcel-4",
-            vv_mean=-12.3,
-            vh_mean=-18.7,
-            acquisition_date=datetime(2026, 6, 1, 18, 0, 0, tzinfo=timezone.utc),
-        )
-
-        call_json = orion.post.call_args.kwargs["json"]
-        assert call_json["type"] == "EOProduct"
-        assert call_json["productType"]["value"] == "GRD"
-        assert call_json["processingLevel"]["value"] == "L1"
-        assert call_json["backscatterVV"]["value"] == -12.3
-        assert call_json["backscatterVH"]["value"] == -18.7
-        assert "observedAt" in call_json["backscatterVV"]
-        assert "observedAt" in call_json["backscatterVH"]
-        assert call_json["hasAgriParcel"]["object"] == "urn:ngsi-ld:AgriParcel:parcel-4"
-        assert call_json["source"]["value"] == "vegetation_health"
+    def test_upsert_eo_product_returns_none_without_acquisition_date(self):
+        with patch.object(fi, "OrionClient", FakeAsyncOrion):
+            result = fi.upsert_eo_product(
+                tenant_id="t", parcel_id="urn:ngsi-ld:AgriParcel:p",
+                vv_mean=-1.0, vh_mean=-2.0, acquisition_date=None,
+            )
+        assert result is None
