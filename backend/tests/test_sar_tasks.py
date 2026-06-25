@@ -174,23 +174,22 @@ class TestCopernicusS1Methods:
 class TestEOProductUpsert:
     """EOProduct upsert for crop-health integration."""
 
-    @patch("app.services.fiware_integration.SyncOrionClient")
-    def test_eo_product_has_correct_type(self, mock_client):
+    def test_eo_product_has_correct_type(self):
         """EOProduct entity payload has type EOProduct and productType GRD."""
-        from app.services.fiware_integration import upsert_eo_product
+        import app.services.fiware_integration as fi
         from datetime import datetime, timezone
+        from tests.fake_orion import FakeAsyncOrion
 
-        orion = mock_client.return_value
-        orion.post.return_value = MagicMock(status_code=201, text="Created")
+        with patch.object(fi, "OrionClient", FakeAsyncOrion):
+            fi.upsert_eo_product(
+                tenant_id="test",
+                parcel_id="urn:ngsi-ld:AgriParcel:parcel-4",
+                vv_mean=-12.3,
+                vh_mean=-18.7,
+                acquisition_date=datetime(2026, 6, 1, 18, 0, 0, tzinfo=timezone.utc),
+            )
+            fake = FakeAsyncOrion.last_instance
 
-        upsert_eo_product(
-            tenant_id="test",
-            parcel_id="urn:ngsi-ld:AgriParcel:parcel-4",
-            vv_mean=-12.3,
-            vh_mean=-18.7,
-            acquisition_date=datetime(2026, 6, 1, 18, 0, 0, tzinfo=timezone.utc),
-        )
-
-        call_json = orion.post.call_args.kwargs["json"]
-        assert call_json["type"] == "EOProduct"
-        assert call_json["productType"]["value"] == "GRD"
+        body = fake.entities[0]
+        assert body["type"] == "EOProduct"
+        assert body["productType"]["value"] == "GRD"
