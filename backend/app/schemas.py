@@ -32,6 +32,7 @@ class LatestResultsItem(BaseModel):
     entity_id: str
     raster_path: Optional[str] = None
     job_id: str
+    tile_token: Optional[str] = None
     bounds: Optional[List[float]] = None  # [west, south, east, north]
     minzoom: Optional[int] = None
     maxzoom: Optional[int] = None

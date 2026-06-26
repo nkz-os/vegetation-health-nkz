@@ -168,19 +168,25 @@ export const VegetationLayer: React.FC = () => {
     const addImagery = (
       rasterPath: string | null,
       jobId: string | null,
+      tileToken: string | null | undefined,
       bounds: [number, number, number, number] | null,
       minzoom: number | null,
       maxzoom: number | null,
     ) => {
       let tileUrl: string;
       let boundsUrl: string;
-      if (rasterPath) {
+      if (jobId && tileToken) {
+        const token = encodeURIComponent(tileToken);
+        tileUrl = `${apiBase}/api/vegetation/tiles/${jobId}/{z}/{x}/{y}.png?index=${selectedIndex}&token=${token}`;
+        boundsUrl = `${apiBase}/api/vegetation/tiles/${jobId}/bounds`;
+      } else if (jobId) {
+        // Legacy fallback — will 401 without token; prefer fixing API to always return tile_token
+        tileUrl = `${apiBase}/api/vegetation/tiles/${jobId}/{z}/{x}/{y}.png?index=${selectedIndex}`;
+        boundsUrl = `${apiBase}/api/vegetation/tiles/${jobId}/bounds`;
+      } else if (rasterPath) {
         const encoded = encodeURIComponent(rasterPath);
         tileUrl = `${apiBase}/api/vegetation/tiles/render/{z}/{x}/{y}.png?raster_path=${encoded}&index=${selectedIndex}`;
         boundsUrl = `${apiBase}/api/vegetation/tiles/bounds?raster_path=${encoded}`;
-      } else if (jobId) {
-        tileUrl = `${apiBase}/api/vegetation/tiles/${jobId}/{z}/{x}/{y}.png?index=${selectedIndex}`;
-        boundsUrl = `${apiBase}/api/vegetation/tiles/${jobId}/bounds`;
       } else {
         return;
       }
@@ -217,9 +223,10 @@ export const VegetationLayer: React.FC = () => {
     if (layerScope === 'selected') {
       const rasterPath = activeRasterPath;
       const jobId = activeJobId || (selectedIndex && indexResults?.[selectedIndex]?.job_id) || null;
+      const tileToken = (selectedIndex && indexResults?.[selectedIndex]?.tile_token) || null;
       if (!rasterPath && !jobId) return;
       if (!selectedEntityId) return;
-      addImagery(rasterPath, jobId, null, null, null);
+      addImagery(rasterPath, jobId, tileToken, null, null, null);
       return;
     }
 
@@ -230,6 +237,7 @@ export const VegetationLayer: React.FC = () => {
         items.forEach(it => addImagery(
           it.raster_path,
           it.job_id,
+          it.tile_token,
           it.bounds as any,
           it.minzoom,
           it.maxzoom,

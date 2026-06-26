@@ -27,6 +27,7 @@ from app.database import get_db_with_tenant
 from app.middleware.auth import require_auth
 from app.models import VegetationScene, VegetationIndexCache, VegetationJob, VegetationCustomFormula
 from app.schemas import LatestResultsItem
+from app.services.tile_auth import generate_tile_token
 from app.tasks import calculate_vegetation_index, download_sentinel2_scene
 from nkz_platform_sdk import OrionClient
 
@@ -575,6 +576,7 @@ async def get_latest_results_all_entities(
                 entity_id=job.entity_id,
                 raster_path=job.result.get("raster_path"),
                 job_id=str(job.id),
+                tile_token=generate_tile_token(str(job.id), tenant_id, ttl_seconds=86400),
                 bounds=None,
                 minzoom=None,
                 maxzoom=None,
@@ -647,6 +649,7 @@ async def get_entity_results(
         stats = job.result.get("statistics", {})
         results[index_key] = {
             "job_id": str(job.id),
+            "tile_token": generate_tile_token(str(job.id), tenant_id, ttl_seconds=86400),
             "index_key": index_key,
             "index_type": index_type,
             "is_custom": bool(job.result.get("is_custom", False)),

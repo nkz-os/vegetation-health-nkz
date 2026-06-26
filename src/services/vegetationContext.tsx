@@ -12,6 +12,7 @@ interface DateRange {
 
 interface IndexResult {
   job_id: string;
+  tile_token?: string | null;
   index_key?: string;
   index_type: string;
   is_custom?: boolean;

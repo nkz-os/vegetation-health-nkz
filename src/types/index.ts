@@ -300,6 +300,8 @@ export interface CustomFormulaValidationResponse {
 
 export interface EntityIndexResult {
   job_id: string;
+  /** HMAC token for Cesium tile URLs (query param; no custom headers). */
+  tile_token?: string | null;
   index_key: string;
   index_type: string;
   is_custom: boolean;

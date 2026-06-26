@@ -454,6 +454,7 @@ export class VegetationApiClient {
     entity_id: string;
     raster_path: string | null;
     job_id: string;
+    tile_token?: string | null;
     bounds: [number, number, number, number] | null;
     minzoom: number | null;
     maxzoom: number | null;
