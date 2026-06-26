@@ -88,9 +88,8 @@ spec:
             - name: TILE_TOKEN_SECRET
               valueFrom:
                 secretKeyRef:
-                  name: vegetation-prime-secrets
+                  name: vegetation-prime-tile-token
                   key: tile-token-secret
-                  optional: true
             - name: JWT_ALGORITHM
               value: "RS256"
             - name: FIWARE_CONTEXT_BROKER_URL
