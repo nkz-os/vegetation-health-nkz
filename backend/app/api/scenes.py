@@ -88,6 +88,24 @@ async def calculate_index_endpoint(
             detail="Either scene_id or both start_date and end_date are required",
         )
 
+    # Look up parcel bounds from a previous download job so the worker
+    # can window-crop the Sentinel-2 tile to the parcel extent.
+    parcel_bounds = None
+    if request.entity_id:
+        existing = (
+            db.query(VegetationJob.parameters)
+            .filter(
+                VegetationJob.tenant_id == tenant_id,
+                VegetationJob.entity_id == request.entity_id,
+                VegetationJob.job_type == "download",
+                VegetationJob.parameters["bounds"].isnot(None),
+            )
+            .order_by(VegetationJob.created_at.desc())
+            .first()
+        )
+        if existing and existing.parameters:
+            parcel_bounds = existing.parameters.get("bounds")
+
     # Build parameters with formula metadata to prevent CUSTOM key collision
     parameters = {
         "scene_id": request.scene_id,
@@ -97,6 +115,8 @@ async def calculate_index_endpoint(
         "start_date": request.start_date,
         "end_date": request.end_date,
     }
+    if parcel_bounds:
+        parameters["bounds"] = parcel_bounds
     if request.formula_id:
         parameters["formula_id"] = request.formula_id
         parameters["formula_name"] = request.formula_name or ""
