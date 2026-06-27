@@ -341,7 +341,10 @@ def calculate_vegetation_index(
             )
 
             if job.entity_id:
-                scenes_query = scenes_query.filter(VegetationScene.entity_id == job.entity_id)
+                scenes_query = scenes_query.join(
+                    VegetationJob,
+                    VegetationScene.job_id == VegetationJob.id
+                ).filter(VegetationJob.entity_id == job.entity_id)
 
             scenes_to_process = scenes_query.order_by(VegetationScene.sensing_date.desc()).limit(10).all()
 
