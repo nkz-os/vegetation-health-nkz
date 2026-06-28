@@ -1,4 +1,4 @@
-"""Celery tasks for Landsat LST acquisition and EOProduct publish."""
+"""Celery tasks for Landsat and CLMS LST acquisition and EOProduct publish."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from app.celery_app import celery_app
 from app.database import get_db_session
 from app.services.fiware_integration import upsert_eo_lst
 from app.services.lst_processor import process_parcel_lst
+from app.services.clms_lst_processor import process_clms_lst
 from app.services.platform_credentials import get_copernicus_credentials_with_fallback
 
 logger = logging.getLogger(__name__)
@@ -80,6 +81,59 @@ def process_parcel_lst_task(
         raise self.retry(exc=exc)
 
 
+@celery_app.task(
+    name="vegetation.process_parcel_clms_lst",
+    bind=True,
+    max_retries=2,
+    default_retry_delay=300,
+)
+def process_parcel_clms_lst_task(
+    self,
+    tenant_id: str,
+    parcel_id: str,
+    latitude: float,
+    longitude: float,
+    geometry_geojson: dict,
+):
+    """Fetch CLMS LST (hourly, 3 km) for a parcel and upsert EOProduct.lst."""
+    try:
+        stats, sensing_dt_str, scene_id = process_clms_lst(
+            latitude, longitude, geometry_geojson,
+            auth_headers=_auth_headers(),
+        )
+        if not stats or not sensing_dt_str:
+            logger.info("No CLMS LST for parcel %s (tenant %s)", parcel_id, tenant_id)
+            return {"status": "no_data", "parcel_id": parcel_id}
+
+        # CLMS sensing datetime is full ISO8601; extract the date part
+        sensing_date = date.fromisoformat(sensing_dt_str[:10])
+        entity_id = upsert_eo_lst(
+            tenant_id=tenant_id,
+            parcel_id=parcel_id,
+            statistics=stats,
+            sensing_date=sensing_date,
+            scene_id=f"CLMS:{scene_id}" if scene_id else None,
+        )
+        if not entity_id:
+            raise RuntimeError(f"EOProduct CLMS LST upsert failed for {parcel_id}")
+
+        logger.info(
+            "Published CLMS LST %.1f°C for %s (%s)",
+            stats["mean"], parcel_id, scene_id or "unknown",
+        )
+        return {
+            "status": "ok",
+            "parcel_id": parcel_id,
+            "entity_id": entity_id,
+            "lst_c": round(stats["mean"], 2),
+            "sensing_date": sensing_dt_str,
+            "scene_id": scene_id,
+        }
+    except Exception as exc:
+        logger.error("CLMS LST task failed for %s: %s", parcel_id, exc, exc_info=True)
+        raise self.retry(exc=exc)
+
+
 @celery_app.task(name="vegetation.dispatch_lst_for_active_parcels")
 def dispatch_lst_for_active_parcels():
     """Weekly beat: iterate active subscriptions and enqueue LST per parcel."""
@@ -110,6 +164,14 @@ def dispatch_lst_for_active_parcels():
                 geom = shape(location)
                 centroid = geom.centroid
                 process_parcel_lst_task.delay(
+                    tenant_id=tenant_id,
+                    parcel_id=parcel_id,
+                    latitude=centroid.y,
+                    longitude=centroid.x,
+                    geometry_geojson=location,
+                )
+                # Also enqueue CLMS LST for daily coverage
+                process_parcel_clms_lst_task.delay(
                     tenant_id=tenant_id,
                     parcel_id=parcel_id,
                     latitude=centroid.y,

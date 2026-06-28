@@ -77,7 +77,7 @@ async def setup_parcel(
     try:
         geometry_geojson, lat, lon = await _fetch_parcel_location(parcel_id, tenant_id)
         if geometry_geojson and lat is not None and lon is not None:
-            from app.tasks.lst_tasks import process_parcel_lst_task
+            from app.tasks.lst_tasks import process_parcel_lst_task, process_parcel_clms_lst_task
             process_parcel_lst_task.delay(
                 tenant_id=tenant_id,
                 parcel_id=parcel_id,
@@ -85,7 +85,14 @@ async def setup_parcel(
                 longitude=lon,
                 geometry_geojson=geometry_geojson,
             )
-            logger.info("Enqueued LST task for parcel %s", parcel_id)
+            process_parcel_clms_lst_task.delay(
+                tenant_id=tenant_id,
+                parcel_id=parcel_id,
+                latitude=lat,
+                longitude=lon,
+                geometry_geojson=geometry_geojson,
+            )
+            logger.info("Enqueued Landsat + CLMS LST tasks for parcel %s", parcel_id)
         else:
             logger.warning("No parcel geometry for %s — LST task skipped", parcel_id)
     except Exception as exc:
