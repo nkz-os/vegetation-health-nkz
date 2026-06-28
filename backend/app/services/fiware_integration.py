@@ -76,6 +76,19 @@ def _entity_id_for_acquisition(tenant_id: str, parcel_id: str, sensing_date_str:
     return f"urn:ngsi-ld:EOProduct:{tenant_id}:{parcel_short}:{sensing_date_str}"
 
 
+def _lst_attribute(statistics: dict, observed_at: str) -> dict:
+    """LST attribute — surface temperature in °C (UN/CEFACT unitCode CEL)."""
+    return {
+        "type": "Property",
+        "value": round(float(statistics.get("mean", 0)), 2),
+        "unitCode": "CEL",
+        "observedAt": observed_at,
+        "min": {"type": "Property", "value": round(float(statistics.get("min", 0)), 2)},
+        "max": {"type": "Property", "value": round(float(statistics.get("max", 0)), 2)},
+        "std": {"type": "Property", "value": round(float(statistics.get("std", 0)), 2)},
+    }
+
+
 def _index_attribute(index_type: str, statistics: dict, observed_at: str,
                      raster_url: Optional[str], preview_url: Optional[str]) -> dict:
     attr = {
@@ -132,6 +145,45 @@ def upsert_eo_index(tenant_id, parcel_id, index_type, statistics, sensing_date,
         return None
     except Exception as exc:
         logger.error("Error upserting EOProduct %s: %s", entity_id, exc, exc_info=True)
+        return None
+
+
+def upsert_eo_lst(
+    tenant_id: str,
+    parcel_id: str,
+    statistics: dict,
+    sensing_date: date,
+    scene_id: Optional[str] = None,
+) -> Optional[str]:
+    """Merge Landsat LST (°C) onto the canonical EOProduct for (parcel, sensingDate)."""
+    sensing_date_str = sensing_date.isoformat()
+    entity_id = _entity_id_for_acquisition(tenant_id, parcel_id, sensing_date_str)
+    observed_at = datetime(
+        sensing_date.year, sensing_date.month, sensing_date.day,
+        10, 50, 0, tzinfo=timezone.utc,
+    ).isoformat().replace("+00:00", "Z")
+
+    entity: dict = {
+        "id": entity_id,
+        "type": "EOProduct",
+        "hasAgriParcel": {"type": "Relationship", "object": parcel_id},
+        "sensingDate": {"type": "Property", "value": sensing_date_str},
+        "pixelCount": {"type": "Property", "value": int(statistics.get("pixel_count", 0))},
+        "source": {"type": "Property", "value": "vegetation_health"},
+        "lst": _lst_attribute(statistics, observed_at),
+    }
+    if scene_id:
+        entity["lstSourceScene"] = {"type": "Property", "value": scene_id}
+
+    try:
+        result = _upsert_eoproduct_entity(tenant_id, entity)
+        if result.get("upserted", 0) >= 1 and not result.get("errors"):
+            logger.info("Upserted EOProduct LST %s", entity_id)
+            return entity_id
+        logger.error("EOProduct LST upsert %s failed: %s", entity_id, result.get("errors"))
+        return None
+    except Exception as exc:
+        logger.error("Error upserting EOProduct LST %s: %s", entity_id, exc, exc_info=True)
         return None
 
 

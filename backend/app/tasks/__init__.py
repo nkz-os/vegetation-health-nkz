@@ -8,6 +8,7 @@ from .scheduler import process_subscriptions, check_and_process_entity, reap_stu
 from .storage_cleanup import cleanup_global_cache
 from .sar_tasks import download_sentinel1_scene
 from .historical_baseline import build_historical_baseline
+from .lst_tasks import process_parcel_lst_task
 
 __all__ = [
     'download_sentinel2_scene',
@@ -20,5 +21,6 @@ __all__ = [
     'cleanup_global_cache',
     'download_sentinel1_scene',
     'build_historical_baseline',
+    'process_parcel_lst_task',
 ]
 

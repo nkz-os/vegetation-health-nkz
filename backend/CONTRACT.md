@@ -59,10 +59,11 @@ onto one entity rather than creating duplicates.
 ## 2. Index attributes
 
 Attribute key = the index name, **lowercased**: `ndvi`, `ndre`, `savi`,
-`gndvi`, `evi`. These are exactly the index types the module computes and
+`gndvi`, `evi`, `lst`. These are exactly the index types the module computes and
 persists (CHECK constraint in `app/models/indices.py` and
 `app/models/config.py`: `NDVI`, `EVI`, `SAVI`, `GNDVI`, `NDRE`, plus an
-internal `CUSTOM`). `NDMI` is referenced only inside anomaly-detection
+internal `CUSTOM`). `LST` (Land Surface Temperature from Landsat C2L2-ST) is
+written via `upsert_eo_lst` — not through the optical index pipeline.
 heuristics (`app/services/anomaly_detection.py`) for classifying *other*
 modules' index names — it is never written by `upsert_eo_index` and will
 not appear as an `EOProduct` attribute from this module.
@@ -97,6 +98,26 @@ Shape of each index attribute (`_index_attribute`):
 
 `rasterUrl`/`previewUrl` are pointers only — the broker never holds raster
 bytes (see §3c).
+
+### 2.1 LST attribute (`lst`)
+
+Land Surface Temperature from Landsat 8/9 Collection 2 Level-2 ST (`ST_B10`),
+zonal mean over the parcel geometry. Written by `upsert_eo_lst` (not the optical
+index calculator). Unit: degrees Celsius (`unitCode`: `CEL`).
+
+```jsonc
+"lst": {
+  "type": "Property",
+  "value": 32.4,
+  "unitCode": "CEL",
+  "observedAt": "2026-06-20T10:50:00Z",
+  "min": { "type": "Property", "value": 28.1 },
+  "max": { "type": "Property", "value": 36.7 },
+  "std": { "type": "Property", "value": 2.3 }
+}
+```
+
+Optional top-level `lstSourceScene` (string Property) holds the CDSE STAC scene id.
 
 ## 3. Read paths
 
