@@ -24,7 +24,7 @@ flower==2.0.1  # Celery monitoring
 nkz-platform-sdk>=0.6.2
 
 # Geospatial processing
-numpy==1.24.3
+numpy>=1.26.0
 shapely==2.0.2
 pyproj==3.6.1  # For accurate area calculations
 # Note: rasterio requires system libraries (installed in Dockerfile)
