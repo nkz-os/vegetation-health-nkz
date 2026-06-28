@@ -21,6 +21,7 @@ from app.database import get_db_session
 from app.services.copernicus_client import CopernicusDataSpaceClient
 from app.services.platform_credentials import get_copernicus_credentials_with_fallback
 from app.services.fiware_integration import upsert_eo_product
+from app.services.sar_smi_processor import DEFAULT_INCIDENCE_DEG
 
 logger = logging.getLogger(__name__)
 
@@ -246,6 +247,36 @@ def download_sentinel1_scene(
                     logger.info("Published EOProduct %s for %s", eid, entity_id)
                 else:
                     logger.warning("Failed to publish EOProduct for %s", entity_id)
+
+                # ── SMI (Soil Moisture Index) from VV + DEM ──────────
+                try:
+                    from app.services.sar_smi_processor import compute_smi
+                    from app.services.fiware_integration import upsert_eo_smi
+                    smi_stats = compute_smi(
+                        vv_path=vv_path,
+                        geometry_geojson=parcel_geometry,
+                        orbit_direction=parameters.get("orbit_direction", "ASCENDING"),
+                        nominal_incidence_deg=parameters.get(
+                            "incidence_deg", DEFAULT_INCIDENCE_DEG
+                        ),
+                    )
+                    if smi_stats.get("pixel_count", 0) > 0:
+                        sdate = sensing_dt or date.today()
+                        smi_eid = upsert_eo_smi(
+                            tenant_id=tenant_id,
+                            parcel_id=entity_id,
+                            statistics=smi_stats,
+                            sensing_date=sdate,
+                            scene_id=scene_id,
+                            incidence_deg=parameters.get("incidence_deg"),
+                        )
+                        if smi_eid:
+                            logger.info(
+                                "Published SMI %.3f for %s",
+                                smi_stats["mean"], entity_id,
+                            )
+                except Exception as exc:
+                    logger.warning("SMI computation skipped for %s: %s", entity_id, exc)
 
             # ── Mark download job complete ────────────────────────────
             download_job.mark_completed({

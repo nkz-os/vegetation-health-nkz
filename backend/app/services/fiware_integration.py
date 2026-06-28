@@ -187,6 +187,54 @@ def upsert_eo_lst(
         return None
 
 
+def upsert_eo_smi(
+    tenant_id: str,
+    parcel_id: str,
+    statistics: dict,
+    sensing_date: date,
+    scene_id: Optional[str] = None,
+    incidence_deg: Optional[float] = None,
+) -> Optional[str]:
+    """Merge SAR SMI (0–1) onto the canonical EOProduct for (parcel, sensingDate)."""
+    sensing_date_str = sensing_date.isoformat()
+    entity_id = _entity_id_for_acquisition(tenant_id, parcel_id, sensing_date_str)
+    observed_at = datetime(
+        sensing_date.year, sensing_date.month, sensing_date.day,
+        6, 0, 0, tzinfo=timezone.utc,
+    ).isoformat().replace("+00:00", "Z")
+
+    entity: dict = {
+        "id": entity_id,
+        "type": "EOProduct",
+        "hasAgriParcel": {"type": "Relationship", "object": parcel_id},
+        "sensingDate": {"type": "Property", "value": sensing_date_str},
+        "source": {"type": "Property", "value": "vegetation_health"},
+        "sarMoisture": {
+            "type": "Property",
+            "value": round(float(statistics.get("mean", 0)), 4),
+            "observedAt": observed_at,
+            "min": {"type": "Property", "value": round(float(statistics.get("min", 0)), 4)},
+            "max": {"type": "Property", "value": round(float(statistics.get("max", 0)), 4)},
+            "std": {"type": "Property", "value": round(float(statistics.get("std", 0)), 4)},
+        },
+    }
+    if scene_id:
+        entity["sarSceneId"] = {"type": "Property", "value": scene_id}
+    if incidence_deg is not None:
+        entity["sarIncidenceDeg"] = {"type": "Property", "value": round(float(incidence_deg), 2)}
+
+    try:
+        result = _upsert_eoproduct_entity(tenant_id, entity)
+        if result.get("upserted", 0) >= 1 and not result.get("errors"):
+            logger.info("Upserted EOProduct SMI %s", entity_id)
+            return entity_id
+        logger.error("EOProduct SMI upsert %s failed: %s", entity_id, result.get("errors"))
+        return None
+    except Exception as exc:
+        logger.error("Error upserting EOProduct SMI %s: %s", entity_id, exc, exc_info=True)
+        return None
+
+
 def upsert_eo_product(
     tenant_id: str,
     parcel_id: str,
