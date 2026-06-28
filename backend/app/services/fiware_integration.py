@@ -77,17 +77,12 @@ def _entity_id_for_acquisition(tenant_id: str, parcel_id: str, sensing_date_str:
 
 
 def _lst_attribute(statistics: dict, observed_at: str) -> dict:
-    """LST attribute — surface temperature in °C (UN/CEFACT unitCode CEL).
-
-    Always carries ``kind: "land_surface_temperature"`` so consumers can
-    distinguish LST from air temperature (Ta).
-    """
+    """LST attribute — surface temperature in °C (UN/CEFACT unitCode CEL)."""
     return {
         "type": "Property",
         "value": round(float(statistics.get("mean", 0)), 2),
         "unitCode": "CEL",
         "observedAt": observed_at,
-        "kind": {"type": "Property", "value": "land_surface_temperature"},
         "min": {"type": "Property", "value": round(float(statistics.get("min", 0)), 2)},
         "max": {"type": "Property", "value": round(float(statistics.get("max", 0)), 2)},
         "std": {"type": "Property", "value": round(float(statistics.get("std", 0)), 2)},
@@ -179,7 +174,6 @@ def upsert_eo_lst(
     }
     if scene_id:
         entity["lstSourceScene"] = {"type": "Property", "value": scene_id}
-    entity["lstKind"] = {"type": "Property", "value": "land_surface_temperature"}
 
     try:
         result = _upsert_eoproduct_entity(tenant_id, entity)
