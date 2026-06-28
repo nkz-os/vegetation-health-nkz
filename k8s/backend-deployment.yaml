@@ -44,7 +44,7 @@ spec:
             readOnlyRootFilesystem: false
             capabilities:
               drop: ["ALL"]
-          image: ghcr.io/nkz-os/vegetation-health-nkz/vegetation-prime-api:728d174b057a5f51440615268c07c2ffc93675ef
+          image: ghcr.io/nkz-os/vegetation-health-nkz/vegetation-prime-api:0d1cfce8ca42d68a1d6aea5b8a6cd5a5a9e35d45
           imagePullPolicy: Always
           ports:
             - name: http
