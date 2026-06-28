@@ -6,6 +6,7 @@ import logging
 from datetime import date
 
 from app.celery_app import celery_app
+from app.database import get_db_session
 from app.services.fiware_integration import upsert_eo_lst
 from app.services.lst_processor import process_parcel_lst
 from app.services.platform_credentials import get_copernicus_credentials_with_fallback
@@ -77,3 +78,48 @@ def process_parcel_lst_task(
     except Exception as exc:
         logger.error("LST task failed for %s: %s", parcel_id, exc, exc_info=True)
         raise self.retry(exc=exc)
+
+
+@celery_app.task(name="vegetation.dispatch_lst_for_active_parcels")
+def dispatch_lst_for_active_parcels():
+    """Weekly beat: iterate active subscriptions and enqueue LST per parcel."""
+    db = next(get_db_session())
+    try:
+        from app.models import VegetationSubscription
+        from nkz_platform_sdk import SyncOrionClient
+        from shapely.geometry import shape
+
+        subs = db.query(VegetationSubscription).filter(
+            VegetationSubscription.is_active == True,
+        ).all()
+        enqueued = 0
+        for sub in subs:
+            tenant_id = sub.tenant_id
+            parcel_id = sub.entity_id
+            try:
+                orion = SyncOrionClient(tenant_id)
+                resp = orion.get(f"/ngsi-ld/v1/entities/{parcel_id}")
+                if resp.status_code != 200:
+                    continue
+                entity = resp.json()
+                location = entity.get("location")
+                if isinstance(location, dict):
+                    location = location.get("value") or location
+                if not isinstance(location, dict) or "coordinates" not in location:
+                    continue
+                geom = shape(location)
+                centroid = geom.centroid
+                process_parcel_lst_task.delay(
+                    tenant_id=tenant_id,
+                    parcel_id=parcel_id,
+                    latitude=centroid.y,
+                    longitude=centroid.x,
+                    geometry_geojson=location,
+                )
+                enqueued += 1
+            except Exception as exc:
+                logger.warning("LST dispatch skipped for %s: %s", parcel_id, exc)
+        logger.info("LST dispatch: enqueued %d parcels", enqueued)
+        return {"status": "ok", "parcels_enqueued": enqueued}
+    finally:
+        db.close()

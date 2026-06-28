@@ -90,6 +90,10 @@ celery_app.conf.beat_schedule = {
         'task': 'vegetation.reap_stuck_jobs',
         'schedule': crontab(minute='*/15'),  # Every 15 minutes
     },
+    'vegetation.dispatch_lst': {
+        'task': 'vegetation.dispatch_lst_for_active_parcels',
+        'schedule': crontab(hour=4, minute=0, day_of_week=1),  # Weekly, Monday 4 AM
+    },
 }
 
 if __name__ == '__main__':
