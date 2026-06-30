@@ -187,6 +187,52 @@ def upsert_eo_lst(
         return None
 
 
+def upsert_eo_change_flag(
+    tenant_id: str,
+    parcel_id: str,
+    change_flag: str,
+    confidence: float,
+    delta_vv: float,
+    sensing_date: date,
+    scene_id: str | None = None,
+) -> str | None:
+    """Merge SAR change detection flag onto the EOProduct for (parcel, sensingDate)."""
+    sensing_date_str = sensing_date.isoformat()
+    entity_id = _entity_id_for_acquisition(tenant_id, parcel_id, sensing_date_str)
+    observed_at = datetime(
+        sensing_date.year, sensing_date.month, sensing_date.day,
+        6, 0, 0, tzinfo=timezone.utc,
+    ).isoformat().replace("+00:00", "Z")
+
+    entity: dict = {
+        "id": entity_id,
+        "type": "EOProduct",
+        "hasAgriParcel": {"type": "Relationship", "object": parcel_id},
+        "sensingDate": {"type": "Property", "value": sensing_date_str},
+        "source": {"type": "Property", "value": "vegetation_health"},
+        "sarChangeFlag": {
+            "type": "Property",
+            "value": change_flag,
+            "observedAt": observed_at,
+            "confidence": {"type": "Property", "value": round(float(confidence), 4)},
+            "deltaVV": {"type": "Property", "value": round(float(delta_vv), 2)},
+        },
+    }
+    if scene_id:
+        entity["sarSceneId"] = {"type": "Property", "value": scene_id}
+
+    try:
+        result = _upsert_eoproduct_entity(tenant_id, entity)
+        if result.get("upserted", 0) >= 1 and not result.get("errors"):
+            logger.info("Upserted EOProduct change flag %s", entity_id)
+            return entity_id
+        logger.error("EOProduct change flag upsert %s failed: %s", entity_id, result.get("errors"))
+        return None
+    except Exception as exc:
+        logger.error("Error upserting EOProduct change flag %s: %s", entity_id, exc, exc_info=True)
+        return None
+
+
 def upsert_eo_smi(
     tenant_id: str,
     parcel_id: str,

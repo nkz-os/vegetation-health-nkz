@@ -14,6 +14,7 @@ from datetime import date, datetime, timezone
 from typing import Dict, Any
 
 import numpy as np
+import requests
 
 from app.celery_app import celery_app
 from app.models import VegetationJob, VegetationScene
@@ -24,6 +25,53 @@ from app.services.fiware_integration import upsert_eo_product
 from app.services.sar_smi_processor import DEFAULT_INCIDENCE_DEG
 
 logger = logging.getLogger(__name__)
+
+FIELD_OPS_URL = "http://field-operations-api-service:8420/internal/suggested-operation"
+
+
+def _notify_field_operations(
+    tenant_id: str,
+    parcel_id: str,
+    operation_type: str,
+    confidence: float,
+    delta_vv_db: float,
+    sensing_date_str: str,
+    scene_id: str,
+) -> bool:
+    """POST suggested operation to field-operations. Fail-open: logs warning."""
+    secret = os.getenv("INTERNAL_SERVICE_SECRET", "")
+    if not secret:
+        logger.warning("INTERNAL_SERVICE_SECRET not set — field-ops notification skipped")
+        return False
+    try:
+        resp = requests.post(
+            FIELD_OPS_URL,
+            json={
+                "tenant_id": tenant_id,
+                "parcel_id": parcel_id,
+                "operation_type": operation_type,
+                "confidence": confidence,
+                "sensing_date": sensing_date_str,
+                "delta_vv_db": delta_vv_db,
+                "scene_id": scene_id,
+            },
+            headers={
+                "X-Internal-Service-Secret": secret,
+                "Content-Type": "application/json",
+            },
+            timeout=10,
+        )
+        if resp.status_code in (200, 201, 409):
+            logger.info(
+                "Notified field-ops: %s on %s (%d)",
+                operation_type, parcel_id, resp.status_code,
+            )
+            return True
+        logger.warning("field-ops notification returned %d: %s", resp.status_code, resp.text[:200])
+        return False
+    except Exception as exc:
+        logger.warning("field-ops notification failed for %s: %s", parcel_id, exc)
+        return False
 
 
 @celery_app.task(
@@ -277,6 +325,91 @@ def download_sentinel1_scene(
                             )
                 except Exception as exc:
                     logger.warning("SMI computation skipped for %s: %s", entity_id, exc)
+
+            # ── SAR Change Detection ──────────────────────────────────
+            try:
+                from app.services.sar_change_detector import detect_change
+                from app.services.fiware_integration import upsert_eo_change_flag
+                from nkz_platform_sdk import SyncOrionClient
+
+                # Query previous EOProduct for ΔVV comparison
+                orion = SyncOrionClient(tenant_id)
+                prev_resp = orion.get(
+                    f"/ngsi-ld/v1/entities?type=EOProduct&q="
+                    f'hasAgriParcel=="{entity_id}"|refAgriParcel=="{entity_id}"'
+                    f';productType=="GRD"'
+                    f"&limit=2&options=keyValues"
+                )
+                prev_entities = prev_resp.json() if prev_resp.status_code == 200 else []
+                # Pick the one before current (if any)
+                prev_vv = None
+                prev_ndvi = None
+                prev_date = None
+                for pe in (prev_entities if isinstance(prev_entities, list) else []):
+                    sd = str(pe.get("sensingDate", ""))
+                    if sd and sd < (sensing_date_str or ""):
+                        prev_vv = float(pe.get("backscatterVV", 0)) if pe.get("backscatterVV") else None
+                        prev_date = sd
+                        break
+
+                # NDVI check: latest EOProduct with ndvi
+                ndvi_resp = orion.get(
+                    f"/ngsi-ld/v1/entities?type=EOProduct&q="
+                    f'hasAgriParcel=="{entity_id}"|refAgriParcel=="{entity_id}"'
+                    f"&limit=1&options=keyValues"
+                )
+                ndvi_entities = ndvi_resp.json() if ndvi_resp.status_code == 200 else []
+                ndvi_current = None
+                if isinstance(ndvi_entities, list) and ndvi_entities:
+                    for ne in ndvi_entities:
+                        n = ne.get("ndvi")
+                        if n is not None:
+                            ndvi_current = float(n) if isinstance(n, (int, float)) else None
+                            break
+
+                days_prev = None
+                if prev_date and sensing_date_str:
+                    try:
+                        from datetime import datetime as dt
+                        d1 = dt.fromisoformat(sensing_date_str.replace("Z", "+00:00"))
+                        d2 = dt.fromisoformat(str(prev_date).replace("Z", "+00:00"))
+                        days_prev = abs((d1 - d2).days)
+                    except (ValueError, TypeError):
+                        pass
+
+                current_vv = stats_by_pol.get("VV", {}).get("mean")
+                if current_vv is not None:
+                    ch = detect_change(
+                        vv_current_db=float(current_vv),
+                        vv_previous_db=prev_vv,
+                        ndvi_current=ndvi_current,
+                        ndvi_previous=prev_ndvi,
+                        days_since_previous=days_prev,
+                    )
+                    if ch and ch.get("change_flag") not in (None, "none"):
+                        # Publish flag on EOProduct
+                        sdate = sensing_dt or date.today()
+                        upsert_eo_change_flag(
+                            tenant_id=tenant_id,
+                            parcel_id=entity_id,
+                            change_flag=ch["change_flag"],
+                            confidence=ch["confidence"],
+                            delta_vv=ch["delta_vv"],
+                            sensing_date=sdate,
+                            scene_id=scene_id,
+                        )
+                        # Webhook field-operations
+                        _notify_field_operations(
+                            tenant_id=tenant_id,
+                            parcel_id=entity_id,
+                            operation_type=ch["change_flag"],
+                            confidence=ch["confidence"],
+                            delta_vv_db=ch["delta_vv"],
+                            sensing_date_str=sensing_date_str or "",
+                            scene_id=scene_id,
+                        )
+            except Exception as exc:
+                logger.warning("SAR change detection skipped for %s: %s", entity_id, exc)
 
             # ── Mark download job complete ────────────────────────────
             download_job.mark_completed({
