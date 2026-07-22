@@ -15,6 +15,16 @@ from app.tasks.processing_tasks import calculate_vegetation_index
 logger = logging.getLogger(__name__)
 # Note: CopernicusDataSpaceClient imported inside check_and_process_entity
 
+# ── Recoverable error classification ──────────────────────────────────────
+RECOVERABLE_PATTERNS = ["Copernicus", "timeout", "5[0-9][0-9]", "ConnectionError", "ServiceUnavailable"]
+
+
+def _is_recoverable_error(error_message: str | None) -> bool:
+    """True if this failure matches a known-transient pattern worth retrying."""
+    if not error_message:
+        return False
+    return any(re.search(p, error_message) for p in RECOVERABLE_PATTERNS)
+
 # We might need a task to find new scenes first, then download them.
 # The current download_sentinel2_scene downloads a SPECIFIC scene ID.
 # So we need a "discovery" task.
@@ -411,38 +421,53 @@ def reap_stuck_jobs():
         db.commit()
 
         # ── Failed recoverable: network/Copernicus errors → retry after 24h ──
-        RECOVERABLE_PATTERNS = ["Copernicus", "timeout", "5[0-9][0-9]", "ConnectionError", "ServiceUnavailable"]
+        # Non-matching old failures (e.g. "File not found" from a band-cleanup
+        # race) are NOT auto-redownloaded — owner decision 2026-07-22: mark
+        # them permanently failed so they stop being silently re-evaluated
+        # every cycle. A fresh "Analizar temporada" creates clean new jobs.
+        old_failed_cutoff = now - timedelta(hours=24)
 
-        recoverable_cutoff = now - timedelta(hours=24)
-
-        recoverable_failed = (
+        old_failed = (
             db.query(VegetationJob)
             .filter(
                 VegetationJob.status == "failed",
-                VegetationJob.completed_at < recoverable_cutoff,
+                VegetationJob.completed_at < old_failed_cutoff,
                 VegetationJob.completed_at.isnot(None),
                 VegetationJob.error_message.isnot(None),
             )
             .all()
         )
 
-        for job in recoverable_failed:
+        recoverable_count = 0
+        finalized_count = 0
+        for job in old_failed:
             error_msg = job.error_message or ""
-            if any(re.search(p, error_msg) for p in RECOVERABLE_PATTERNS):
+            if _is_recoverable_error(error_msg):
+                recoverable_count += 1
                 logger.info(
                     "Recoverable failure for job %s: %s — resetting to pending",
                     job.id, error_msg[:80],
                 )
                 if _increment_retry(job, f"recoverable failure: {error_msg[:80]}"):
                     retries += _redispatch(job)
+            else:
+                result = job.result or {}
+                if not result.get("permanently_failed"):
+                    result["permanently_failed"] = True
+                    result["permanently_failed_reason"] = (
+                        f"non-recoverable error, not retried: {error_msg[:80]}"
+                    )
+                    job.result = result
+                    finalized_count += 1
 
-        if recoverable_failed:
+        if old_failed:
             db.commit()
 
-        if orphans or lost or zombies or recoverable_failed:
+        if orphans or lost or zombies or recoverable_count or finalized_count:
             logger.warning(
-                "Reaper: %d orphan(s), %d lost, %d zombie(s), %d recoverable failed — %d re-queued",
-                len(orphans), len(lost), len(zombies), len(recoverable_failed), retries,
+                "Reaper: %d orphan(s), %d lost, %d zombie(s), %d recoverable failed — "
+                "%d re-queued, %d newly finalized as permanent",
+                len(orphans), len(lost), len(zombies), recoverable_count, retries, finalized_count,
             )
     finally:
         db.close()
