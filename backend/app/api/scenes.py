@@ -934,16 +934,50 @@ async def get_credentials_status(
     current_user: dict = Depends(require_auth),
     db: Session = Depends(get_db_with_tenant),
 ):
-    """Check if Copernicus credentials are configured (reads from DB)."""
+    """Check if Copernicus credentials are configured (tenant BYOK + platform fallback)."""
     from app.models.config import VegetationConfig
+    from app.services.platform_credentials import get_copernicus_credentials
+    import os
+
     tenant_id = current_user["tenant_id"]
+
+    # 1. Check tenant BYOK
     cfg = db.query(VegetationConfig).filter(VegetationConfig.tenant_id == tenant_id).first()
-    available = bool(cfg and cfg.copernicus_client_id and cfg.copernicus_client_secret_encrypted)
+    tenant_ok = bool(cfg and cfg.copernicus_client_id and cfg.copernicus_client_secret_encrypted)
+    if tenant_ok:
+        return {
+            "available": True,
+            "source": "tenant",
+            "message": "Using tenant credentials",
+            "client_id_preview": (cfg.copernicus_client_id[:8] + "...") if cfg and cfg.copernicus_client_id else None,
+        }
+
+    # 2. Check platform fallback (external_api_credentials + env vars)
+    platform_creds = get_copernicus_credentials()
+    if platform_creds and platform_creds.get("client_id"):
+        pid = platform_creds["client_id"]
+        return {
+            "available": True,
+            "source": "platform",
+            "message": "Using platform credentials",
+            "client_id_preview": (pid[:8] + "...") if pid else None,
+        }
+
+    # 3. Check env vars directly (last resort)
+    env_id = os.getenv("COPERNICUS_CLIENT_ID", "")
+    if env_id:
+        return {
+            "available": True,
+            "source": "platform",
+            "message": "Using platform credentials (env)",
+            "client_id_preview": (env_id[:8] + "...") if len(env_id) >= 8 else None,
+        }
+
     return {
-        "available": available,
-        "source": "tenant" if available else None,
-        "message": "Credentials configured" if available else "No Copernicus credentials configured",
-        "client_id_preview": (cfg.copernicus_client_id[:8] + "...") if (cfg and cfg.copernicus_client_id) else None,
+        "available": False,
+        "source": None,
+        "message": "No Copernicus credentials configured",
+        "client_id_preview": None,
     }
 
 

@@ -17,7 +17,7 @@ router = APIRouter(prefix="/api/vegetation/config", tags=["config"])
 
 class CopernicusCredentialsRequest(BaseModel):
     copernicus_client_id: str = Field(..., min_length=1, max_length=256)
-    copernicus_client_secret: str = Field(..., min_length=1, max_length=512)
+    copernicus_client_secret: str = Field(default="", max_length=512)
 
 
 class ConfigResponse(BaseModel):
@@ -52,7 +52,9 @@ async def upsert_config(
 
     if existing:
         existing.copernicus_client_id = body.copernicus_client_id
-        existing.copernicus_client_secret_encrypted = encrypted_secret
+        # Keep existing secret when updating without a new one
+        if body.copernicus_client_secret:
+            existing.copernicus_client_secret_encrypted = encrypt_secret(body.copernicus_client_secret)
         existing.created_by = current_user.get("user_id")
         db.commit()
         db.refresh(existing)
@@ -64,6 +66,12 @@ async def upsert_config(
             default_index_type=existing.default_index_type or "NDVI",
             cloud_coverage_threshold=int(existing.cloud_coverage_threshold or 50),
             auto_process=existing.auto_process if existing.auto_process is not None else True,
+        )
+
+    if not body.copernicus_client_secret:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Client Secret is required for new credentials",
         )
 
     config = VegetationConfig(
