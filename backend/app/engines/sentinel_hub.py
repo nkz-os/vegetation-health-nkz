@@ -5,16 +5,13 @@ downloading raw Sentinel-2 bands locally.
 """
 
 import logging
+import math
 from datetime import date, datetime, timedelta
-from typing import Any
 
 from .base import BaseVegetationEngine, IndexResult, EngineHealth
 from app.services.sentinel_hub_client import (
     SentinelHubClient,
-    SentinelHubAuthError,
     SentinelHubError,
-    SentinelHubRateLimitError,
-    SentinelHubTimeoutError,
 )
 from app.services.evalscripts import MULTI_INDEX, NDVI_COLOR
 
@@ -61,6 +58,10 @@ class SentinelHubEngine(BaseVegetationEngine):
         Uses the multi-index evalscript to compute all requested indices
         in a single API call per 5-day aggregation window.
         """
+        logger.info(
+            "Computing indices for parcel=%s tenant=%s types=%s cloud_max=%s",
+            parcel_id, tenant_id, index_types, cloud_cover_max,
+        )
         bands = ["B02", "B03", "B04", "B05", "B08", "B8A", "SCL"]
 
         try:
@@ -124,7 +125,14 @@ class SentinelHubEngine(BaseVegetationEngine):
         index visualizations (EVI, SAVI color ramps) can be added as
         separate evalscripts.
         """
-        # EPSG:3857 tile → EPSG:4326 bbox
+        if index_type.upper() != "NDVI":
+            raise NotImplementedError(
+                f"Tile rendering only supports NDVI; got {index_type}"
+            )
+        if color_ramp != "agronomic":
+            raise NotImplementedError(
+                f"Only agronomic color ramp supported; got {color_ramp}"
+            )
         bbox = _tile_to_bbox(x, y, z)
 
         try:
@@ -147,6 +155,10 @@ class SentinelHubEngine(BaseVegetationEngine):
         except SentinelHubError as e:
             return EngineHealth(status="unavailable", reason=str(e))
 
+    async def close(self) -> None:
+        """Clean up underlying httpx client connections."""
+        await self._client.close()
+
     @staticmethod
     def _parse_interval_midpoint(interval_from: str) -> date:
         """Extract midpoint date from a 5-day aggregation interval.
@@ -157,12 +169,14 @@ class SentinelHubEngine(BaseVegetationEngine):
             dt = datetime.fromisoformat(interval_from.replace("Z", "+00:00"))
             return (dt + timedelta(days=2)).date()
         except (ValueError, TypeError):
+            logger.warning(
+                "Could not parse interval_from='%s', using today", interval_from
+            )
             return date.today()
 
 
 def _tile_to_bbox(x: int, y: int, z: int) -> list[float]:
     """Convert TMS tile (x, y, z) to EPSG:4326 bbox [minLon, minLat, maxLon, maxLat]."""
-    import math
     n = 2.0 ** z
     lon_min = x / n * 360.0 - 180.0
     lon_max = (x + 1) / n * 360.0 - 180.0

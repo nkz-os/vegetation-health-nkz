@@ -5,7 +5,6 @@ Statistical API scripts output per-band statistics.
 Process API scripts output visual RGBA images.
 """
 
-import os
 from pathlib import Path
 
 _EVALSCRIPT_DIR = Path(__file__).parent
