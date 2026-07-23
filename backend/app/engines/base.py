@@ -2,7 +2,7 @@
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Literal
 
 
@@ -27,7 +27,7 @@ class EngineHealth:
     """Health status of an engine."""
     status: Literal["ok", "degraded", "unavailable"]
     reason: str | None = None
-    last_checked: datetime = field(default_factory=lambda: datetime.now())
+    last_checked: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class EngineDegradedException(Exception):

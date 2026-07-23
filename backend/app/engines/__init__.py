@@ -4,7 +4,7 @@ SentinelHubEngine  — primary, zero-download via Sentinel Hub API
 LocalProcessingEngine — sovereign fallback, GDAL/rasterio local processing
 """
 
-from .base import BaseVegetationEngine, IndexResult, EngineHealth
+from .base import BaseVegetationEngine, IndexResult, EngineHealth, EngineDegradedException
 
 try:
     from .selector import EngineSelector
@@ -15,5 +15,6 @@ __all__ = [
     "BaseVegetationEngine",
     "IndexResult",
     "EngineHealth",
+    "EngineDegradedException",
     "EngineSelector",
 ]

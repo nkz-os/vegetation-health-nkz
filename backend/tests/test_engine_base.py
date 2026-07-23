@@ -35,8 +35,13 @@ class DummyEngine(BaseVegetationEngine):
 
 
 class TestBaseEngineInterface:
+    def test_cannot_instantiate_abc(self):
+        with pytest.raises(TypeError, match="abstract"):
+            BaseVegetationEngine()
+
     def test_subclass_instantiation(self):
         engine = DummyEngine()
+        assert isinstance(engine, BaseVegetationEngine)
         assert engine.engine_name == "dummy"
 
     @pytest.mark.asyncio
