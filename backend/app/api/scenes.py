@@ -925,40 +925,22 @@ async def get_capabilities(current_user: dict = Depends(require_auth)):
     }
 
 
-@router.get("/config")
-async def get_config(current_user: dict = Depends(require_auth)):
-    """Return tenant vegetation config (defaults for now)."""
-    import os
-    return {
-        "default_index": "NDVI",
-        "auto_process": False,
-        "cloud_threshold": 50,
-        "copernicus_client_id": os.getenv("COPERNICUS_CLIENT_ID", ""),
-        "copernicus_client_secret_set": bool(os.getenv("COPERNICUS_CLIENT_SECRET")),
-    }
-
-
-@router.post("/config")
-async def update_config(
-    config: dict,
-    current_user: dict = Depends(require_auth),
-):
-    """Update tenant vegetation config (stub — returns input as saved)."""
-    return {"message": "Config saved", "config": config}
+# Config routes replaced by app/api/config.py (BYOK + DB-backed tenant config).
+# Kept as redirect for backward compatibility with old frontend clients.
 
 
 @router.get("/config/credentials-status")
 async def get_credentials_status(current_user: dict = Depends(require_auth)):
-    """Check if Copernicus credentials are configured."""
-    import os
-    client_id = os.getenv("COPERNICUS_CLIENT_ID", "")
-    has_secret = bool(os.getenv("COPERNICUS_CLIENT_SECRET"))
-    available = bool(client_id and has_secret)
+    """Check if Copernicus credentials are configured (reads from DB)."""
+    from app.models.config import VegetationConfig
+    tenant_id = current_user["tenant_id"]
+    cfg = db.query(VegetationConfig).filter(VegetationConfig.tenant_id == tenant_id).first()
+    available = bool(cfg and cfg.copernicus_client_id and cfg.copernicus_client_secret_encrypted)
     return {
         "available": available,
-        "source": "platform" if available else None,
+        "source": "tenant" if available else None,
         "message": "Credentials configured" if available else "No Copernicus credentials configured",
-        "client_id_preview": client_id[:8] + "..." if client_id else None,
+        "client_id_preview": (cfg.copernicus_client_id[:8] + "...") if (cfg and cfg.copernicus_client_id) else None,
     }
 
 
