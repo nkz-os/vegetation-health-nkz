@@ -1,5 +1,5 @@
 # backend/app/api/tiles.py
-from fastapi import APIRouter, HTTPException, Depends, Response, Query
+from fastapi import APIRouter, HTTPException, Depends, Request, Response, Query
 from rio_tiler.io import Reader
 from rio_tiler.errors import TileOutsideBounds
 from rio_tiler.colormap import cmap as colormap_handler
@@ -212,6 +212,7 @@ async def get_tile(
 
 @router.get("/sentinel-hub/{index_type}/{z}/{x}/{y}.png")
 async def get_sentinel_hub_tile(
+    request: Request,
     index_type: str,
     z: int, x: int, y: int,
     date_str: Optional[str] = Query(None, description="ISO date YYYY-MM-DD, or latest"),
@@ -224,10 +225,10 @@ async def get_sentinel_hub_tile(
     Falls back to local COG if Sentinel Hub is unavailable.
     """
     from app.services.tile_cache import get_cached_tile, put_cached_tile
-    from app.engines.selector import EngineSelector
 
     tenant_id = current_user["tenant_id"]
     index_type = index_type.upper()
+    engine_selector = request.app.state.engine_selector
 
     # 1. Check MinIO cache (tenant-scoped)
     cached = get_cached_tile(tenant_id, index_type, z, x, y, date_str)
@@ -238,8 +239,7 @@ async def get_sentinel_hub_tile(
 
     # 2. Call engine (Sentinel Hub → local fallback on failure)
     try:
-        engine = EngineSelector()
-        tile_bytes = await engine.get_tile(
+        tile_bytes = await engine_selector.get_tile(
             tenant_id=tenant_id,
             index_type=index_type,
             z=z, x=x, y=y,
