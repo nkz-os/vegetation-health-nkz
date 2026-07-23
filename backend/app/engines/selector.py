@@ -3,6 +3,9 @@
 Primary engine = SentinelHubEngine (zero-download).
 Fallback engine = LocalProcessingEngine (sovereign GDAL/rasterio).
 
+Each tenant gets its OWN SentinelHubEngine instance to avoid credential
+leaks across tenants. The fallback engine is shared (stateless).
+
 Degradation rules:
   - Auth failure (401/403)      → fallback for 1 hour
   - Rate limit (429)            → fallback for 5 minutes
@@ -26,13 +29,19 @@ RATE_LIMIT_TTL = 300        # 5 minutes
 
 
 class EngineSelector:
-    """Selects and manages engine lifecycle with automatic degradation."""
+    """Selects and manages engine lifecycle with automatic degradation.
+
+    Thread safety: each tenant gets its own SentinelHubEngine instance
+    so concurrent requests from different tenants never share credentials.
+    """
 
     def __init__(self):
-        self._primary: BaseVegetationEngine = SentinelHubEngine()
+        # Per-tenant primary engines (one SentinelHubEngine per tenant)
+        self._engines: dict[str, SentinelHubEngine] = {}
+        # Shared fallback (stateless — just dispatches Celery tasks)
         self._fallback: BaseVegetationEngine = LocalProcessingEngine()
         # tenant_id → (engine_name, degraded_until_timestamp)
-        self._tenant_engine: dict[str, tuple[str, float]] = {}
+        self._tenant_degraded: dict[str, tuple[str, float]] = {}
 
     async def compute_indices(
         self,
@@ -64,7 +73,7 @@ class EngineSelector:
                 "Engine degraded for tenant %s: %s — retry after %ds",
                 tenant_id, e.reason, e.retry_after_seconds,
             )
-            self._tenant_engine[tenant_id] = (
+            self._tenant_degraded[tenant_id] = (
                 "fallback", time.time() + e.retry_after_seconds
             )
             return await self._fallback_compute(
@@ -101,14 +110,6 @@ class EngineSelector:
                 date_str=date_str,
                 color_ramp=color_ramp,
             )
-        except EngineDegradedException:
-            return await self._fallback.get_tile(
-                tenant_id=tenant_id,
-                index_type=index_type,
-                z=z, x=x, y=y,
-                date_str=date_str,
-                color_ramp=color_ramp,
-            )
         except Exception:
             return await self._fallback.get_tile(
                 tenant_id=tenant_id,
@@ -134,9 +135,13 @@ class EngineSelector:
         return results
 
     def _get_engine_for(self, tenant_id: str) -> BaseVegetationEngine:
-        """Return the active engine for a tenant, respecting degradation TTL."""
-        if tenant_id in self._tenant_engine:
-            engine_name, until = self._tenant_engine[tenant_id]
+        """Return the active engine for a tenant.
+
+        Each tenant gets its own SentinelHubEngine instance, created lazily.
+        Degraded tenants use the shared fallback until TTL expires.
+        """
+        if tenant_id in self._tenant_degraded:
+            engine_name, until = self._tenant_degraded[tenant_id]
             if time.time() < until:
                 logger.debug(
                     "Tenant %s is degraded to %s until %s",
@@ -144,5 +149,10 @@ class EngineSelector:
                 )
                 return self._fallback
             else:
-                del self._tenant_engine[tenant_id]
-        return self._primary
+                del self._tenant_degraded[tenant_id]
+
+        # Lazily create a per-tenant primary engine
+        if tenant_id not in self._engines:
+            self._engines[tenant_id] = SentinelHubEngine()
+            logger.debug("Created new SentinelHubEngine for tenant %s", tenant_id)
+        return self._engines[tenant_id]

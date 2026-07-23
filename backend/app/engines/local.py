@@ -53,13 +53,12 @@ class LocalProcessingEngine(BaseVegetationEngine):
     ) -> list[IndexResult]:
         """Dispatch download + calculate tasks and await results.
 
-        For each index type, this downloads the scene and processes it.
-        Results are aggregated into IndexResult objects.
+        Sync DB operations are offloaded to a thread pool via asyncio.to_thread
+        to avoid blocking the FastAPI event loop.
         """
         from app.database import SessionLocal
         from app.models import VegetationJob
 
-        # Extract bounding box from geometry for the download task
         bbox = _geometry_to_bbox(parcel_geometry)
         if not bbox:
             raise ValueError("Could not extract bbox from parcel geometry")
@@ -76,63 +75,76 @@ class LocalProcessingEngine(BaseVegetationEngine):
             "index_types": index_types,
         }
 
-        db = SessionLocal()
-        try:
-            # Create download job
-            download_job = VegetationJob(
-                tenant_id=tenant_id,
-                job_type="download",
-                entity_id=parcel_id,
-                entity_type="AgriParcel",
-                parameters=job_params,
-                status="pending",
-            )
-            db.add(download_job)
-            db.commit()
-            job_id = str(download_job.id)
-
-            # Dispatch download task
-            from app.tasks.download_tasks import download_sentinel2_scene
-            download_sentinel2_scene.delay(job_id, tenant_id, job_params)
-
-            # Poll for completion
-            await self._poll_job_completion(db, download_job.id, job_id)
-
-            # After download completes, dispatch calculate_index tasks
-            results: list[IndexResult] = []
-            for idx_type in index_types:
-                calc_job = VegetationJob(
+        def _create_download_job() -> str:
+            db = SessionLocal()
+            try:
+                download_job = VegetationJob(
                     tenant_id=tenant_id,
-                    job_type="calculate_index",
+                    job_type="download",
                     entity_id=parcel_id,
                     entity_type="AgriParcel",
-                    parameters={
-                        "scene_id": job_params.get("scene_id"),
-                        "index_type": idx_type,
-                    },
+                    parameters=job_params,
                     status="pending",
                 )
-                db.add(calc_job)
+                db.add(download_job)
                 db.commit()
+                return str(download_job.id)
+            finally:
+                db.close()
 
-                from app.tasks.processing_tasks import calculate_vegetation_index
-                calculate_vegetation_index.delay(
-                    str(calc_job.id), tenant_id,
-                    job_params.get("scene_id"), idx_type,
-                )
+        job_id = await asyncio.to_thread(_create_download_job)
 
-                await self._poll_job_completion(db, calc_job.id, str(calc_job.id))
+        from app.tasks.download_tasks import download_sentinel2_scene
+        download_sentinel2_scene.delay(job_id, tenant_id, job_params)
 
-                # Read result from completed job
-                db.refresh(calc_job)
-                job_result = calc_job.result or {}
-                results.append(self._job_result_to_index_result(
-                    idx_type, job_result,
-                ))
+        # Poll for completion
+        await self._poll_job_completion(job_id)
 
-            return results
-        finally:
-            db.close()
+        # Dispatch calculate_index tasks
+        results: list[IndexResult] = []
+        for idx_type in index_types:
+            def _create_calc_job() -> tuple[str, str]:
+                db = SessionLocal()
+                try:
+                    calc_job = VegetationJob(
+                        tenant_id=tenant_id,
+                        job_type="calculate_index",
+                        entity_id=parcel_id,
+                        entity_type="AgriParcel",
+                        parameters={
+                            "scene_id": job_params.get("scene_id"),
+                            "index_type": idx_type,
+                        },
+                        status="pending",
+                    )
+                    db.add(calc_job)
+                    db.commit()
+                    return str(calc_job.id), str(calc_job.id)
+                finally:
+                    db.close()
+
+            calc_job_id, _ = await asyncio.to_thread(_create_calc_job)
+
+            from app.tasks.processing_tasks import calculate_vegetation_index
+            calculate_vegetation_index.delay(
+                calc_job_id, tenant_id,
+                job_params.get("scene_id"), idx_type,
+            )
+
+            await self._poll_job_completion(calc_job_id)
+
+            def _read_job_result() -> dict:
+                db = SessionLocal()
+                try:
+                    calc_job = db.query(VegetationJob).get(calc_job_id)
+                    return calc_job.result or {} if calc_job else {}
+                finally:
+                    db.close()
+
+            job_result = await asyncio.to_thread(_read_job_result)
+            results.append(self._job_result_to_index_result(idx_type, job_result))
+
+        return results
 
     async def get_tile(
         self,
@@ -157,9 +169,9 @@ class LocalProcessingEngine(BaseVegetationEngine):
         )
 
     async def health_check(self) -> EngineHealth:
-        """Check if Celery broker is reachable."""
+        """Check if Celery broker is reachable (offloaded to thread)."""
         try:
-            self._celery.control.ping(timeout=2)
+            await asyncio.to_thread(self._celery.control.ping, timeout=2)
             return EngineHealth(status="ok")
         except Exception as e:
             return EngineHealth(
@@ -167,23 +179,35 @@ class LocalProcessingEngine(BaseVegetationEngine):
                 reason=f"Celery broker unreachable: {e}",
             )
 
-    async def _poll_job_completion(self, db, job_uuid, job_id_str, timeout=POLL_TIMEOUT_SECONDS):
-        """Poll VegetationJob status until completed or timeout."""
+    async def _poll_job_completion(self, job_id_str: str, timeout: int = POLL_TIMEOUT_SECONDS):
+        """Poll VegetationJob status until completed or timeout.
+
+        Offloads sync DB queries to a thread pool via asyncio.to_thread
+        to avoid blocking the event loop.
+        """
+        from uuid import UUID
+        from app.database import SessionLocal
         from app.models import VegetationJob
 
         start = datetime.now(timezone.utc)
         while True:
-            db.refresh(db.query(VegetationJob).get(job_uuid))
-            job = db.query(VegetationJob).get(job_uuid)
-            if not job:
-                raise RuntimeError(f"Job {job_id_str} vanished")
+            def _check_status() -> str | None:
+                db = SessionLocal()
+                try:
+                    job = db.query(VegetationJob).get(UUID(job_id_str))
+                    if not job:
+                        return None
+                    return job.status
+                finally:
+                    db.close()
 
-            if job.status == "completed":
+            status = await asyncio.to_thread(_check_status)
+            if status is None:
+                raise RuntimeError(f"Job {job_id_str} vanished")
+            if status == "completed":
                 return
-            if job.status in ("failed", "cancelled"):
-                raise RuntimeError(
-                    f"Job {job_id_str} {job.status}: {job.error_message}"
-                )
+            if status in ("failed", "cancelled"):
+                raise RuntimeError(f"Job {job_id_str} {status}")
 
             elapsed = (datetime.now(timezone.utc) - start).total_seconds()
             if elapsed > timeout:
