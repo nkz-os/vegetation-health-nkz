@@ -97,8 +97,22 @@ class LocalProcessingEngine(BaseVegetationEngine):
         from app.tasks.download_tasks import download_sentinel2_scene
         download_sentinel2_scene.delay(job_id, tenant_id, job_params)
 
-        # Poll for completion
+        # Poll for completion, then read scene_id from the download job result
         await self._poll_job_completion(job_id)
+
+        def _read_scene_id() -> str | None:
+            db = SessionLocal()
+            try:
+                dl_job = db.query(VegetationJob).get(job_id)
+                if dl_job and dl_job.result:
+                    return dl_job.result.get("scene_id")
+                return None
+            finally:
+                db.close()
+
+        scene_id = await asyncio.to_thread(_read_scene_id)
+        if not scene_id:
+            raise RuntimeError(f"Download job {job_id} completed but returned no scene_id")
 
         # Dispatch calculate_index tasks
         results: list[IndexResult] = []
@@ -112,7 +126,7 @@ class LocalProcessingEngine(BaseVegetationEngine):
                         entity_id=parcel_id,
                         entity_type="AgriParcel",
                         parameters={
-                            "scene_id": job_params.get("scene_id"),
+                            "scene_id": scene_id,
                             "index_type": idx_type,
                         },
                         status="pending",
@@ -128,7 +142,7 @@ class LocalProcessingEngine(BaseVegetationEngine):
             from app.tasks.processing_tasks import calculate_vegetation_index
             calculate_vegetation_index.delay(
                 calc_job_id, tenant_id,
-                job_params.get("scene_id"), idx_type,
+                scene_id, idx_type,
             )
 
             await self._poll_job_completion(calc_job_id)

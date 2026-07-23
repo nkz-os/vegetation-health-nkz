@@ -8,10 +8,14 @@ import logging
 import math
 from datetime import date, datetime, timedelta
 
-from .base import BaseVegetationEngine, IndexResult, EngineHealth
+from .base import BaseVegetationEngine, IndexResult, EngineHealth, EngineDegradedException
 from app.services.sentinel_hub_client import (
     SentinelHubClient,
     SentinelHubError,
+    SentinelHubAuthError,
+    SentinelHubRateLimitError,
+    SentinelHubTimeoutError,
+    SentinelHubServerError,
 )
 from app.services.evalscripts import MULTI_INDEX, NDVI_COLOR
 
@@ -72,9 +76,17 @@ class SentinelHubEngine(BaseVegetationEngine):
                 bands=bands,
                 cloud_cover_max=cloud_cover_max,
             )
+        except SentinelHubAuthError as e:
+            raise EngineDegradedException(str(e), retry_after_seconds=3600) from e
+        except SentinelHubRateLimitError as e:
+            raise EngineDegradedException(str(e), retry_after_seconds=300) from e
+        except SentinelHubTimeoutError as e:
+            raise EngineDegradedException(str(e), retry_after_seconds=0) from e
+        except SentinelHubServerError as e:
+            raise EngineDegradedException(str(e), retry_after_seconds=0) from e
         except SentinelHubError as e:
             logger.error("Sentinel Hub Statistical API failed: %s", e)
-            raise
+            raise EngineDegradedException(str(e)) from e
 
         results: list[IndexResult] = []
         for interval in raw.get("data", []):
@@ -143,9 +155,15 @@ class SentinelHubEngine(BaseVegetationEngine):
                 height=256,
                 date_str=date_str,
             )
+        except SentinelHubAuthError as e:
+            raise EngineDegradedException(str(e), retry_after_seconds=3600) from e
+        except SentinelHubRateLimitError as e:
+            raise EngineDegradedException(str(e), retry_after_seconds=300) from e
+        except SentinelHubTimeoutError as e:
+            raise EngineDegradedException(str(e), retry_after_seconds=0) from e
         except SentinelHubError as e:
             logger.error("Sentinel Hub Process API failed for tile %d/%d/%d: %s", z, x, y, e)
-            raise
+            raise EngineDegradedException(str(e)) from e
 
     async def health_check(self) -> EngineHealth:
         """Check engine health by attempting token refresh."""

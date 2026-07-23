@@ -9,7 +9,7 @@ from uuid import UUID
 from typing import Optional
 from app.database import get_db_session
 from app.models import VegetationJob
-from app.middleware.auth import get_tenant_id
+from app.middleware.auth import get_tenant_id, require_auth
 from app.services.storage import generate_tenant_bucket_name
 from app.services.tile_auth import validate_tile_token
 import os
@@ -215,21 +215,22 @@ async def get_sentinel_hub_tile(
     index_type: str,
     z: int, x: int, y: int,
     date_str: Optional[str] = Query(None, description="ISO date YYYY-MM-DD, or latest"),
-    tenant_id: str = Depends(get_tenant_id),
+    current_user: dict = Depends(require_auth),
     db: Session = Depends(get_db_session),
 ):
     """Proxy tile from Sentinel Hub Process API with MinIO cache.
 
-    Cache-first: checks MinIO before calling Process API.
-    Falls back to local COG rendering if Sentinel Hub is unavailable.
+    Requires auth (JWT via gateway). Cache-first with tenant isolation.
+    Falls back to local COG if Sentinel Hub is unavailable.
     """
     from app.services.tile_cache import get_cached_tile, put_cached_tile
     from app.engines.selector import EngineSelector
 
+    tenant_id = current_user["tenant_id"]
     index_type = index_type.upper()
 
-    # 1. Check MinIO cache
-    cached = get_cached_tile(index_type, z, x, y, date_str)
+    # 1. Check MinIO cache (tenant-scoped)
+    cached = get_cached_tile(tenant_id, index_type, z, x, y, date_str)
     if cached:
         return Response(cached, media_type="image/png",
                         headers={"Cache-Control": "public, max-age=3600",
@@ -244,7 +245,7 @@ async def get_sentinel_hub_tile(
             z=z, x=x, y=y,
             date_str=date_str,
         )
-        put_cached_tile(index_type, z, x, y, tile_bytes, date_str)
+        put_cached_tile(tenant_id, index_type, z, x, y, tile_bytes, date_str)
         return Response(tile_bytes, media_type="image/png",
                         headers={"Cache-Control": "public, max-age=3600",
                                  "X-Tile-Source": "sentinel-hub"})

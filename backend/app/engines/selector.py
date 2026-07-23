@@ -14,6 +14,7 @@ Degradation rules:
 """
 
 import logging
+import os
 import time
 from datetime import date
 
@@ -137,8 +138,9 @@ class EngineSelector:
     def _get_engine_for(self, tenant_id: str) -> BaseVegetationEngine:
         """Return the active engine for a tenant.
 
-        Each tenant gets its own SentinelHubEngine instance, created lazily.
-        Degraded tenants use the shared fallback until TTL expires.
+        Each tenant gets its own SentinelHubEngine instance, created lazily
+        with credentials resolved from: BYOK (vegetation_config) → platform
+        fallback (external_api_credentials) → env vars.
         """
         if tenant_id in self._tenant_degraded:
             engine_name, until = self._tenant_degraded[tenant_id]
@@ -151,8 +153,63 @@ class EngineSelector:
             else:
                 del self._tenant_degraded[tenant_id]
 
-        # Lazily create a per-tenant primary engine
+        # Lazily create a per-tenant engine with resolved credentials
         if tenant_id not in self._engines:
-            self._engines[tenant_id] = SentinelHubEngine()
-            logger.debug("Created new SentinelHubEngine for tenant %s", tenant_id)
+            engine = SentinelHubEngine()
+            client_id, client_secret = _resolve_credentials(tenant_id)
+            if client_id and client_secret:
+                engine.set_credentials(client_id, client_secret)
+                logger.info("Resolved credentials for tenant %s (source: byok)", tenant_id)
+            else:
+                logger.warning(
+                    "No credentials for tenant %s — Sentinel Hub will be unavailable",
+                    tenant_id,
+                )
+            self._engines[tenant_id] = engine
         return self._engines[tenant_id]
+
+
+def _resolve_credentials(tenant_id: str) -> tuple[str | None, str | None]:
+    """Resolve Copernicus CDSE credentials for a tenant.
+
+    Priority:
+      1. Tenant BYOK (vegetation_config table, Fernet-decrypted)
+      2. Platform fallback (external_api_credentials table)
+      3. Env vars (COPERNICUS_CLIENT_ID / COPERNICUS_CLIENT_SECRET)
+    """
+    # 1. Tenant BYOK
+    try:
+        from app.database import SessionLocal
+        from app.models.config import VegetationConfig
+        from app.services.encryption import decrypt_secret
+
+        db = SessionLocal()
+        try:
+            cfg = db.query(VegetationConfig).filter(
+                VegetationConfig.tenant_id == tenant_id
+            ).first()
+            if cfg and cfg.copernicus_client_id and cfg.copernicus_client_secret_encrypted:
+                client_id = cfg.copernicus_client_id
+                client_secret = decrypt_secret(cfg.copernicus_client_secret_encrypted)
+                return client_id, client_secret
+        finally:
+            db.close()
+    except Exception as e:
+        logger.debug("BYOK credential lookup failed: %s", e)
+
+    # 2. Platform fallback
+    try:
+        from app.services.platform_credentials import get_copernicus_credentials
+        creds = get_copernicus_credentials()
+        if creds:
+            return creds.get("client_id"), creds.get("client_secret")
+    except Exception as e:
+        logger.debug("Platform credential lookup failed: %s", e)
+
+    # 3. Env vars
+    env_id = os.getenv("COPERNICUS_CLIENT_ID", "")
+    env_secret = os.getenv("COPERNICUS_CLIENT_SECRET", "")
+    if env_id and env_secret:
+        return env_id, env_secret
+
+    return None, None

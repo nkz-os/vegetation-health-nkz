@@ -6,6 +6,7 @@ Uses httpx (already in requirements.txt) for async HTTP.
 
 import asyncio
 import logging
+import os
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
@@ -13,10 +14,12 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-# Sentinel Hub OAuth2 endpoints
-OAUTH_URL = "https://services.sentinel-hub.com/oauth/token"
-STATISTICAL_URL = "https://services.sentinel-hub.com/api/v1/statistics"
-PROCESS_URL = "https://services.sentinel-hub.com/api/v1/process"
+# Sentinel Hub / CDSE OAuth2 endpoints
+# Default to Copernicus Data Space Ecosystem (free tier).
+# Override via env vars for commercial Sentinel Hub subscriptions.
+OAUTH_URL = os.getenv("SENTINEL_HUB_OAUTH_URL", "https://identity.dataspace.copernicus.eu/auth/realms/CDSE/protocol/openid-connect/token")
+STATISTICAL_URL = os.getenv("SENTINEL_HUB_STATISTICAL_URL", "https://sh.dataspace.copernicus.eu/api/v1/statistics")
+PROCESS_URL = os.getenv("SENTINEL_HUB_PROCESS_URL", "https://sh.dataspace.copernicus.eu/api/v1/process")
 
 # Timeouts (seconds)
 DEFAULT_TIMEOUT = 30.0

@@ -46,17 +46,17 @@ def _ensure_bucket():
             logger.warning("Could not create tile cache bucket: %s", e)
 
 
-def cache_key(index_type: str, z: int, x: int, y: int, date_str: str | None = None) -> str:
-    """Build a deterministic cache key for a tile."""
+def cache_key(tenant_id: str, index_type: str, z: int, x: int, y: int, date_str: str | None = None) -> str:
+    """Build a deterministic cache key for a tile, scoped to tenant."""
     idx = index_type.lower()
     if date_str:
-        return f"tiles/{idx}/{z}/{x}/{y}/{date_str}.png"
-    return f"tiles/{idx}/{z}/{x}/{y}/latest.png"
+        return f"tiles/{tenant_id}/{idx}/{z}/{x}/{y}/{date_str}.png"
+    return f"tiles/{tenant_id}/{idx}/{z}/{x}/{y}/latest.png"
 
 
-def get_cached_tile(index_type: str, z: int, x: int, y: int, date_str: str | None = None) -> bytes | None:
+def get_cached_tile(tenant_id: str, index_type: str, z: int, x: int, y: int, date_str: str | None = None) -> bytes | None:
     """Retrieve a cached tile from MinIO. Returns None on cache miss."""
-    key = cache_key(index_type, z, x, y, date_str)
+    key = cache_key(tenant_id, index_type, z, x, y, date_str)
     try:
         s3 = _get_s3()
         resp = s3.get_object(Bucket=TILE_CACHE_BUCKET, Key=key)
@@ -75,9 +75,9 @@ def get_cached_tile(index_type: str, z: int, x: int, y: int, date_str: str | Non
         return None
 
 
-def put_cached_tile(index_type: str, z: int, x: int, y: int, data: bytes, date_str: str | None = None) -> None:
+def put_cached_tile(tenant_id: str, index_type: str, z: int, x: int, y: int, data: bytes, date_str: str | None = None) -> None:
     """Store a tile in the MinIO cache."""
-    key = cache_key(index_type, z, x, y, date_str)
+    key = cache_key(tenant_id, index_type, z, x, y, date_str)
     try:
         s3 = _get_s3()
         s3.put_object(

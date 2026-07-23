@@ -930,7 +930,10 @@ async def get_capabilities(current_user: dict = Depends(require_auth)):
 
 
 @router.get("/config/credentials-status")
-async def get_credentials_status(current_user: dict = Depends(require_auth)):
+async def get_credentials_status(
+    current_user: dict = Depends(require_auth),
+    db: Session = Depends(get_db_with_tenant),
+):
     """Check if Copernicus credentials are configured (reads from DB)."""
     from app.models.config import VegetationConfig
     tenant_id = current_user["tenant_id"]
