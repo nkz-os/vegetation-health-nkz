@@ -5,7 +5,6 @@ Uses httpx (already in requirements.txt) for async HTTP.
 """
 
 import logging
-import os
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
@@ -29,18 +28,16 @@ class SentinelHubClient:
 
     Token lifecycle:
       - Token cached in memory, refreshed 5 min before expiry
-      - On 401, token is invalidated and retried once
+      - On 401, token is invalidated (caller must retry with fresh token)
     """
 
     def __init__(
         self,
         client_id: str = "",
         client_secret: str = "",
-        instance_id: str | None = None,
     ):
         self._client_id = client_id
         self._client_secret = client_secret
-        self._instance_id = instance_id
         self._access_token: str | None = None
         self._token_expires_at: datetime | None = None
         self._client: httpx.AsyncClient | None = None
