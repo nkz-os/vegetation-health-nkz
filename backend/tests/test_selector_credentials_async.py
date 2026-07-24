@@ -14,6 +14,7 @@ These tests assert the DB work never runs directly on the loop: for
 still flow through into the per-tenant SentinelHubEngine correctly.
 """
 
+import asyncio
 import inspect
 from datetime import date
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -159,3 +160,45 @@ class TestIsSentinelHubUsableStaysSyncForCallerOffload:
             usable = sel.is_sentinel_hub_usable(TENANT)
 
         assert usable is False
+
+
+class TestConcurrentColdStartDoesNotDuplicateResolution:
+    """Task 7 follow-up: two concurrent first-time `_get_engine_for` calls for
+    the SAME new tenant must not both pass the `not in self._engines` check,
+    both construct a SentinelHubEngine, and both hit the BYOK DB — the
+    `await asyncio.to_thread(...)` between the check and the cache write is
+    an interleave point on the single-threaded event loop.
+
+    A lock guarding the check-and-insert (with a double-check inside, mirroring
+    `SentinelHubClient.get_token`'s token-refresh lock) must collapse this to
+    exactly one resolution and one cached engine.
+    """
+
+    @pytest.mark.asyncio
+    async def test_concurrent_cold_start_resolves_credentials_once(self):
+        sel = EngineSelector()
+        call_count = 0
+
+        async def fake_to_thread(func, *args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            # Yield control back to the loop so a concurrent caller can
+            # interleave here if the check-and-insert isn't locked.
+            await asyncio.sleep(0.01)
+            return ("cid-once", "secret-once")
+
+        with patch(
+            "app.engines.selector.asyncio.to_thread",
+            side_effect=fake_to_thread,
+        ):
+            engine_a, engine_b = await asyncio.gather(
+                sel._get_engine_for(TENANT),
+                sel._get_engine_for(TENANT),
+            )
+
+        assert call_count == 1, (
+            f"_resolve_credentials was offloaded {call_count} times for a "
+            "single cold-start tenant — expected exactly 1"
+        )
+        assert engine_a is engine_b
+        assert sel._engines[TENANT] is engine_a

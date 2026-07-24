@@ -43,6 +43,13 @@ class EngineSelector:
         self._fallback: BaseVegetationEngine = LocalProcessingEngine()
         # tenant_id → (engine_name, degraded_until_timestamp)
         self._tenant_degraded: dict[str, tuple[str, float]] = {}
+        # Guards the _engines check-and-insert in `_get_engine_for` so
+        # concurrent cold-start requests for the same new tenant don't each
+        # resolve credentials and construct their own engine (last-write-wins
+        # churn). Single lock, not per-tenant: the critical section is short
+        # (dict check + one offloaded credential resolve) and a per-tenant
+        # lock dict would need its own cleanup to avoid growing unbounded.
+        self._engine_lock = asyncio.Lock()
 
     async def compute_indices(
         self,
@@ -177,6 +184,18 @@ class EngineSelector:
         offloaded to a worker thread via `asyncio.to_thread` — this method
         runs inside FastAPI's async event loop and must never block it
         (matches `LocalProcessingEngine`'s discipline in `local.py`).
+
+        The `await asyncio.to_thread(...)` below is an interleave point on
+        the single-threaded event loop: two concurrent first-time calls for
+        the same new tenant could otherwise both pass the `not in` check
+        before either writes the cache, each resolving credentials and
+        constructing its own `SentinelHubEngine` (redundant DB hits, and the
+        second write clobbers the first). `_engine_lock` serializes the
+        check-and-insert; the re-check right after acquiring the lock
+        (double-checked locking, same pattern as
+        `SentinelHubClient.get_token`'s token-refresh lock) lets a coroutine
+        that lost the race reuse the engine the winner already cached instead
+        of resolving again.
         """
         if tenant_id in self._tenant_degraded:
             engine_name, until = self._tenant_degraded[tenant_id]
@@ -189,8 +208,16 @@ class EngineSelector:
             else:
                 del self._tenant_degraded[tenant_id]
 
-        # Lazily create a per-tenant engine with resolved credentials
-        if tenant_id not in self._engines:
+        if tenant_id in self._engines:
+            return self._engines[tenant_id]
+
+        # Lazily create a per-tenant engine with resolved credentials.
+        async with self._engine_lock:
+            # Double-check: another coroutine may have populated the cache
+            # for this tenant while we were waiting for the lock.
+            if tenant_id in self._engines:
+                return self._engines[tenant_id]
+
             engine = SentinelHubEngine()
             client_id, client_secret = await asyncio.to_thread(_resolve_credentials, tenant_id)
             if client_id and client_secret:
@@ -202,7 +229,7 @@ class EngineSelector:
                     tenant_id,
                 )
             self._engines[tenant_id] = engine
-        return self._engines[tenant_id]
+            return engine
 
 
 def _resolve_credentials(tenant_id: str) -> tuple[str | None, str | None]:
