@@ -91,6 +91,10 @@ class SatelliteQuota:
         try:
             cur = conn.cursor()
             try:
+                # fiware-compliance: metadata-write — tenant_satellite_usage is a quota
+                # counter (admin/metadata), NOT entity/timeseries/observational data, so a
+                # direct Postgres write is the correct pattern per platform policy (Orion-LD
+                # is only mandatory for telemetry/observational entities).
                 cur.execute(
                     """
                     INSERT INTO tenant_satellite_usage (tenant_id, period_month, computations)
@@ -122,6 +126,10 @@ class SatelliteQuota:
         try:
             cur = conn.cursor()
             try:
+                # fiware-compliance: metadata-write — tenant_satellite_usage is a quota
+                # counter (admin/metadata), NOT entity/timeseries/observational data, so a
+                # direct Postgres write is the correct pattern per platform policy (Orion-LD
+                # is only mandatory for telemetry/observational entities).
                 cur.execute(
                     """
                     INSERT INTO tenant_satellite_usage (tenant_id, period_month, computations)

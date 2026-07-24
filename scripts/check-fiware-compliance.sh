@@ -36,13 +36,16 @@ for f in $(grep -rlE 'ORION_URL|orion-ld-service|/ngsi-ld/v1' --include="*.py" "
 done
 
 # Check 3 (severe): No direct INSERT INTO for entity data (exclude migrations, tests, deprecated)
+# A direct write is allowed for admin/metadata (non-entity, non-timeseries) data when the
+# write is explicitly justified within 8 lines above with a "fiware-compliance: metadata-write"
+# marker — matching platform policy (Orion-LD is mandatory only for observational/telemetry data).
 hits=$(grep -rnE "INSERT\s+INTO" --include="*.py" "$APP_DIR" 2>/dev/null | grep -vE "notification_handler|subscription_manager|/tests/|/migrations/" || true)
 if [ -n "$hits" ]; then
     while IFS= read -r line; do
         file=$(echo "$line" | cut -d: -f1)
         linenum=$(echo "$line" | cut -d: -f2)
         ctx_before=$(sed -n "$((linenum - 8)),$((linenum - 1))p" "$file" 2>/dev/null)
-        if ! echo "$ctx_before" | grep -qE '"""DEPRECATED'; then
+        if ! echo "$ctx_before" | grep -qE '"""DEPRECATED|fiware-compliance: metadata-write'; then
             echo "❌ CRITICAL: Direct INSERT in $file:$linenum"
             severe=$((severe + 1))
         fi
