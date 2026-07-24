@@ -93,6 +93,14 @@ def _persist_completed_copernicus_job(
     """
     latest = max(results, key=lambda r: r.sensing_date) if results else None
 
+    # A degraded_fallback result means Sentinel Hub failed at runtime and the
+    # selector transparently ran the LOCAL pipeline — label the persisted job
+    # by what actually computed it, not by the requested route.
+    latest_fidelity = latest.data_fidelity if latest else "sentinel_hub"
+    engine_label = (
+        "local_processing" if latest_fidelity == "degraded_fallback" else "copernicus"
+    )
+
     def _stats(r) -> Dict[str, Any]:
         return {
             "mean": r.mean, "min": r.min, "max": r.max, "std": r.std,
@@ -103,8 +111,8 @@ def _persist_completed_copernicus_job(
     result_payload: Dict[str, Any] = {
         "index_type": request.index_type,
         "index_key": request.index_type,
-        "engine": "copernicus",
-        "data_fidelity": latest.data_fidelity if latest else "sentinel_hub",
+        "engine": engine_label,
+        "data_fidelity": latest_fidelity,
         "sensing_date": latest.sensing_date.isoformat() if latest else None,
         "statistics": _stats(latest) if latest else {},
         "results": [
@@ -129,7 +137,7 @@ def _persist_completed_copernicus_job(
             "entity_id": request.entity_id,
             "start_date": request.start_date,
             "end_date": request.end_date,
-            "engine": "copernicus",
+            "engine": engine_label,
         },
         created_by=user_id,
     )
@@ -195,43 +203,71 @@ async def calculate_index_endpoint(
 
     # Copernicus needs both a parcel geometry (from a prior download job) and a
     # date range; without either, fall through to the local pipeline.
+    #
+    # Sentinel Hub is only actually attempted when it is USABLE for this tenant
+    # (credentials resolve AND not currently degraded). Otherwise the selector
+    # would silently run the LOCAL pipeline INLINE and block this HTTP request
+    # for minutes (api-gateway 504 risk) — so instead we fall through to the
+    # SAME asynchronous local Celery dispatch the `dest=="local"` branch uses.
+    # Quota is reserved ONLY after a confirmed, non-degraded Sentinel Hub
+    # result: a runtime SH failure that degrades to a local compute is free to
+    # us and must not be charged (no decrement API on SatelliteQuota).
     if dest == "copernicus" and parcel_bounds and date_range:
-        quota = SatelliteQuota()
-        if not quota.check_and_reserve(tenant_id):
-            usage = quota.get_usage(tenant_id)
-            raise HTTPException(
-                status_code=429,
-                detail={
-                    "error": "quota_exceeded",
-                    "used": usage.get("used"),
-                    "limit": usage.get("limit"),
-                },
-            )
-        try:
-            selector = http_request.app.state.engine_selector
-            results = await selector.compute_indices(
-                tenant_id=tenant_id,
-                parcel_id=request.entity_id or "",
-                parcel_geometry=parcel_bounds,
-                date_range=date_range,
-                index_types=[request.index_type],
-            )
-            job = _persist_completed_copernicus_job(
-                db, tenant_id, request, results, current_user.get("user_id")
-            )
+        selector = http_request.app.state.engine_selector
+        if selector.is_sentinel_hub_usable(tenant_id):
+            try:
+                results = await selector.compute_indices(
+                    tenant_id=tenant_id,
+                    parcel_id=request.entity_id or "",
+                    parcel_geometry=parcel_bounds,
+                    date_range=date_range,
+                    index_types=[request.index_type],
+                )
+                ran_local = any(
+                    getattr(r, "data_fidelity", None) == "degraded_fallback"
+                    for r in results
+                )
+                if not ran_local:
+                    # Genuine Sentinel Hub result — reserve one satellite unit
+                    # now (atomic compare-and-increment, cap preserved).
+                    quota = SatelliteQuota()
+                    if not quota.check_and_reserve(tenant_id):
+                        usage = quota.get_usage(tenant_id)
+                        raise HTTPException(
+                            status_code=429,
+                            detail={
+                                "error": "quota_exceeded",
+                                "used": usage.get("used"),
+                                "limit": usage.get("limit"),
+                            },
+                        )
+                # ran_local: selector degraded to local compute — NOT charged.
+                job = _persist_completed_copernicus_job(
+                    db, tenant_id, request, results, current_user.get("user_id")
+                )
+                logger.info(
+                    "Copernicus calculate job %s completed inline for tenant %s "
+                    "(%d result(s), engine=%s)",
+                    job.id, tenant_id, len(results),
+                    "local" if ran_local else "copernicus",
+                )
+                return {"job_id": str(job.id), "message": "Calculation started"}
+            except HTTPException:
+                raise
+            except Exception:
+                # Any engine/persistence failure — never hard-fail: fall back
+                # to the legacy local Celery dispatch below.
+                logger.exception(
+                    "Copernicus compute failed for tenant %s — falling back to local dispatch",
+                    tenant_id,
+                )
+        else:
+            # No usable Sentinel Hub credentials (or tenant degraded): do NOT
+            # call the selector and do NOT charge quota — fall through to the
+            # asynchronous local Celery dispatch (immediate pending job).
             logger.info(
-                "Copernicus calculate job %s completed inline for tenant %s (%d result(s))",
-                job.id, tenant_id, len(results),
-            )
-            return {"job_id": str(job.id), "message": "Calculation started"}
-        except HTTPException:
-            raise
-        except Exception:
-            # EngineDegradedException or any engine/persistence failure — never
-            # hard-fail: fall back to the legacy local Celery dispatch below.
-            logger.exception(
-                "Copernicus compute failed for tenant %s — falling back to local dispatch",
-                tenant_id,
+                "Sentinel Hub not usable for tenant %s — routing %s to async local dispatch",
+                tenant_id, request.index_type,
             )
 
     # ---- Local pipeline (legacy async Celery dispatch) ---------------------

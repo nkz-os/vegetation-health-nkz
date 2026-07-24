@@ -90,6 +90,30 @@ class EngineSelector:
                 date_range, index_types, cloud_cover_max,
             )
 
+    def is_sentinel_hub_usable(self, tenant_id: str) -> bool:
+        """Cheap pre-check: is Sentinel Hub actually usable for this tenant now?
+
+        Returns True only if the tenant is NOT currently degraded AND
+        Copernicus credentials resolve (BYOK → platform → env). Reuses the
+        selector's own degraded-state map and `_resolve_credentials` — no
+        reimplementation, no network I/O (credential resolution is a local
+        DB/env read).
+
+        Used by POST /calculate to avoid calling the selector (and reserving
+        quota) for the common no-credential / degraded case, which would
+        otherwise degrade to an INLINE local compute that blocks the HTTP
+        request for minutes and risks an api-gateway 504.
+        """
+        if tenant_id in self._tenant_degraded:
+            _, until = self._tenant_degraded[tenant_id]
+            if time.time() < until:
+                return False
+            # Degradation window elapsed — clear it and re-evaluate creds.
+            del self._tenant_degraded[tenant_id]
+
+        client_id, client_secret = _resolve_credentials(tenant_id)
+        return bool(client_id and client_secret)
+
     async def get_tile(
         self,
         tenant_id: str,

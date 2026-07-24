@@ -1,11 +1,17 @@
 """Tests for POST /api/vegetation/calculate engine routing + formula passthrough.
 
 Covers the Task 6 wiring:
-  (a) NDVI (eligible, no custom)       -> EngineSelector Copernicus path, quota charged
-  (b) NDRE (red-edge, LOCAL_ONLY)      -> legacy local Celery dispatch, NO quota charge
-  (c) custom-formula NDVI              -> local, formula forwarded to the task
-  (d) selector EngineDegradedException -> falls back to legacy local dispatch
-  (e) quota check_and_reserve() False  -> HTTP 429 quota_exceeded
+  (a) NDVI (eligible, no custom, SH usable)  -> Copernicus path, quota charged
+  (b) NDRE (red-edge, LOCAL_ONLY)            -> legacy local Celery dispatch, NO quota charge
+  (c) custom-formula NDVI                    -> local, formula forwarded to the task
+  (d) selector EngineDegradedException       -> falls back to legacy local dispatch
+  (e) quota check_and_reserve() False        -> HTTP 429 quota_exceeded (post-compute)
+  (f) SH NOT usable (no creds / degraded)    -> async local dispatch, selector + quota untouched
+  (g) selector degraded_fallback result      -> NO quota charge, job labeled local
+
+Quota is reserved ONLY after a confirmed, non-degraded Sentinel Hub result
+(reserve-after ordering; see IMPORTANT 2 fix). A degraded_fallback result ran
+on the free local pipeline and is never charged.
 
 Plus pure unit tests for `route_index`.
 
@@ -101,12 +107,12 @@ def teardown_function():
     app.dependency_overrides.clear()
 
 
-def _index_result(idx="NDVI"):
+def _index_result(idx="NDVI", data_fidelity="sentinel_hub"):
     return IndexResult(
         index_type=idx, sensing_date=date(2026, 7, 20),
         mean=0.62, std=0.08, min=0.1, max=0.9,
         p10=0.4, p90=0.8, valid_pixels=1200, total_pixels=1500,
-        data_fidelity="sentinel_hub",
+        data_fidelity=data_fidelity,
     )
 
 
@@ -227,10 +233,17 @@ def test_selector_degraded_falls_back_to_local():
 
 
 def test_quota_exceeded_returns_429():
-    """(e) quota check_and_reserve() False → HTTP 429 quota_exceeded."""
+    """(e) genuine SH result but quota check_and_reserve() False → HTTP 429.
+
+    CONTRACT CHANGE (IMPORTANT 2): quota is now reserved AFTER a confirmed,
+    non-degraded Sentinel Hub result (reserve-after ordering, no decrement API).
+    So the selector IS awaited before the 429 — the over-quota tenant is
+    rejected only once a genuine SH result comes back.
+    """
     db = _make_db(download_bounds=GEOM)
     selector = MagicMock()
-    selector.compute_indices = AsyncMock()
+    selector.is_sentinel_hub_usable.return_value = True
+    selector.compute_indices = AsyncMock(return_value=[_index_result("NDVI")])
     quota = MagicMock()
     quota.check_and_reserve.return_value = False
     quota.get_usage.return_value = {"used": 50, "limit": 50, "remaining": 0, "period": "2026-07"}
@@ -253,5 +266,77 @@ def test_quota_exceeded_returns_429():
     assert detail["error"] == "quota_exceeded"
     assert detail["used"] == 50
     assert detail["limit"] == 50
-    selector.compute_indices.assert_not_awaited()
+    selector.compute_indices.assert_awaited_once()
+    quota.check_and_reserve.assert_called_once_with(TENANT)
     task.delay.assert_not_called()
+
+
+def test_sentinel_hub_not_usable_routes_async_local():
+    """(f) NDVI Copernicus-eligible but NO usable SH credentials → the selector
+    is never called, quota is never touched, and the request returns the normal
+    async local dispatch {job_id} without blocking on an inline local compute."""
+    db = _make_db(download_bounds=GEOM)
+    selector = MagicMock()
+    selector.is_sentinel_hub_usable.return_value = False
+    selector.compute_indices = AsyncMock()
+
+    with patch.object(scenes, "SatelliteQuota") as QuotaCls, \
+         patch.object(scenes, "calculate_vegetation_index") as task:
+        task.delay.return_value = MagicMock(id="celery-task-f")
+        client = _client(db, selector)
+        resp = client.post(
+            "/api/vegetation/calculate",
+            json={
+                "index_type": "NDVI",
+                "entity_id": "urn:ngsi-ld:AgriParcel:p1",
+                "start_date": "2026-07-01",
+                "end_date": "2026-07-31",
+            },
+        )
+
+    assert resp.status_code == 200, resp.text
+    assert "job_id" in resp.json()
+    selector.is_sentinel_hub_usable.assert_called_once_with(TENANT)
+    selector.compute_indices.assert_not_awaited()  # never called the selector
+    QuotaCls.assert_not_called()                    # no quota object constructed
+    task.delay.assert_called_once()                 # async local Celery dispatch
+    assert task.delay.call_args.kwargs.get("index_type") == "NDVI"
+
+
+def test_degraded_fallback_result_not_charged_and_labeled_local():
+    """(g) SH usable but selector returns a degraded_fallback result (runtime SH
+    failure → ran on the local pipeline). Quota must NOT be charged and the
+    persisted job's engine must reflect local, not copernicus."""
+    db = _make_db(download_bounds=GEOM)
+    selector = MagicMock()
+    selector.is_sentinel_hub_usable.return_value = True
+    selector.compute_indices = AsyncMock(
+        return_value=[_index_result("NDVI", data_fidelity="degraded_fallback")]
+    )
+    quota = MagicMock()
+    quota.check_and_reserve.return_value = True
+
+    with patch.object(scenes, "SatelliteQuota", return_value=quota), \
+         patch.object(scenes, "calculate_vegetation_index") as task:
+        client = _client(db, selector)
+        resp = client.post(
+            "/api/vegetation/calculate",
+            json={
+                "index_type": "NDVI",
+                "entity_id": "urn:ngsi-ld:AgriParcel:p1",
+                "start_date": "2026-07-01",
+                "end_date": "2026-07-31",
+            },
+        )
+
+    assert resp.status_code == 200, resp.text
+    assert "job_id" in resp.json()
+    selector.compute_indices.assert_awaited_once()
+    quota.check_and_reserve.assert_not_called()  # degraded_fallback ran local → free
+    task.delay.assert_not_called()               # persisted as a completed job inline
+
+    # The persisted VegetationJob must be labeled as having run local.
+    persisted = db.add.call_args.args[0]
+    assert persisted.result["engine"] == "local_processing"
+    assert persisted.result["data_fidelity"] == "degraded_fallback"
+    assert persisted.parameters["engine"] == "local_processing"
