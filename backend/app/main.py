@@ -35,6 +35,7 @@ from app.api.parcels import router as parcels_router
 from app.api.sar import router as sar_router
 from app.api.history import router as history_router
 from app.api.config import router as config_router
+from app.api.usage import router as usage_router
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -142,6 +143,7 @@ app.include_router(export_router)
 app.include_router(sar_router)
 app.include_router(history_router)
 app.include_router(config_router)
+app.include_router(usage_router)
 
 if __name__ == "__main__":
     import uvicorn
