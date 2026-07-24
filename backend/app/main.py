@@ -54,12 +54,10 @@ async def lifespan(app: FastAPI):
     app.state.engine_selector = EngineSelector()
     logger.info("EngineSelector initialized")
 
-    # BYOK encryption: warn if key is missing (plaintext storage in dev only)
-    if not os.getenv("VEGETATION_ENCRYPTION_KEY"):
-        logger.warning(
-            "VEGETATION_ENCRYPTION_KEY not set — BYOK secrets will be stored as plaintext. "
-            "Set this in production via K8s Secret."
-        )
+    # BYOK encryption: fail closed in production if key is missing
+    # (warns and no-ops outside production — see app/services/encryption.py)
+    from app.services.encryption import verify_encryption_ready
+    verify_encryption_ready()
 
     yield
 
