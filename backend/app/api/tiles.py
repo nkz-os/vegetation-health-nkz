@@ -12,6 +12,7 @@ from app.models import VegetationJob
 from app.middleware.auth import get_tenant_id, require_auth
 from app.services.storage import generate_tenant_bucket_name
 from app.services.tile_auth import validate_tile_token
+from app.engines.base import TileLocalFallback
 import os
 import logging
 
@@ -249,8 +250,12 @@ async def get_sentinel_hub_tile(
         return Response(tile_bytes, media_type="image/png",
                         headers={"Cache-Control": "public, max-age=3600",
                                  "X-Tile-Source": "sentinel-hub"})
+    except TileLocalFallback as e:
+        # Selector already recorded degradation (if applicable) and
+        # signaled that the local COG is the only working tile fallback.
+        logger.warning("Sentinel Hub tile failed: %s — trying local COG", e)
     except NotImplementedError:
-        pass  # Local engine doesn't support tiles yet — fall through to COG
+        pass  # Direct engine call bypassing the selector — fall through to COG
     except Exception as e:
         logger.warning("Sentinel Hub tile failed: %s — trying local COG", e)
 

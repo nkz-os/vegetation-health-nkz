@@ -38,6 +38,21 @@ class EngineDegradedException(Exception):
         self.retry_after_seconds = retry_after_seconds
 
 
+class TileLocalFallback(Exception):
+    """Raised by `EngineSelector.get_tile` when the primary (SentinelHub)
+    engine cannot serve a tile and the caller must fall back to querying
+    the locally stored COG directly.
+
+    Unlike `compute_indices`, there is no working engine-level tile
+    fallback: `LocalProcessingEngine.get_tile` unconditionally raises
+    `NotImplementedError` (Phase 3 tile rendering through the engine
+    interface is not implemented yet). The real local-tile fallback lives
+    in `api/tiles.py`'s COG query, so the selector signals "go do that"
+    via this typed exception instead of a bare `NotImplementedError`.
+    """
+    pass
+
+
 class BaseVegetationEngine(ABC):
     """Shared contract for vegetation index computation engines.
 

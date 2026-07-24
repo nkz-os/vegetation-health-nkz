@@ -18,7 +18,7 @@ import logging
 import time
 from datetime import date
 
-from .base import BaseVegetationEngine, IndexResult, EngineDegradedException
+from .base import BaseVegetationEngine, IndexResult, EngineDegradedException, TileLocalFallback
 from .sentinel_hub import SentinelHubEngine
 from .local import LocalProcessingEngine
 
@@ -139,7 +139,19 @@ class EngineSelector:
         date_str: str | None = None,
         color_ramp: str = "agronomic",
     ) -> bytes:
-        """Get tile with auto-degradation on failure."""
+        """Get tile with auto-degradation on failure.
+
+        Mirrors `compute_indices`' degradation recording: an
+        `EngineDegradedException` marks the tenant degraded in
+        `_tenant_degraded` for `e.retry_after_seconds`, same TTL mechanism.
+        Unlike `compute_indices`, there is no working engine-level tile
+        fallback (`LocalProcessingEngine.get_tile` unconditionally raises
+        `NotImplementedError` — Phase 3 tile rendering through the engine
+        interface is not implemented). So instead of calling
+        `self._fallback.get_tile(...)`, this raises `TileLocalFallback` to
+        tell the caller (`api/tiles.py`) to query the local COG directly,
+        which is the only tile fallback that actually exists today.
+        """
         engine = await self._get_engine_for(tenant_id)
         try:
             return await engine.get_tile(
@@ -149,14 +161,21 @@ class EngineSelector:
                 date_str=date_str,
                 color_ramp=color_ramp,
             )
-        except Exception:
-            return await self._fallback.get_tile(
-                tenant_id=tenant_id,
-                index_type=index_type,
-                z=z, x=x, y=y,
-                date_str=date_str,
-                color_ramp=color_ramp,
+        except EngineDegradedException as e:
+            logger.warning(
+                "Engine degraded for tenant %s (tile): %s — retry after %ds",
+                tenant_id, e.reason, e.retry_after_seconds,
             )
+            self._tenant_degraded[tenant_id] = (
+                "fallback", time.time() + e.retry_after_seconds
+            )
+            raise TileLocalFallback(str(e)) from e
+        except Exception as e:
+            logger.error(
+                "Unexpected engine error for tenant %s (tile): %s — falling back",
+                tenant_id, e,
+            )
+            raise TileLocalFallback(str(e)) from e
 
     async def _fallback_compute(self, tenant_id, parcel_id, parcel_geometry,
                                  date_range, index_types, cloud_cover_max):

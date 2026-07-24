@@ -1,11 +1,13 @@
 """Tests for EngineSelector — per-tenant engine isolation and auto-degradation."""
 
+import time
+
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 from datetime import date
 from app.engines.selector import EngineSelector
 from app.engines.base import (
-    IndexResult, EngineHealth, EngineDegradedException,
+    IndexResult, EngineHealth, EngineDegradedException, TileLocalFallback,
 )
 
 
@@ -162,17 +164,21 @@ class TestEngineSelection:
 
     @pytest.mark.asyncio
     async def test_tile_degradation(self, selector):
-        """Tile requests also degrade on any exception."""
-        fallback_tile = b"\x89PNGfallback"
-
+        """Tile requests degrade (recorded in `_tenant_degraded`) and raise
+        `TileLocalFallback` instead of calling `self._fallback.get_tile`
+        directly — `LocalProcessingEngine.get_tile` unconditionally raises
+        `NotImplementedError` (Phase 3 pending), so the real local-tile
+        fallback lives in `api/tiles.py`'s COG query, not the selector."""
         selector._engines["t1"].get_tile = AsyncMock(
-            side_effect=EngineDegradedException("token expired")
-        )
-        selector._fallback.get_tile = AsyncMock(return_value=fallback_tile)
-
-        result = await selector.get_tile(
-            tenant_id="t1", index_type="NDVI", z=12, x=2000, y=1500,
+            side_effect=EngineDegradedException("token expired", retry_after_seconds=3600)
         )
 
-        selector._fallback.get_tile.assert_called_once()
-        assert result == fallback_tile
+        with pytest.raises(TileLocalFallback):
+            await selector.get_tile(
+                tenant_id="t1", index_type="NDVI", z=12, x=2000, y=1500,
+            )
+
+        assert "t1" in selector._tenant_degraded
+        engine_name, until = selector._tenant_degraded["t1"]
+        assert engine_name == "fallback"
+        assert until > time.time()
