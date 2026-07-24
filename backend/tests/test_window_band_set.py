@@ -6,7 +6,8 @@ from unittest.mock import MagicMock
 # imports download_tasks, scheduler, storage_cleanup, sar_tasks and
 # historical_baseline — stub the heavy/native deps not under test so the
 # import graph resolves without installing them.
-for _m in ("rasterio", "rasterio.warp", "rasterio.features", "shapely",
+for _m in ("rasterio", "rasterio.warp", "rasterio.features", "rasterio.windows",
+           "rasterio.transform", "rasterio.crs", "rasterio.merge", "rasterio.mask", "shapely",
            "shapely.geometry", "shapely.ops", "geoalchemy2", "geoalchemy2.shape",
            "simpleeval", "redis", "redis.exceptions", "celery",
            "celery.schedules", "celery.signals", "kombu"):

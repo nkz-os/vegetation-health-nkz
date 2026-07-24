@@ -5,7 +5,8 @@ from unittest.mock import MagicMock
 
 # download_tasks imports heavy modules at import time; stub the ones not under
 # test so the helper can be imported in isolation.
-for _m in ("rasterio", "rasterio.warp", "rasterio.features", "shapely",
+for _m in ("rasterio", "rasterio.warp", "rasterio.features", "rasterio.windows",
+           "rasterio.transform", "rasterio.crs", "rasterio.merge", "rasterio.mask", "shapely",
            "shapely.geometry", "shapely.ops", "geoalchemy2", "geoalchemy2.shape",
            "simpleeval"):
     sys.modules.setdefault(_m, MagicMock())
