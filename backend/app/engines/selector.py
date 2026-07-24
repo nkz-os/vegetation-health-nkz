@@ -14,7 +14,6 @@ Degradation rules:
 """
 
 import logging
-import os
 import time
 from datetime import date
 
@@ -174,8 +173,8 @@ def _resolve_credentials(tenant_id: str) -> tuple[str | None, str | None]:
 
     Priority:
       1. Tenant BYOK (vegetation_config table, Fernet-decrypted)
-      2. Platform fallback (external_api_credentials table)
-      3. Env vars (COPERNICUS_CLIENT_ID / COPERNICUS_CLIENT_SECRET)
+      2. Platform (COPERNICUS_CLIENT_ID / COPERNICUS_CLIENT_SECRET env vars,
+         sourced from the shared K8s secret `copernicus-cdse-secret`)
     """
     # 1. Tenant BYOK
     try:
@@ -197,7 +196,7 @@ def _resolve_credentials(tenant_id: str) -> tuple[str | None, str | None]:
     except Exception as e:
         logger.debug("BYOK credential lookup failed: %s", e)
 
-    # 2. Platform fallback
+    # 2. Platform (env vars)
     try:
         from app.services.platform_credentials import get_copernicus_credentials
         creds = get_copernicus_credentials()
@@ -205,11 +204,5 @@ def _resolve_credentials(tenant_id: str) -> tuple[str | None, str | None]:
             return creds.get("client_id"), creds.get("client_secret")
     except Exception as e:
         logger.debug("Platform credential lookup failed: %s", e)
-
-    # 3. Env vars
-    env_id = os.getenv("COPERNICUS_CLIENT_ID", "")
-    env_secret = os.getenv("COPERNICUS_CLIENT_SECRET", "")
-    if env_id and env_secret:
-        return env_id, env_secret
 
     return None, None
