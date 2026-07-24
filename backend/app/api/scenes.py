@@ -10,6 +10,7 @@ from sqlalchemy import func, desc, or_, and_
 from datetime import timezone,  date, datetime, timedelta
 from typing import Optional, Dict, Any, List
 from pydantic import BaseModel, Field
+import asyncio
 import logging
 import uuid as uuid_mod
 
@@ -219,7 +220,10 @@ async def calculate_index_endpoint(
     # no genuine SH PU was consumed.
     if dest == "copernicus" and parcel_bounds and date_range:
         selector = http_request.app.state.engine_selector
-        if selector.is_sentinel_hub_usable(tenant_id):
+        # is_sentinel_hub_usable() is sync (it does a blocking BYOK DB read)
+        # and this handler runs on the async event loop — offload to a
+        # worker thread (Task 7) so the credential lookup never stalls it.
+        if await asyncio.to_thread(selector.is_sentinel_hub_usable, tenant_id):
             # Reserve one satellite unit up front (atomic compare-and-increment,
             # cap preserved). Over quota → 429 with NO Sentinel Hub call.
             quota = SatelliteQuota()

@@ -13,6 +13,7 @@ Degradation rules:
   - Server error (5xx)          → fallback for this request only
 """
 
+import asyncio
 import logging
 import time
 from datetime import date
@@ -53,7 +54,7 @@ class EngineSelector:
         cloud_cover_max: float = 50.0,
     ) -> list[IndexResult]:
         """Compute indices with automatic degradation on failure."""
-        engine = self._get_engine_for(tenant_id)
+        engine = await self._get_engine_for(tenant_id)
 
         try:
             results = await engine.compute_indices(
@@ -103,6 +104,13 @@ class EngineSelector:
         quota) for the common no-credential / degraded case, which would
         otherwise degrade to an INLINE local compute that blocks the HTTP
         request for minutes and risks an api-gateway 504.
+
+        This method is intentionally sync (it does its own blocking DB read
+        via `_resolve_credentials`). Callers invoking it from an async
+        context (e.g. a FastAPI request handler) MUST offload it themselves
+        via `await asyncio.to_thread(selector.is_sentinel_hub_usable, tenant_id)`
+        — see `api/scenes.py` — so the blocking BYOK query never runs
+        directly on the event loop.
         """
         if tenant_id in self._tenant_degraded:
             _, until = self._tenant_degraded[tenant_id]
@@ -125,7 +133,7 @@ class EngineSelector:
         color_ramp: str = "agronomic",
     ) -> bytes:
         """Get tile with auto-degradation on failure."""
-        engine = self._get_engine_for(tenant_id)
+        engine = await self._get_engine_for(tenant_id)
         try:
             return await engine.get_tile(
                 tenant_id=tenant_id,
@@ -158,12 +166,17 @@ class EngineSelector:
             r.data_fidelity = "degraded_fallback"
         return results
 
-    def _get_engine_for(self, tenant_id: str) -> BaseVegetationEngine:
+    async def _get_engine_for(self, tenant_id: str) -> BaseVegetationEngine:
         """Return the active engine for a tenant.
 
         Each tenant gets its own SentinelHubEngine instance, created lazily
         with credentials resolved from: BYOK (vegetation_config) → platform
         fallback (external_api_credentials) → env vars.
+
+        Credential resolution runs a blocking SQLAlchemy query, so it is
+        offloaded to a worker thread via `asyncio.to_thread` — this method
+        runs inside FastAPI's async event loop and must never block it
+        (matches `LocalProcessingEngine`'s discipline in `local.py`).
         """
         if tenant_id in self._tenant_degraded:
             engine_name, until = self._tenant_degraded[tenant_id]
@@ -179,7 +192,7 @@ class EngineSelector:
         # Lazily create a per-tenant engine with resolved credentials
         if tenant_id not in self._engines:
             engine = SentinelHubEngine()
-            client_id, client_secret = _resolve_credentials(tenant_id)
+            client_id, client_secret = await asyncio.to_thread(_resolve_credentials, tenant_id)
             if client_id and client_secret:
                 engine.set_credentials(client_id, client_secret)
                 logger.info("Resolved credentials for tenant %s (source: byok)", tenant_id)
