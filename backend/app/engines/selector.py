@@ -170,6 +170,30 @@ class EngineSelector:
                 "fallback", time.time() + e.retry_after_seconds
             )
             raise TileLocalFallback(str(e)) from e
+        except NotImplementedError as e:
+            if engine is self._fallback:
+                # Expected, guaranteed path: `_get_engine_for` already
+                # short-circuited this tenant to `LocalProcessingEngine`
+                # (already degraded — logged once, at WARNING, when the
+                # degradation was first recorded above). Its `get_tile`
+                # unconditionally raises `NotImplementedError` (no
+                # engine-level tile rendering yet — see local.py), which
+                # fires on EVERY tile request for up to the 1h degraded
+                # TTL. Logging that at ERROR floods dashboards with a
+                # non-error, so this is DEBUG-only.
+                logger.debug(
+                    "Tenant %s tile request served via local fallback "
+                    "(degraded — no engine-level tile support)",
+                    tenant_id,
+                )
+                raise TileLocalFallback(str(e)) from e
+            # A NotImplementedError from a NON-fallback engine (e.g. a bug
+            # in SentinelHubEngine) is genuinely unexpected — keep it loud.
+            logger.error(
+                "Unexpected engine error for tenant %s (tile): %s — falling back",
+                tenant_id, e,
+            )
+            raise TileLocalFallback(str(e)) from e
         except Exception as e:
             logger.error(
                 "Unexpected engine error for tenant %s (tile): %s — falling back",

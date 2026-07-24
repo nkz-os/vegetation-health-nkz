@@ -14,6 +14,7 @@ Covers:
       of the exception propagating as an unhandled error.
 """
 
+import logging
 import time
 from datetime import date
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -108,6 +109,30 @@ class TestSelectorTileDegradation:
         assert result == b"\x89PNGok"
         assert TENANT not in selector._tenant_degraded
 
+    @pytest.mark.asyncio
+    async def test_degraded_tenant_tile_request_logs_no_error(self, selector, caplog):
+        """Follow-up fix: once a tenant is already degraded, `_get_engine_for`
+        short-circuits to `LocalProcessingEngine`, whose `get_tile`
+        unconditionally raises `NotImplementedError`. That is expected,
+        guaranteed behavior on EVERY tile request for up to the 1h degraded
+        TTL — not an unexpected error — so it must NOT be logged at ERROR
+        (a live map viewer would otherwise flood error dashboards). The
+        fallback outcome itself is unchanged: `TileLocalFallback` is still
+        raised."""
+        selector._tenant_degraded[TENANT] = ("fallback", time.time() + 3600)
+
+        with caplog.at_level(logging.DEBUG, logger="app.engines.selector"):
+            with pytest.raises(TileLocalFallback):
+                await selector.get_tile(
+                    tenant_id=TENANT, index_type="NDVI", z=12, x=2000, y=1500,
+                )
+
+        error_records = [
+            r for r in caplog.records
+            if r.levelno >= logging.ERROR and r.name == "app.engines.selector"
+        ]
+        assert error_records == []
+
 
 # ---------------------------------------------------------------------------
 # (c) api/tiles.py endpoint — TileLocalFallback caught, falls through to COG
@@ -166,8 +191,15 @@ def _clear_dependency_overrides():
     auth via the leaked `require_auth` override). An autouse fixture runs
     for functions and class methods alike.
     """
+    _unset = object()
+    prior_selector = getattr(app.state, "engine_selector", _unset)
     yield
     app.dependency_overrides.clear()
+    if prior_selector is _unset:
+        if hasattr(app.state, "engine_selector"):
+            del app.state.engine_selector
+    else:
+        app.state.engine_selector = prior_selector
 
 
 class TestTilesEndpointCatchesTypedException:
@@ -208,3 +240,5 @@ class TestTilesEndpointCatchesTypedException:
             resp = client.get("/api/vegetation/tiles/sentinel-hub/NDVI/12/2000/1500.png")
 
         assert resp.status_code == 404
+        assert "No raster available" in resp.text
+        selector.get_tile.assert_awaited_once()
