@@ -4,12 +4,13 @@ Scene query endpoints matching frontend API client expectations.
 Routes: /api/vegetation/scenes, /api/vegetation/scenes/{entity_id}/stats,
         /api/vegetation/capabilities, /api/vegetation/calculate
 """
-from fastapi import APIRouter, Depends, Query, HTTPException
+from fastapi import APIRouter, Depends, Query, HTTPException, Request
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc, or_, and_
 from datetime import timezone,  date, datetime, timedelta
 from typing import Optional, Dict, Any, List
 from pydantic import BaseModel, Field
+import asyncio
 import logging
 import uuid as uuid_mod
 
@@ -29,6 +30,9 @@ from app.models import VegetationScene, VegetationIndexCache, VegetationJob, Veg
 from app.schemas import LatestResultsItem
 from app.services.tile_auth import generate_tile_token
 from app.tasks import calculate_vegetation_index, download_sentinel2_scene
+from app.engines.routing import route_index
+from app.engines.base import EngineDegradedException
+from app.services.satellite_quota import SatelliteQuota
 from nkz_platform_sdk import OrionClient
 
 router = APIRouter(prefix="/api/vegetation", tags=["scenes"])
@@ -67,9 +71,88 @@ class ZoningRequest(BaseModel):
     n8n_callback_url: Optional[str] = None
 
 
+def _persist_completed_copernicus_job(
+    db: Session,
+    tenant_id: str,
+    request: "CalculateRequest",
+    results: list,
+    user_id: Optional[str],
+) -> VegetationJob:
+    """Persist a Copernicus (Sentinel Hub) computation as a COMPLETED
+    calculate_index VegetationJob so /calculate returns the SAME pollable
+    {job_id, message} contract the frontend already expects.
+
+    The Statistical API is synchronous — results exist immediately — so the
+    job is written straight to `completed`. `results` is a list of engine
+    IndexResult dataclasses (possibly several sensing dates); the latest is
+    surfaced as the primary `statistics` block, all are kept under `results`.
+
+    NOTE: Copernicus returns zonal stats only, no raster COG, so this job has
+    no `raster_path` — it will not (yet) drive a map tile layer via
+    /results/{entity_id}. Stats/timeseries surfaces work; raster rendering
+    from Copernicus is out of scope for this task.
+    """
+    latest = max(results, key=lambda r: r.sensing_date) if results else None
+
+    # A degraded_fallback result means Sentinel Hub failed at runtime and the
+    # selector transparently ran the LOCAL pipeline — label the persisted job
+    # by what actually computed it, not by the requested route.
+    latest_fidelity = latest.data_fidelity if latest else "sentinel_hub"
+    engine_label = (
+        "local_processing" if latest_fidelity == "degraded_fallback" else "copernicus"
+    )
+
+    def _stats(r) -> Dict[str, Any]:
+        return {
+            "mean": r.mean, "min": r.min, "max": r.max, "std": r.std,
+            "p10": r.p10, "p90": r.p90,
+            "valid_pixels": r.valid_pixels, "total_pixels": r.total_pixels,
+        }
+
+    result_payload: Dict[str, Any] = {
+        "index_type": request.index_type,
+        "index_key": request.index_type,
+        "engine": engine_label,
+        "data_fidelity": latest_fidelity,
+        "sensing_date": latest.sensing_date.isoformat() if latest else None,
+        "statistics": _stats(latest) if latest else {},
+        "results": [
+            {
+                "index_type": r.index_type,
+                "sensing_date": r.sensing_date.isoformat(),
+                **_stats(r),
+                "data_fidelity": r.data_fidelity,
+            }
+            for r in results
+        ],
+    }
+
+    job = VegetationJob(
+        tenant_id=tenant_id,
+        job_type="calculate_index",
+        entity_id=request.entity_id,
+        entity_type="AgriParcel",
+        parameters={
+            "scene_id": request.scene_id,
+            "index_type": request.index_type,
+            "entity_id": request.entity_id,
+            "start_date": request.start_date,
+            "end_date": request.end_date,
+            "engine": engine_label,
+        },
+        created_by=user_id,
+    )
+    job.mark_completed(result_payload)
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    return job
+
+
 @router.post("/calculate")
 async def calculate_index_endpoint(
     request: CalculateRequest,
+    http_request: Request,
     current_user: dict = Depends(require_auth),
     db: Session = Depends(get_db_with_tenant),
 ):
@@ -106,6 +189,101 @@ async def calculate_index_endpoint(
         if existing and existing.parameters:
             parcel_bounds = existing.parameters.get("bounds")
 
+    # ---- Engine routing (Task 6) -------------------------------------------
+    # Eligible 10 m-native indices with no tenant custom formula run on the
+    # Copernicus (Sentinel Hub Statistical API) engine under monthly quota;
+    # red-edge (NDRE) and custom formulas stay on the legacy local pipeline.
+    has_custom = bool(request.formula or request.formula_id)
+    dest = route_index(request.index_type, has_custom)
+
+    date_range = None
+    d0 = _parse_iso_date(request.start_date)
+    d1 = _parse_iso_date(request.end_date)
+    if d0 and d1:
+        date_range = (d0, d1)
+
+    # Copernicus needs both a parcel geometry (from a prior download job) and a
+    # date range; without either, fall through to the local pipeline.
+    #
+    # Sentinel Hub is only actually attempted when it is USABLE for this tenant
+    # (credentials resolve AND not currently degraded). Otherwise the selector
+    # would silently run the LOCAL pipeline INLINE and block this HTTP request
+    # for minutes (api-gateway 504 risk) — so instead we fall through to the
+    # SAME asynchronous local Celery dispatch the `dest=="local"` branch uses.
+    #
+    # Quota is reserved BEFORE the Sentinel Hub call: an over-quota tenant must
+    # get a 429 WITHOUT us ever hitting the Statistical API (each call burns a
+    # Processing Unit on the SHARED platform credential — the whole point of the
+    # quota is protecting that shared credential from a runaway tenant). If the
+    # compute then degrades to the free local pipeline (runtime SH failure) or
+    # the selector errors, we RELEASE the reserved unit (net-zero charge) since
+    # no genuine SH PU was consumed.
+    if dest == "copernicus" and parcel_bounds and date_range:
+        selector = http_request.app.state.engine_selector
+        # is_sentinel_hub_usable() is sync (it does a blocking BYOK DB read)
+        # and this handler runs on the async event loop — offload to a
+        # worker thread (Task 7) so the credential lookup never stalls it.
+        if await asyncio.to_thread(selector.is_sentinel_hub_usable, tenant_id):
+            # Reserve one satellite unit up front (atomic compare-and-increment,
+            # cap preserved). Over quota → 429 with NO Sentinel Hub call.
+            quota = SatelliteQuota()
+            if not quota.check_and_reserve(tenant_id):
+                usage = quota.get_usage(tenant_id)
+                raise HTTPException(
+                    status_code=429,
+                    detail={
+                        "error": "quota_exceeded",
+                        "used": usage.get("used"),
+                        "limit": usage.get("limit"),
+                    },
+                )
+            try:
+                results = await selector.compute_indices(
+                    tenant_id=tenant_id,
+                    parcel_id=request.entity_id or "",
+                    parcel_geometry=parcel_bounds,
+                    date_range=date_range,
+                    index_types=[request.index_type],
+                )
+                ran_local = any(
+                    getattr(r, "data_fidelity", None) == "degraded_fallback"
+                    for r in results
+                )
+                if ran_local:
+                    # Selector degraded to the free local pipeline at runtime —
+                    # no genuine SH PU consumed → refund the reserved unit.
+                    quota.release(tenant_id)
+                job = _persist_completed_copernicus_job(
+                    db, tenant_id, request, results, current_user.get("user_id")
+                )
+                logger.info(
+                    "Copernicus calculate job %s completed inline for tenant %s "
+                    "(%d result(s), engine=%s)",
+                    job.id, tenant_id, len(results),
+                    "local" if ran_local else "copernicus",
+                )
+                return {"job_id": str(job.id), "message": "Calculation started"}
+            except HTTPException:
+                raise
+            except Exception:
+                # Any engine/persistence failure — never hard-fail: refund the
+                # reserved unit (no genuine SH PU consumed) and fall back to the
+                # legacy local Celery dispatch below.
+                quota.release(tenant_id)
+                logger.exception(
+                    "Copernicus compute failed for tenant %s — falling back to local dispatch",
+                    tenant_id,
+                )
+        else:
+            # No usable Sentinel Hub credentials (or tenant degraded): do NOT
+            # call the selector and do NOT charge quota — fall through to the
+            # asynchronous local Celery dispatch (immediate pending job).
+            logger.info(
+                "Sentinel Hub not usable for tenant %s — routing %s to async local dispatch",
+                tenant_id, request.index_type,
+            )
+
+    # ---- Local pipeline (legacy async Celery dispatch) ---------------------
     # Build parameters with formula metadata to prevent CUSTOM key collision
     parameters = {
         "scene_id": request.scene_id,
@@ -925,40 +1103,59 @@ async def get_capabilities(current_user: dict = Depends(require_auth)):
     }
 
 
-@router.get("/config")
-async def get_config(current_user: dict = Depends(require_auth)):
-    """Return tenant vegetation config (defaults for now)."""
-    import os
-    return {
-        "default_index": "NDVI",
-        "auto_process": False,
-        "cloud_threshold": 50,
-        "copernicus_client_id": os.getenv("COPERNICUS_CLIENT_ID", ""),
-        "copernicus_client_secret_set": bool(os.getenv("COPERNICUS_CLIENT_SECRET")),
-    }
-
-
-@router.post("/config")
-async def update_config(
-    config: dict,
-    current_user: dict = Depends(require_auth),
-):
-    """Update tenant vegetation config (stub — returns input as saved)."""
-    return {"message": "Config saved", "config": config}
+# Config routes replaced by app/api/config.py (BYOK + DB-backed tenant config).
+# Kept as redirect for backward compatibility with old frontend clients.
 
 
 @router.get("/config/credentials-status")
-async def get_credentials_status(current_user: dict = Depends(require_auth)):
-    """Check if Copernicus credentials are configured."""
+async def get_credentials_status(
+    current_user: dict = Depends(require_auth),
+    db: Session = Depends(get_db_with_tenant),
+):
+    """Check if Copernicus credentials are configured (tenant BYOK + platform fallback)."""
+    from app.models.config import VegetationConfig
+    from app.services.platform_credentials import get_copernicus_credentials
     import os
-    client_id = os.getenv("COPERNICUS_CLIENT_ID", "")
-    has_secret = bool(os.getenv("COPERNICUS_CLIENT_SECRET"))
-    available = bool(client_id and has_secret)
+
+    tenant_id = current_user["tenant_id"]
+
+    # 1. Check tenant BYOK
+    cfg = db.query(VegetationConfig).filter(VegetationConfig.tenant_id == tenant_id).first()
+    tenant_ok = bool(cfg and cfg.copernicus_client_id and cfg.copernicus_client_secret_encrypted)
+    if tenant_ok:
+        return {
+            "available": True,
+            "source": "tenant",
+            "message": "Using tenant credentials",
+            "client_id_preview": (cfg.copernicus_client_id[:8] + "...") if cfg and cfg.copernicus_client_id else None,
+        }
+
+    # 2. Check platform fallback (external_api_credentials + env vars)
+    platform_creds = get_copernicus_credentials()
+    if platform_creds and platform_creds.get("client_id"):
+        pid = platform_creds["client_id"]
+        return {
+            "available": True,
+            "source": "platform",
+            "message": "Using platform credentials",
+            "client_id_preview": (pid[:8] + "...") if pid else None,
+        }
+
+    # 3. Check env vars directly (last resort)
+    env_id = os.getenv("COPERNICUS_CLIENT_ID", "")
+    if env_id:
+        return {
+            "available": True,
+            "source": "platform",
+            "message": "Using platform credentials (env)",
+            "client_id_preview": (env_id[:8] + "...") if len(env_id) >= 8 else None,
+        }
+
     return {
-        "available": available,
-        "source": "platform" if available else None,
-        "message": "Credentials configured" if available else "No Copernicus credentials configured",
-        "client_id_preview": client_id[:8] + "..." if client_id else None,
+        "available": False,
+        "source": None,
+        "message": "No Copernicus credentials configured",
+        "client_id_preview": None,
     }
 
 

@@ -1,5 +1,5 @@
 # backend/app/api/tiles.py
-from fastapi import APIRouter, HTTPException, Depends, Response, Query
+from fastapi import APIRouter, HTTPException, Depends, Request, Response, Query
 from rio_tiler.io import Reader
 from rio_tiler.errors import TileOutsideBounds
 from rio_tiler.colormap import cmap as colormap_handler
@@ -9,9 +9,10 @@ from uuid import UUID
 from typing import Optional
 from app.database import get_db_session
 from app.models import VegetationJob
-from app.middleware.auth import get_tenant_id
+from app.middleware.auth import get_tenant_id, require_auth
 from app.services.storage import generate_tenant_bucket_name
 from app.services.tile_auth import validate_tile_token
+from app.engines.base import TileLocalFallback
 import os
 import logging
 
@@ -205,4 +206,86 @@ async def get_tile(
         return Response(status_code=204)
     except Exception as e:
         logger.error("Tile rendering failed for %s: %s", s3_url, str(e))
+        raise HTTPException(status_code=500, detail=f"Tile rendering failed: {str(e)}")
+
+
+# ── Sentinel Hub tile proxy (Phase 3) ──────────────────────────────
+
+@router.get("/sentinel-hub/{index_type}/{z}/{x}/{y}.png")
+async def get_sentinel_hub_tile(
+    request: Request,
+    index_type: str,
+    z: int, x: int, y: int,
+    date_str: Optional[str] = Query(None, description="ISO date YYYY-MM-DD, or latest"),
+    current_user: dict = Depends(require_auth),
+    db: Session = Depends(get_db_session),
+):
+    """Proxy tile from Sentinel Hub Process API with MinIO cache.
+
+    Requires auth (JWT via gateway). Cache-first with tenant isolation.
+    Falls back to local COG if Sentinel Hub is unavailable.
+    """
+    from app.services.tile_cache import get_cached_tile, put_cached_tile
+
+    tenant_id = current_user["tenant_id"]
+    index_type = index_type.upper()
+    engine_selector = request.app.state.engine_selector
+
+    # 1. Check MinIO cache (tenant-scoped)
+    cached = get_cached_tile(tenant_id, index_type, z, x, y, date_str)
+    if cached:
+        return Response(cached, media_type="image/png",
+                        headers={"Cache-Control": "public, max-age=3600",
+                                 "X-Tile-Source": "cache"})
+
+    # 2. Call engine (Sentinel Hub → local fallback on failure)
+    try:
+        tile_bytes = await engine_selector.get_tile(
+            tenant_id=tenant_id,
+            index_type=index_type,
+            z=z, x=x, y=y,
+            date_str=date_str,
+        )
+        put_cached_tile(tenant_id, index_type, z, x, y, tile_bytes, date_str)
+        return Response(tile_bytes, media_type="image/png",
+                        headers={"Cache-Control": "public, max-age=3600",
+                                 "X-Tile-Source": "sentinel-hub"})
+    except TileLocalFallback as e:
+        # Selector already recorded degradation (if applicable) and
+        # signaled that the local COG is the only working tile fallback.
+        logger.warning("Sentinel Hub tile failed: %s — trying local COG", e)
+    except NotImplementedError:
+        pass  # Direct engine call bypassing the selector — fall through to COG
+    except Exception as e:
+        logger.warning("Sentinel Hub tile failed: %s — trying local COG", e)
+
+    # 3. Local COG fallback
+    from app.models import VegetationJob
+
+    job = (
+        db.query(VegetationJob)
+        .filter(
+            VegetationJob.tenant_id == tenant_id,
+            VegetationJob.job_type == "calculate_index",
+            VegetationJob.status == "completed",
+            VegetationJob.result["index_type"].astext == index_type,
+            VegetationJob.result["raster_path"].astext.isnot(None),
+        )
+        .order_by(VegetationJob.completed_at.desc())
+        .first()
+    )
+
+    if not job or not job.result:
+        raise HTTPException(status_code=404, detail="No raster available for this index")
+
+    raster_path = job.result.get("raster_path")
+    bucket = os.getenv("VEGETATION_COG_BUCKET") or generate_tenant_bucket_name(job.tenant_id)
+    s3_url = f"s3://{bucket}/{raster_path}"
+
+    try:
+        return _render_tile(s3_url, z, x, y, index_type)
+    except TileOutsideBounds:
+        return Response(status_code=204)
+    except Exception as e:
+        logger.error("Local tile fallback failed: %s", e)
         raise HTTPException(status_code=500, detail=f"Tile rendering failed: {str(e)}")

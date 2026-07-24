@@ -9,6 +9,7 @@ env:
   REGISTRY: ghcr.io
   FRONTEND_IMAGE: ${{ github.repository }}/vegetation-prime-frontend
   BACKEND_IMAGE: ${{ github.repository }}/vegetation-prime-api
+  SOVEREIGN_IMAGE: ${{ github.repository }}/vegetation-prime-sovereign
 
 jobs:
   build-frontend:
@@ -86,8 +87,35 @@ jobs:
             ${{ env.REGISTRY }}/nkz-os/vegetation-health-nkz/vegetation-prime-api:latest
             ${{ env.REGISTRY }}/nkz-os/vegetation-health-nkz/vegetation-prime-api:${{ github.sha }}
 
+  build-sovereign:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Sovereign Worker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: backend/Dockerfile.sovereign
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.SOVEREIGN_IMAGE }}:latest
+            ${{ env.REGISTRY }}/${{ env.SOVEREIGN_IMAGE }}:${{ github.sha }}
+
   summary:
-    needs: [build-frontend, build-backend]
+    needs: [build-frontend, build-backend, build-sovereign]
     runs-on: ubuntu-latest
     steps:
       - name: Summary

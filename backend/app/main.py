@@ -34,6 +34,8 @@ from app.api.export import router as export_router
 from app.api.parcels import router as parcels_router
 from app.api.sar import router as sar_router
 from app.api.history import router as history_router
+from app.api.config import router as config_router
+from app.api.usage import router as usage_router
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -43,10 +45,31 @@ async def lifespan(app: FastAPI):
     """Lifecycle events for the module."""
     logger.info("Starting Vegetation Prime API...")
     init_db()
+
     # Fail-fast: INTERNAL_SERVICE_SECRET is required for internal auth
     if not os.getenv("INTERNAL_SERVICE_SECRET"):
         logger.warning("INTERNAL_SERVICE_SECRET not set — internal endpoints will reject all requests")
+
+    # Singleton EngineSelector (shared across all requests, preserves degradation state)
+    from app.engines.selector import EngineSelector
+    app.state.engine_selector = EngineSelector()
+    logger.info("EngineSelector initialized")
+
+    # BYOK encryption: fail closed in production if key is missing
+    # (warns and no-ops outside production — see app/services/encryption.py)
+    from app.services.encryption import verify_encryption_ready
+    verify_encryption_ready()
+
     yield
+
+    # Cleanup Sentinel Hub clients
+    try:
+        selector = app.state.engine_selector
+        for engine in selector._engines.values():
+            await engine.close()
+    except Exception as e:
+        logger.debug("Engine cleanup: %s", e)
+
     logger.info("Shutting down Vegetation Prime API...")
 
 app = FastAPI(
@@ -119,6 +142,8 @@ app.include_router(crop_seasons_router)
 app.include_router(export_router)
 app.include_router(sar_router)
 app.include_router(history_router)
+app.include_router(config_router)
+app.include_router(usage_router)
 
 if __name__ == "__main__":
     import uvicorn

@@ -52,6 +52,9 @@ simpleeval==0.9.13
 httpx>=0.25.2
 requests>=2.32.0,<3
 
+# Encryption (Fernet) for BYOK credential storage
+cryptography>=41.0.0
+
 # Utilities
 python-dotenv==1.0.0
 python-dateutil==2.8.2

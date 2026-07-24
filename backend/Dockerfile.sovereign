@@ -1,0 +1,45 @@
+# Sovereign Worker Dockerfile — optional deployment for local GDAL/rasterio processing.
+# Heavy image (~1.2GB) with GDAL, rasterio, rio-tiler. Only deploy if you need the
+# sovereign fallback engine or want to offload download/processing from the API pod.
+#
+# The main vegetation-health API runs Sentinel Hub by default (zero-download).
+# This worker handles the legacy Celery pipeline when Sentinel Hub is unavailable.
+
+FROM python:3.11-slim
+LABEL org.opencontainers.image.source=https://github.com/nkz-os/vegetation-health-nkz
+LABEL nkz.role=sovereign-worker
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app \
+    CPLUS_INCLUDE_PATH=/usr/include/gdal \
+    C_INCLUDE_PATH=/usr/include/gdal \
+    DEBIAN_FRONTEND=noninteractive
+
+# GDAL + geospatial libraries (heavy — ~400MB installed)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc g++ \
+    libgdal-dev gdal-bin \
+    libgeos-dev libproj-dev \
+    libspatialindex-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN groupadd -r appgroup && useradd -r -g appgroup -s /sbin/nologin -d /app appuser
+
+WORKDIR /app
+
+COPY backend/requirements.txt ./requirements.txt
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir -r requirements.txt
+
+COPY --chown=appuser:appgroup backend/app ./app
+COPY --chown=appuser:appgroup backend/migrations ./migrations
+COPY --chown=appuser:appgroup backend/scripts/run_migrations.py ./scripts/run_migrations.py
+COPY --chown=appuser:appgroup backend/sovereign-entrypoint.sh ./entrypoint.sh
+
+RUN chmod +x /app/entrypoint.sh /app/scripts/run_migrations.py
+RUN chown -R appuser:appgroup /app
+
+USER appuser
+
+ENTRYPOINT ["/app/entrypoint.sh"]
