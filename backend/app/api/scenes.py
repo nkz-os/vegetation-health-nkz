@@ -209,12 +209,30 @@ async def calculate_index_endpoint(
     # would silently run the LOCAL pipeline INLINE and block this HTTP request
     # for minutes (api-gateway 504 risk) — so instead we fall through to the
     # SAME asynchronous local Celery dispatch the `dest=="local"` branch uses.
-    # Quota is reserved ONLY after a confirmed, non-degraded Sentinel Hub
-    # result: a runtime SH failure that degrades to a local compute is free to
-    # us and must not be charged (no decrement API on SatelliteQuota).
+    #
+    # Quota is reserved BEFORE the Sentinel Hub call: an over-quota tenant must
+    # get a 429 WITHOUT us ever hitting the Statistical API (each call burns a
+    # Processing Unit on the SHARED platform credential — the whole point of the
+    # quota is protecting that shared credential from a runaway tenant). If the
+    # compute then degrades to the free local pipeline (runtime SH failure) or
+    # the selector errors, we RELEASE the reserved unit (net-zero charge) since
+    # no genuine SH PU was consumed.
     if dest == "copernicus" and parcel_bounds and date_range:
         selector = http_request.app.state.engine_selector
         if selector.is_sentinel_hub_usable(tenant_id):
+            # Reserve one satellite unit up front (atomic compare-and-increment,
+            # cap preserved). Over quota → 429 with NO Sentinel Hub call.
+            quota = SatelliteQuota()
+            if not quota.check_and_reserve(tenant_id):
+                usage = quota.get_usage(tenant_id)
+                raise HTTPException(
+                    status_code=429,
+                    detail={
+                        "error": "quota_exceeded",
+                        "used": usage.get("used"),
+                        "limit": usage.get("limit"),
+                    },
+                )
             try:
                 results = await selector.compute_indices(
                     tenant_id=tenant_id,
@@ -227,21 +245,10 @@ async def calculate_index_endpoint(
                     getattr(r, "data_fidelity", None) == "degraded_fallback"
                     for r in results
                 )
-                if not ran_local:
-                    # Genuine Sentinel Hub result — reserve one satellite unit
-                    # now (atomic compare-and-increment, cap preserved).
-                    quota = SatelliteQuota()
-                    if not quota.check_and_reserve(tenant_id):
-                        usage = quota.get_usage(tenant_id)
-                        raise HTTPException(
-                            status_code=429,
-                            detail={
-                                "error": "quota_exceeded",
-                                "used": usage.get("used"),
-                                "limit": usage.get("limit"),
-                            },
-                        )
-                # ran_local: selector degraded to local compute — NOT charged.
+                if ran_local:
+                    # Selector degraded to the free local pipeline at runtime —
+                    # no genuine SH PU consumed → refund the reserved unit.
+                    quota.release(tenant_id)
                 job = _persist_completed_copernicus_job(
                     db, tenant_id, request, results, current_user.get("user_id")
                 )
@@ -255,8 +262,10 @@ async def calculate_index_endpoint(
             except HTTPException:
                 raise
             except Exception:
-                # Any engine/persistence failure — never hard-fail: fall back
-                # to the legacy local Celery dispatch below.
+                # Any engine/persistence failure — never hard-fail: refund the
+                # reserved unit (no genuine SH PU consumed) and fall back to the
+                # legacy local Celery dispatch below.
+                quota.release(tenant_id)
                 logger.exception(
                     "Copernicus compute failed for tenant %s — falling back to local dispatch",
                     tenant_id,

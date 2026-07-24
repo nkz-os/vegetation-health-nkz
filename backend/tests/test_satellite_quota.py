@@ -115,6 +115,46 @@ class TestCheckAndReserve:
         assert result is True
 
 
+class TestRelease:
+    def test_release_decrements_current_month_floored_at_zero(self, quota):
+        """release() issues a single atomic UPDATE that decrements the counter,
+        floored at 0 via GREATEST(computations - 1, 0)."""
+        conn = _mock_conn([])  # UPDATE returns no fetched row
+        with patch(
+            "app.services.satellite_quota._get_platform_db_connection",
+            return_value=conn,
+        ):
+            result = quota.release("tenant-a")
+
+        assert result is None
+        conn.commit.assert_called_once()
+        executed = conn.cursor.return_value.execute.call_args_list
+        assert len(executed) == 1
+        sql = executed[0].args[0]
+        assert "UPDATE tenant_satellite_usage" in sql
+        assert "GREATEST(computations - 1, 0)" in sql
+        # Scoped to this tenant + the current period_month.
+        params = executed[0].args[1]
+        assert params[0] == "tenant-a"
+        assert params[1] == quota._current_period()
+
+    def test_release_fail_open_on_db_error(self, quota):
+        """DB unreachable -> log and swallow, never raise (fail-open)."""
+        with patch(
+            "app.services.satellite_quota._get_platform_db_connection",
+            side_effect=RuntimeError("connection refused"),
+        ):
+            # Must not raise.
+            assert quota.release("tenant-d") is None
+
+    def test_release_fail_open_when_connection_is_none(self, quota):
+        with patch(
+            "app.services.satellite_quota._get_platform_db_connection",
+            return_value=None,
+        ):
+            assert quota.release("tenant-e") is None
+
+
 class TestGetUsage:
     def test_usage_shape_under_limit(self, quota):
         # limit query -> 100; usage query -> 42

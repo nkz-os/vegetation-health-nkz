@@ -199,3 +199,35 @@ class SatelliteQuota:
         except Exception as e:
             logger.error("Satellite quota reservation failed for tenant %s (fail-open): %s", tenant_id, e)
             return True
+
+    def release(self, tenant_id: str) -> None:
+        """Refund one reserved unit for the current month (atomic decrement,
+        floored at 0). Used to undo a `check_and_reserve` when the compute it
+        was reserved for did not actually consume a genuine Sentinel Hub
+        Processing Unit (runtime SH failure that degraded to the free local
+        pipeline, or a selector error).
+
+        Fail-open like the rest of the class: any DB error is logged and
+        swallowed — a failed refund must never surface as a request error.
+        """
+        period = self._current_period()
+        try:
+            conn = _get_platform_db_connection()
+            if conn is None:
+                raise RuntimeError("platform DB connection unavailable")
+            try:
+                cur = conn.cursor()
+                try:
+                    cur.execute(
+                        "UPDATE tenant_satellite_usage"
+                        " SET computations = GREATEST(computations - 1, 0)"
+                        " WHERE tenant_id = %s AND period_month = %s",
+                        (tenant_id, period),
+                    )
+                finally:
+                    cur.close()
+                conn.commit()
+            finally:
+                conn.close()
+        except Exception as e:
+            logger.error("Satellite quota release failed for tenant %s (fail-open): %s", tenant_id, e)
