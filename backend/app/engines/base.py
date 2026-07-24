@@ -54,10 +54,16 @@ class BaseVegetationEngine(ABC):
         date_range: tuple[date, date],
         index_types: list[str],      # ["NDVI", "EVI", "SAVI", …]
         cloud_cover_max: float = 50.0,
+        formula: str | None = None,       # custom expression (local engine only)
+        formula_id: str | None = None,    # tenant custom-formula id (local engine only)
     ) -> list[IndexResult]:
         """Compute vegetation indices for a parcel over a date range.
 
         Returns one IndexResult per (sensing_date, index_type) pair.
+
+        `formula`/`formula_id` are honored only by the local engine (custom
+        indices). SentinelHub ignores them — it is only ever routed
+        eligible, non-custom indices.
         """
         ...
 

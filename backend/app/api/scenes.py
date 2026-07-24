@@ -4,7 +4,7 @@ Scene query endpoints matching frontend API client expectations.
 Routes: /api/vegetation/scenes, /api/vegetation/scenes/{entity_id}/stats,
         /api/vegetation/capabilities, /api/vegetation/calculate
 """
-from fastapi import APIRouter, Depends, Query, HTTPException
+from fastapi import APIRouter, Depends, Query, HTTPException, Request
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc, or_, and_
 from datetime import timezone,  date, datetime, timedelta
@@ -29,6 +29,9 @@ from app.models import VegetationScene, VegetationIndexCache, VegetationJob, Veg
 from app.schemas import LatestResultsItem
 from app.services.tile_auth import generate_tile_token
 from app.tasks import calculate_vegetation_index, download_sentinel2_scene
+from app.engines.routing import route_index
+from app.engines.base import EngineDegradedException
+from app.services.satellite_quota import SatelliteQuota
 from nkz_platform_sdk import OrionClient
 
 router = APIRouter(prefix="/api/vegetation", tags=["scenes"])
@@ -67,9 +70,80 @@ class ZoningRequest(BaseModel):
     n8n_callback_url: Optional[str] = None
 
 
+def _persist_completed_copernicus_job(
+    db: Session,
+    tenant_id: str,
+    request: "CalculateRequest",
+    results: list,
+    user_id: Optional[str],
+) -> VegetationJob:
+    """Persist a Copernicus (Sentinel Hub) computation as a COMPLETED
+    calculate_index VegetationJob so /calculate returns the SAME pollable
+    {job_id, message} contract the frontend already expects.
+
+    The Statistical API is synchronous — results exist immediately — so the
+    job is written straight to `completed`. `results` is a list of engine
+    IndexResult dataclasses (possibly several sensing dates); the latest is
+    surfaced as the primary `statistics` block, all are kept under `results`.
+
+    NOTE: Copernicus returns zonal stats only, no raster COG, so this job has
+    no `raster_path` — it will not (yet) drive a map tile layer via
+    /results/{entity_id}. Stats/timeseries surfaces work; raster rendering
+    from Copernicus is out of scope for this task.
+    """
+    latest = max(results, key=lambda r: r.sensing_date) if results else None
+
+    def _stats(r) -> Dict[str, Any]:
+        return {
+            "mean": r.mean, "min": r.min, "max": r.max, "std": r.std,
+            "p10": r.p10, "p90": r.p90,
+            "valid_pixels": r.valid_pixels, "total_pixels": r.total_pixels,
+        }
+
+    result_payload: Dict[str, Any] = {
+        "index_type": request.index_type,
+        "index_key": request.index_type,
+        "engine": "copernicus",
+        "data_fidelity": latest.data_fidelity if latest else "sentinel_hub",
+        "sensing_date": latest.sensing_date.isoformat() if latest else None,
+        "statistics": _stats(latest) if latest else {},
+        "results": [
+            {
+                "index_type": r.index_type,
+                "sensing_date": r.sensing_date.isoformat(),
+                **_stats(r),
+                "data_fidelity": r.data_fidelity,
+            }
+            for r in results
+        ],
+    }
+
+    job = VegetationJob(
+        tenant_id=tenant_id,
+        job_type="calculate_index",
+        entity_id=request.entity_id,
+        entity_type="AgriParcel",
+        parameters={
+            "scene_id": request.scene_id,
+            "index_type": request.index_type,
+            "entity_id": request.entity_id,
+            "start_date": request.start_date,
+            "end_date": request.end_date,
+            "engine": "copernicus",
+        },
+        created_by=user_id,
+    )
+    job.mark_completed(result_payload)
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    return job
+
+
 @router.post("/calculate")
 async def calculate_index_endpoint(
     request: CalculateRequest,
+    http_request: Request,
     current_user: dict = Depends(require_auth),
     db: Session = Depends(get_db_with_tenant),
 ):
@@ -106,6 +180,61 @@ async def calculate_index_endpoint(
         if existing and existing.parameters:
             parcel_bounds = existing.parameters.get("bounds")
 
+    # ---- Engine routing (Task 6) -------------------------------------------
+    # Eligible 10 m-native indices with no tenant custom formula run on the
+    # Copernicus (Sentinel Hub Statistical API) engine under monthly quota;
+    # red-edge (NDRE) and custom formulas stay on the legacy local pipeline.
+    has_custom = bool(request.formula or request.formula_id)
+    dest = route_index(request.index_type, has_custom)
+
+    date_range = None
+    d0 = _parse_iso_date(request.start_date)
+    d1 = _parse_iso_date(request.end_date)
+    if d0 and d1:
+        date_range = (d0, d1)
+
+    # Copernicus needs both a parcel geometry (from a prior download job) and a
+    # date range; without either, fall through to the local pipeline.
+    if dest == "copernicus" and parcel_bounds and date_range:
+        quota = SatelliteQuota()
+        if not quota.check_and_reserve(tenant_id):
+            usage = quota.get_usage(tenant_id)
+            raise HTTPException(
+                status_code=429,
+                detail={
+                    "error": "quota_exceeded",
+                    "used": usage.get("used"),
+                    "limit": usage.get("limit"),
+                },
+            )
+        try:
+            selector = http_request.app.state.engine_selector
+            results = await selector.compute_indices(
+                tenant_id=tenant_id,
+                parcel_id=request.entity_id or "",
+                parcel_geometry=parcel_bounds,
+                date_range=date_range,
+                index_types=[request.index_type],
+            )
+            job = _persist_completed_copernicus_job(
+                db, tenant_id, request, results, current_user.get("user_id")
+            )
+            logger.info(
+                "Copernicus calculate job %s completed inline for tenant %s (%d result(s))",
+                job.id, tenant_id, len(results),
+            )
+            return {"job_id": str(job.id), "message": "Calculation started"}
+        except HTTPException:
+            raise
+        except Exception:
+            # EngineDegradedException or any engine/persistence failure — never
+            # hard-fail: fall back to the legacy local Celery dispatch below.
+            logger.exception(
+                "Copernicus compute failed for tenant %s — falling back to local dispatch",
+                tenant_id,
+            )
+
+    # ---- Local pipeline (legacy async Celery dispatch) ---------------------
     # Build parameters with formula metadata to prevent CUSTOM key collision
     parameters = {
         "scene_id": request.scene_id,

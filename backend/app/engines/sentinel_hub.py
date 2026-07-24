@@ -56,11 +56,16 @@ class SentinelHubEngine(BaseVegetationEngine):
         date_range: tuple[date, date],
         index_types: list[str],
         cloud_cover_max: float = 50.0,
+        formula: str | None = None,
+        formula_id: str | None = None,
     ) -> list[IndexResult]:
         """Compute vegetation indices via Statistical API.
 
         Uses the multi-index evalscript to compute all requested indices
         in a single API call per 5-day aggregation window.
+
+        `formula`/`formula_id` are accepted for interface parity but ignored:
+        the selector only routes eligible, non-custom indices here.
         """
         logger.info(
             "Computing indices for parcel=%s tenant=%s types=%s cloud_max=%s",

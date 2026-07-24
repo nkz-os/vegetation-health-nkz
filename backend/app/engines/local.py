@@ -50,6 +50,8 @@ class LocalProcessingEngine(BaseVegetationEngine):
         date_range: tuple[date, date],
         index_types: list[str],
         cloud_cover_max: float = 50.0,
+        formula: str | None = None,
+        formula_id: str | None = None,
     ) -> list[IndexResult]:
         """Dispatch download + calculate tasks and await results.
 
@@ -128,6 +130,12 @@ class LocalProcessingEngine(BaseVegetationEngine):
                         parameters={
                             "scene_id": scene_id,
                             "index_type": idx_type,
+                            # Custom-formula metadata so the worker computes the
+                            # tenant expression instead of a canned index.
+                            # Dropped before this fix — CUSTOM indices silently
+                            # ran as their base index.
+                            "formula": formula,
+                            "formula_id": formula_id,
                         },
                         status="pending",
                     )
@@ -143,6 +151,7 @@ class LocalProcessingEngine(BaseVegetationEngine):
             calculate_vegetation_index.delay(
                 calc_job_id, tenant_id,
                 scene_id, idx_type,
+                formula=formula,
             )
 
             await self._poll_job_completion(calc_job_id)
