@@ -6,17 +6,17 @@ import numpy as np
 import pytest
 from unittest.mock import patch, MagicMock
 
-# Mock rasterio before importing processor
+# Stub heavy native deps before importing processor. Use setdefault (never a
+# bare `sys.modules[x] = MagicMock()`): a real install (e.g. in CI) is then used
+# as-is and, crucially, is NOT clobbered for other test files sharing the
+# process. Unconditional assignment here previously replaced the real `rasterio`
+# with a Mock that isn't a package, breaking unrelated tests that do
+# `from rasterio.mask import mask` depending on collection order.
 import sys
-sys.modules['rasterio'] = MagicMock()
-sys.modules['rasterio.warp'] = MagicMock()
-sys.modules['rasterio.features'] = MagicMock()
-sys.modules['rasterio.windows'] = MagicMock()
-sys.modules['rasterio.transform'] = MagicMock()
-sys.modules['shapely'] = MagicMock()
-sys.modules['shapely.geometry'] = MagicMock()
-sys.modules['shapely.ops'] = MagicMock()
-sys.modules['simpleeval'] = MagicMock()
+for _m in ("rasterio", "rasterio.warp", "rasterio.features", "rasterio.windows",
+           "rasterio.transform", "rasterio.crs", "rasterio.merge", "rasterio.mask",
+           "shapely", "shapely.geometry", "shapely.ops", "simpleeval"):
+    sys.modules.setdefault(_m, MagicMock())
 
 from app.services.processor import VegetationIndexProcessor
 
