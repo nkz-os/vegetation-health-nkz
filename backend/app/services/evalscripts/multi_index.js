@@ -6,8 +6,14 @@
 function setup() {
   return {
     input: [{
+      // All bands share ONE sentinel-2-l2a datasource, so keep a single input
+      // block. SCL (scene classification) is categorical — Sentinel Hub only
+      // serves it in DN units; requesting it as reflectance is a hard 400. Use
+      // a per-band units array so SCL/dataMask are DN while the rest stay
+      // reflectance.
       bands: ["B02", "B03", "B04", "B05", "B08", "B8A", "SCL", "dataMask"],
-      units: "reflectance"
+      units: ["reflectance", "reflectance", "reflectance", "reflectance",
+              "reflectance", "reflectance", "DN", "DN"]
     }],
     output: [
       { id: "ndvi",  bands: 1, sampleType: "FLOAT32" },
@@ -15,8 +21,14 @@ function setup() {
       { id: "savi",  bands: 1, sampleType: "FLOAT32" },
       { id: "gndvi", bands: 1, sampleType: "FLOAT32" },
       { id: "ndre",  bands: 1, sampleType: "FLOAT32" },
+      // The Statistical API requires a dataMask output — it uses it to exclude
+      // invalid/cloudy pixels (dataMask=0) from the zonal statistics.
+      { id: "dataMask", bands: 1 },
     ],
-    mosaicking: "ORBIT"
+    // SIMPLE mosaicking → evaluatePixel receives ONE sample object per pixel
+    // (least-cloudy within the aggregation interval). ORBIT would pass an
+    // ARRAY of samples, which this per-pixel script does not handle.
+    mosaicking: "SIMPLE"
   };
 }
 
@@ -33,7 +45,11 @@ const L = 0.5;  // SAVI soil adjustment factor
 
 function evaluatePixel(samples) {
   if (!isClear(samples)) {
-    return { ndvi: [NaN], evi: [NaN], savi: [NaN], gndvi: [NaN], ndre: [NaN] };
+    // dataMask=0 → the Statistical API drops this pixel from the stats.
+    return {
+      ndvi: [NaN], evi: [NaN], savi: [NaN], gndvi: [NaN], ndre: [NaN],
+      dataMask: [0],
+    };
   }
 
   var b02 = samples.B02;  // Blue
@@ -58,5 +74,6 @@ function evaluatePixel(samples) {
     savi:  [savi],
     gndvi: [gndvi],
     ndre:  [ndre],
+    dataMask: [1],
   };
 }
