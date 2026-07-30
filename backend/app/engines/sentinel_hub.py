@@ -110,17 +110,34 @@ class SentinelHubEngine(BaseVegetationEngine):
                 if not stats:
                     continue
 
+                # SH semantics: sampleCount = total pixels in the region grid,
+                # noDataCount = those masked out (dataMask=0). Valid = the diff.
+                sample_count = int(stats.get("sampleCount", 0))
+                no_data = int(stats.get("noDataCount", 0))
+                valid = sample_count - no_data
+                if valid <= 0:
+                    # Fully masked interval (cloud / no coverage): SH returns the
+                    # string "NaN" for mean/min/max — skip, it is not an observation.
+                    continue
+
+                try:
+                    mean_v = float(stats.get("mean"))
+                except (TypeError, ValueError):
+                    continue
+                if mean_v != mean_v:  # NaN guard
+                    continue
+
                 results.append(IndexResult(
                     index_type=idx_type.upper(),
                     sensing_date=sensing_date,
-                    mean=float(stats.get("mean", 0)),
+                    mean=mean_v,
                     std=float(stats.get("stDev", 0)),
                     min=float(stats.get("min", 0)),
                     max=float(stats.get("max", 0)),
                     p10=float(stats.get("percentiles", {}).get("10", 0)),
                     p90=float(stats.get("percentiles", {}).get("90", 0)),
-                    valid_pixels=int(stats.get("sampleCount", 0)),
-                    total_pixels=int(stats.get("sampleCount", 0)) + int(stats.get("noDataCount", 0)),
+                    valid_pixels=valid,
+                    total_pixels=sample_count,
                     data_fidelity="sentinel_hub",
                 ))
 

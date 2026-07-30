@@ -1,7 +1,7 @@
 """Tests for SentinelHubEngine — compute_indices and get_tile."""
 
 import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, patch
 from datetime import date
 from app.engines.sentinel_hub import SentinelHubEngine
 from app.engines.base import IndexResult
@@ -64,8 +64,10 @@ class TestComputeIndices:
         assert r.max == 0.95
         assert r.p10 == 0.35
         assert r.p90 == 0.88
-        assert r.valid_pixels == 100
-        assert r.total_pixels == 110
+        # SH semantics: sampleCount(100) = total grid, noDataCount(10) = masked
+        # → valid = 100 - 10 = 90, total = 100.
+        assert r.valid_pixels == 90
+        assert r.total_pixels == 100
         assert r.data_fidelity == "sentinel_hub"
 
     @pytest.mark.asyncio
@@ -100,6 +102,42 @@ class TestComputeIndices:
         assert len(results) == 5
         index_types = {r.index_type for r in results}
         assert index_types == {"NDVI", "EVI", "SAVI", "GNDVI", "NDRE"}
+
+    @pytest.mark.asyncio
+    async def test_fully_masked_interval_is_skipped(self, engine, parcel_geometry):
+        """A fully cloud/no-data interval (noDataCount == sampleCount) returns
+        the string 'NaN' from SH — it must be skipped, not surfaced as a 0/NaN
+        observation. A second interval with real data is kept."""
+        mock_response = {
+            "data": [
+                {   # fully masked → SH returns "NaN" strings
+                    "interval": {"from": "2026-07-05T00:00:00Z", "to": "2026-07-10T00:00:00Z"},
+                    "outputs": {"ndvi": {"bands": {"B0": {"stats": {
+                        "mean": "NaN", "stDev": "NaN", "min": "NaN", "max": "NaN",
+                        "sampleCount": 100, "noDataCount": 100,
+                    }}}}},
+                },
+                {   # real data
+                    "interval": {"from": "2026-07-15T00:00:00Z", "to": "2026-07-20T00:00:00Z"},
+                    "outputs": {"ndvi": {"bands": {"B0": {"stats": {
+                        "mean": 0.63, "stDev": 0.12, "min": 0.2, "max": 0.9,
+                        "sampleCount": 100, "noDataCount": 40,
+                    }}}}},
+                },
+            ]
+        }
+        with patch.object(engine, "_client") as mock_client:
+            mock_client.statistical = AsyncMock(return_value=mock_response)
+            results = await engine.compute_indices(
+                tenant_id="t1", parcel_id="p", parcel_geometry=parcel_geometry,
+                date_range=(date(2026, 7, 5), date(2026, 7, 20)), index_types=["NDVI"],
+            )
+
+        assert len(results) == 1  # masked interval dropped
+        r = results[0]
+        assert r.mean == 0.63
+        assert r.valid_pixels == 60  # 100 - 40
+        assert r.total_pixels == 100
 
     @pytest.mark.asyncio
     async def test_health_check_ok(self, engine):
