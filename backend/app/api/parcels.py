@@ -431,6 +431,7 @@ async def analyze_in_season(
     entity_id: str,
     season_id: str,
     request: SeasonAnalyzeRequest,
+    http_request: Request,
     current_user: dict = Depends(require_auth),
     db: Session = Depends(get_db_with_tenant),
 ):
@@ -492,6 +493,7 @@ async def analyze_in_season(
         local_cloud_threshold=request.local_cloud_threshold,
         crop_season_id=str(season.id),
         include_sar=request.include_sar,
+        engine_selector=getattr(http_request.app.state, "engine_selector", None),
     )
 
 

@@ -518,6 +518,17 @@ def download_sentinel2_scene(self, job_id: str, tenant_id: str, parameters: Dict
         # Check for chained calculation trigger
         calculate_indices = parameters.get('calculate_indices')
         calculate_custom_formulas = parameters.get('calculate_custom_formulas')
+
+        # Propagate the parent download's crop_season_id to every child
+        # calculate_index job — else the index results orphan into the
+        # "legacy" (no-season) bucket in the parcel overview.
+        _child_season_id = parameters.get('crop_season_id')
+        if _child_season_id:
+            try:
+                _child_season_id = uuid.UUID(str(_child_season_id))
+            except (ValueError, TypeError):
+                logger.warning("Invalid crop_season_id in download params: %r", _child_season_id)
+                _child_season_id = None
         total_calc_jobs = (len(calculate_indices) if isinstance(calculate_indices, list) else 0) + \
                           (len(calculate_custom_formulas) if isinstance(calculate_custom_formulas, list) else 0)
 
@@ -546,7 +557,8 @@ def download_sentinel2_scene(self, job_id: str, tenant_id: str, parameters: Dict
                         entity_id=parameters.get('entity_id'),
                         job_type='calculate_index',
                         status='pending',
-                        parameters=calc_params
+                        parameters=calc_params,
+                        crop_season_id=_child_season_id,
                     )
                     db.add(calc_job)
                     db.commit()
@@ -607,7 +619,8 @@ def download_sentinel2_scene(self, job_id: str, tenant_id: str, parameters: Dict
                         entity_id=parameters.get('entity_id'),
                         job_type='calculate_index',
                         status='pending',
-                        parameters=calc_params
+                        parameters=calc_params,
+                        crop_season_id=_child_season_id,
                     )
                     db.add(calc_job)
                     db.commit()

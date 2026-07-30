@@ -124,6 +124,15 @@ def download_sentinel1_scene(
         sensing_date_str = parameters.get("sensing_date", "")
         bounds = parameters.get("bounds")
 
+        # Inherit the parent SAR job's crop_season_id so the SAR calculate_index
+        # jobs land under the season, not the legacy no-season bucket.
+        _child_season_id = parameters.get("crop_season_id")
+        if _child_season_id:
+            try:
+                _child_season_id = uuid.UUID(str(_child_season_id))
+            except (ValueError, TypeError):
+                _child_season_id = None
+
         if not scene_id or not entity_id:
             raise ValueError("scene_id and entity_id are required")
 
@@ -236,6 +245,7 @@ def download_sentinel1_scene(
                             job_type="calculate_index",
                             status="running",
                             parameters={"scene_id": scene_id, "index_type": f"SAR-{pol}"},
+                            crop_season_id=_child_season_id,
                         )
                         db.add(calc_job)
                         db.commit()
@@ -268,6 +278,7 @@ def download_sentinel1_scene(
                         status="failed",
                         parameters={"scene_id": scene_id, "index_type": f"SAR-{pol}"},
                         error_message=str(e),
+                        crop_season_id=_child_season_id,
                     )
                     db.add(calc_job)
                     db.commit()
