@@ -93,37 +93,41 @@ def ensure_copernicus_raster(db, job) -> str | None:
         return result["raster_path"]
 
     lock = _lock_for(str(job.id))
-    with lock:
-        db.refresh(job)  # another worker may have finished while we waited
-        result = job.result or {}
-        if result.get("raster_path"):
-            return result["raster_path"]
+    try:
+        with lock:
+            db.refresh(job)  # another worker may have finished while we waited
+            result = job.result or {}
+            if result.get("raster_path"):
+                return result["raster_path"]
 
-        index_type = result.get("index_type")
-        date_str = result.get("sensing_date")
-        geometry = result.get("geometry")
-        if not (index_type and date_str and geometry):
-            logger.warning("Copernicus job %s missing index/date/geometry — cannot materialize", job.id)
-            return None
+            index_type = result.get("index_type")
+            date_str = result.get("sensing_date")
+            geometry = result.get("geometry")
+            if not (index_type and date_str and geometry):
+                logger.warning("Copernicus job %s missing index/date/geometry — cannot materialize", job.id)
+                return None
 
-        bbox = list(_shape(geometry).bounds)
-        resx, resy = _dynamic_res(bbox)
-        bucket = os.getenv("VEGETATION_COG_BUCKET") or generate_tenant_bucket_name(job.tenant_id)
-        remote_path = f"{job.tenant_id}/entities/{job.entity_id or 'unknown'}/copernicus/{date_str}/{index_type}.tif"
+            bbox = list(_shape(geometry).bounds)
+            resx, resy = _dynamic_res(bbox)
+            bucket = os.getenv("VEGETATION_COG_BUCKET") or generate_tenant_bucket_name(job.tenant_id)
+            remote_path = f"{job.tenant_id}/entities/{job.entity_id or 'unknown'}/copernicus/{date_str}/{index_type}.tif"
 
-        try:
-            cog_bytes = _process_and_cog(job.tenant_id, geometry, index_type, date_str, resx, resy)
-            _upload(cog_bytes, bucket, remote_path)
-        except Exception as e:
-            logger.warning("Copernicus raster materialization failed for job %s: %s", job.id, e)
-            return None
+            try:
+                cog_bytes = _process_and_cog(job.tenant_id, geometry, index_type, date_str, resx, resy)
+                _upload(cog_bytes, bucket, remote_path)
+            except Exception as e:
+                logger.warning("Copernicus raster materialization failed for job %s: %s", job.id, e)
+                return None
 
-        new_result = dict(result)
-        new_result["raster_path"] = remote_path
-        new_result["raster_pending"] = False
-        new_result["raster_resolution_deg"] = resx
-        job.result = new_result
-        from sqlalchemy.orm.attributes import flag_modified
-        flag_modified(job, "result")
-        db.commit()
-        return remote_path
+            new_result = dict(result)
+            new_result["raster_path"] = remote_path
+            new_result["raster_pending"] = False
+            new_result["raster_resolution_deg"] = resx
+            job.result = new_result
+            from sqlalchemy.orm.attributes import flag_modified
+            flag_modified(job, "result")
+            db.commit()
+            return remote_path
+    finally:
+        with _locks_guard:
+            _locks.pop(str(job.id), None)
