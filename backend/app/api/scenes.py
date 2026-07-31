@@ -579,17 +579,45 @@ async def _dispatch_analyze_for_parcel(
                 if ran_local:
                     # Selector degraded to the free local pipeline — refund.
                     quota.release(tenant_id)
-                job = _persist_completed_copernicus_job(
-                    db, tenant_id,
-                    entity_id=entity_id,
-                    index_type=idx,
-                    results=results,
-                    user_id=user_id,
-                    start_date=start_date_iso,
-                    end_date=end_date_iso,
-                    crop_season_id=season_uuid,
-                )
-                cop_job_ids.append(str(job.id))
+                # One calculate_index job per (index, window) — mirrors local shape.
+                from app.services.copernicus_raster import ensure_copernicus_raster
+                by_date = sorted(results, key=lambda r: r.sensing_date)
+                latest_date = by_date[-1].sensing_date if by_date else None
+                for r in by_date:
+                    is_latest = (r.sensing_date == latest_date)
+                    stats = {
+                        "mean": r.mean, "min": r.min, "max": r.max, "std": r.std,
+                        "p10": r.p10, "p90": r.p90,
+                        "valid_pixels": r.valid_pixels, "total_pixels": r.total_pixels,
+                    }
+                    engine_label = ("local_processing"
+                                    if r.data_fidelity == "degraded_fallback" else "copernicus")
+                    wjob = VegetationJob(
+                        tenant_id=tenant_id,
+                        job_type="calculate_index",
+                        entity_id=entity_id,
+                        entity_type="AgriParcel",
+                        parameters={"index_type": idx, "entity_id": entity_id, "engine": engine_label},
+                        created_by=user_id,
+                        crop_season_id=season_uuid,
+                    )
+                    wjob.mark_completed({
+                        "index_type": idx,
+                        "index_key": idx,
+                        "engine": engine_label,
+                        "data_fidelity": r.data_fidelity,
+                        "sensing_date": r.sensing_date.isoformat(),
+                        "statistics": stats,
+                        "geometry": geometry,          # for lazy raster materialization
+                        "raster_path": None,
+                        "raster_pending": (engine_label == "copernicus"),
+                    })
+                    db.add(wjob)
+                    db.commit()
+                    db.refresh(wjob)
+                    if is_latest and engine_label == "copernicus":
+                        ensure_copernicus_raster(db, wjob)   # eager latest
+                    cop_job_ids.append(str(wjob.id))
                 cop_job_ids_indices.append(idx)
             except Exception as exc:
                 # Genuine SH/persist failure (no degraded result) — refund and
@@ -933,14 +961,9 @@ async def get_entity_results(
         except ValueError as exc:
             raise HTTPException(status_code=422, detail="Invalid scene_id (expected UUID)") from exc
 
-    # Pull only completed calc_index jobs that produced an actual raster.
-    # Filtering skipped:true / raster_path=null at SQL level (instead of
-    # post-hoc in Python) ensures the LIMIT does not silently drop the
-    # newest 'real' result per index when many recent rows are skipped
-    # — which is exactly what happened on the montiko parcel where the
-    # newest 50 completed rows were dominated by idempotency-skipped
-    # retries and the slot ended up with indexResults={} despite the
-    # parcel having 8 usable rasters per index.
+    # Pull completed calc_index jobs that have a raster OR are pending
+    # Copernicus rasters (lazy materialization on date-selection).
+    from sqlalchemy import or_
     jobs = (
         db.query(VegetationJob)
         .filter(
@@ -949,7 +972,10 @@ async def get_entity_results(
             VegetationJob.job_type == "calculate_index",
             VegetationJob.status == "completed",
             VegetationJob.deleted_at.is_(None),
-            VegetationJob.result["raster_path"].astext.isnot(None),
+            or_(
+                VegetationJob.result["raster_path"].astext.isnot(None),
+                VegetationJob.result["raster_pending"].astext == "true",
+            ),
         )
         .order_by(desc(VegetationJob.created_at))
         .limit(500 if scene_id else 100)
@@ -968,6 +994,16 @@ async def get_entity_results(
         index_key = job.result.get("index_key") or index_type
         if not index_type or not index_key or index_key in results:
             continue  # already have a newer one
+
+        # Lazy-materialize pending Copernicus raster on date-selection.
+        if job.result.get("raster_pending") and not job.result.get("raster_path"):
+            from app.services.copernicus_raster import ensure_copernicus_raster
+            ensure_copernicus_raster(db, job)
+
+        # Re-read raster_path after potential materialization.
+        raster_path = job.result.get("raster_path")
+        if not raster_path:
+            continue  # materialization failed — skip this index
         stats = job.result.get("statistics", {})
         results[index_key] = {
             "job_id": str(job.id),
@@ -984,8 +1020,7 @@ async def get_entity_results(
                 "std_dev": stats.get("std"),
                 "pixel_count": stats.get("pixel_count"),
             },
-            "raster_path": job.result.get("raster_path"),
-            "is_composite": job.result.get("is_composite", False),
+            "raster_path": raster_path,
             "created_at": job.created_at.isoformat() if job.created_at else None,
             "scene_id": job.result.get("scene_id"),
             "sensing_date": job.result.get("sensing_date"),

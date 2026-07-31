@@ -12,6 +12,7 @@ from app.models import VegetationJob
 from app.middleware.auth import get_tenant_id, require_auth
 from app.services.storage import generate_tenant_bucket_name
 from app.services.tile_auth import validate_tile_token
+from app.services.copernicus_raster import ensure_copernicus_raster
 from app.engines.base import TileLocalFallback
 import os
 import logging
@@ -129,6 +130,9 @@ async def get_tile_bounds(
     if not job or not job.result:
         raise HTTPException(status_code=404, detail="Job not found or has no result")
 
+    if job.result and job.result.get("raster_pending") and not job.result.get("raster_path"):
+        ensure_copernicus_raster(db, job)
+
     raster_path = job.result.get('raster_path')
     if not raster_path:
         raise HTTPException(status_code=404, detail="Job has no raster output")
@@ -191,6 +195,9 @@ async def get_tile(
 
     if not validate_tile_token(token, job_id, job.tenant_id):
         raise HTTPException(status_code=401, detail="Invalid or expired tile token")
+
+    if job.result and job.result.get("raster_pending") and not job.result.get("raster_path"):
+        ensure_copernicus_raster(db, job)
 
     raster_path = job.result.get('raster_path')
     if not raster_path:

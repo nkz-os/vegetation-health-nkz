@@ -2,7 +2,7 @@
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException, Depends, status
 from pydantic import BaseModel, Field
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 from uuid import UUID
 from typing import List, Optional
@@ -155,6 +155,7 @@ async def get_available_raster_dates(
             VegetationJob.result["sensing_date"].astext,
             VegetationJob.result["index_type"].astext,
             func.max(VegetationJob.completed_at),
+            VegetationJob.result["raster_pending"].astext,
         )
         .filter(
             VegetationJob.tenant_id == tenant_id,
@@ -162,11 +163,15 @@ async def get_available_raster_dates(
             VegetationJob.job_type == "calculate_index",
             VegetationJob.status == "completed",
             VegetationJob.deleted_at.is_(None),
-            VegetationJob.result["raster_path"].astext.isnot(None),
+            or_(
+                VegetationJob.result["raster_path"].astext.isnot(None),
+                VegetationJob.result["raster_pending"].astext == "true",
+            ),
         )
         .group_by(
             VegetationJob.result["sensing_date"].astext,
             VegetationJob.result["index_type"].astext,
+            VegetationJob.result["raster_pending"].astext,
         )
         .order_by(func.max(VegetationJob.completed_at).desc())
         .all()
@@ -178,6 +183,7 @@ async def get_available_raster_dates(
                 "sensing_date": r[0],
                 "index_type": r[1],
                 "completed_at": r[2].isoformat() if r[2] else None,
+                "raster_pending": r[3] == "true",
             }
             for r in rows if r[0]
         ]
