@@ -579,17 +579,45 @@ async def _dispatch_analyze_for_parcel(
                 if ran_local:
                     # Selector degraded to the free local pipeline — refund.
                     quota.release(tenant_id)
-                job = _persist_completed_copernicus_job(
-                    db, tenant_id,
-                    entity_id=entity_id,
-                    index_type=idx,
-                    results=results,
-                    user_id=user_id,
-                    start_date=start_date_iso,
-                    end_date=end_date_iso,
-                    crop_season_id=season_uuid,
-                )
-                cop_job_ids.append(str(job.id))
+                # One calculate_index job per (index, window) — mirrors local shape.
+                from app.services.copernicus_raster import ensure_copernicus_raster
+                by_date = sorted(results, key=lambda r: r.sensing_date)
+                latest_date = by_date[-1].sensing_date if by_date else None
+                for r in by_date:
+                    is_latest = (r.sensing_date == latest_date)
+                    stats = {
+                        "mean": r.mean, "min": r.min, "max": r.max, "std": r.std,
+                        "p10": r.p10, "p90": r.p90,
+                        "valid_pixels": r.valid_pixels, "total_pixels": r.total_pixels,
+                    }
+                    engine_label = ("local_processing"
+                                    if r.data_fidelity == "degraded_fallback" else "copernicus")
+                    wjob = VegetationJob(
+                        tenant_id=tenant_id,
+                        job_type="calculate_index",
+                        entity_id=entity_id,
+                        entity_type="AgriParcel",
+                        parameters={"index_type": idx, "entity_id": entity_id, "engine": engine_label},
+                        created_by=user_id,
+                        crop_season_id=season_uuid,
+                    )
+                    wjob.mark_completed({
+                        "index_type": idx,
+                        "index_key": idx,
+                        "engine": engine_label,
+                        "data_fidelity": r.data_fidelity,
+                        "sensing_date": r.sensing_date.isoformat(),
+                        "statistics": stats,
+                        "geometry": geometry,          # for lazy raster materialization
+                        "raster_path": None,
+                        "raster_pending": (engine_label == "copernicus"),
+                    })
+                    db.add(wjob)
+                    db.commit()
+                    db.refresh(wjob)
+                    if is_latest and engine_label == "copernicus":
+                        ensure_copernicus_raster(db, wjob)   # eager latest
+                    cop_job_ids.append(str(wjob.id))
                 cop_job_ids_indices.append(idx)
             except Exception as exc:
                 # Genuine SH/persist failure (no degraded result) — refund and
