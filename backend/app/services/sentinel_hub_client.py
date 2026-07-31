@@ -168,6 +168,57 @@ class SentinelHubClient:
         except httpx.TimeoutException as e:
             raise SentinelHubTimeoutError(f"Statistical API timeout: {e}") from e
 
+    async def process_raster(
+        self,
+        geometry: dict,
+        evalscript: str,
+        date_str: str,
+        resx: float,
+        resy: float,
+    ) -> bytes:
+        """Sentinel Hub Process API → single-band FLOAT32 GeoTIFF for a geometry+date."""
+        headers = await self._auth_headers()
+        headers["Content-Type"] = "application/json"
+        headers["Accept"] = "image/tiff"
+        body = {
+            "input": {
+                "bounds": {
+                    "geometry": geometry,
+                    "properties": {"crs": "http://www.opengis.net/def/crs/EPSG/0/4326"},
+                },
+                "data": [{
+                    "type": "sentinel-2-l2a",
+                    "dataFilter": {
+                        "timeRange": {
+                            "from": f"{date_str}T00:00:00Z",
+                            "to": f"{date_str}T23:59:59Z",
+                        },
+                        "mosaickingOrder": "leastCC",
+                    },
+                }],
+            },
+            "output": {
+                "resx": resx,
+                "resy": resy,
+                "responses": [{"identifier": "default", "format": {"type": "image/tiff"}}],
+            },
+            "evalscript": evalscript,
+        }
+        client = await self._get_client()
+        try:
+            resp = await client.post(PROCESS_URL, json=body, headers=headers, timeout=STATISTICAL_TIMEOUT)
+            if resp.status_code == 401:
+                self._access_token = None
+                raise SentinelHubAuthError("Token rejected by Process API")
+            if resp.status_code == 429:
+                raise SentinelHubRateLimitError(f"Rate limited: {resp.content[:200]!r}")
+            if resp.status_code >= 500:
+                raise SentinelHubServerError(f"Sentinel Hub server error {resp.status_code}")
+            resp.raise_for_status()
+            return resp.content
+        except httpx.TimeoutException as e:
+            raise SentinelHubTimeoutError(f"Process API timeout: {e}") from e
+
     async def process(
         self,
         bbox: list[float],
