@@ -580,7 +580,7 @@ async def _dispatch_analyze_for_parcel(
                     # Selector degraded to the free local pipeline — refund.
                     quota.release(tenant_id)
                 # One calculate_index job per (index, window) — mirrors local shape.
-                from app.services.copernicus_raster import ensure_copernicus_raster
+                from app.services.copernicus_raster import materialize_if_pending
                 by_date = sorted(results, key=lambda r: r.sensing_date)
                 latest_date = by_date[-1].sensing_date if by_date else None
                 for r in by_date:
@@ -616,7 +616,7 @@ async def _dispatch_analyze_for_parcel(
                     db.commit()
                     db.refresh(wjob)
                     if is_latest and engine_label == "copernicus":
-                        ensure_copernicus_raster(db, wjob)   # eager latest
+                        await materialize_if_pending(db, wjob)   # eager latest (off-loop)
                     cop_job_ids.append(str(wjob.id))
                 cop_job_ids_indices.append(idx)
             except Exception as exc:
@@ -995,10 +995,10 @@ async def get_entity_results(
         if not index_type or not index_key or index_key in results:
             continue  # already have a newer one
 
-        # Lazy-materialize pending Copernicus raster on date-selection.
+        # Lazy-materialize pending Copernicus raster on date-selection (off-loop).
         if job.result.get("raster_pending") and not job.result.get("raster_path"):
-            from app.services.copernicus_raster import ensure_copernicus_raster
-            ensure_copernicus_raster(db, job)
+            from app.services.copernicus_raster import materialize_if_pending
+            await materialize_if_pending(db, job)
 
         # Re-read raster_path after potential materialization.
         raster_path = job.result.get("raster_path")
@@ -1021,6 +1021,7 @@ async def get_entity_results(
                 "pixel_count": stats.get("pixel_count"),
             },
             "raster_path": raster_path,
+            "is_composite": job.result.get("is_composite", False),
             "created_at": job.created_at.isoformat() if job.created_at else None,
             "scene_id": job.result.get("scene_id"),
             "sensing_date": job.result.get("sensing_date"),

@@ -2,7 +2,11 @@
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from app.services.copernicus_raster import ensure_copernicus_raster, _dynamic_res
+from app.services.copernicus_raster import (
+    ensure_copernicus_raster,
+    materialize_if_pending,
+    _dynamic_res,
+)
 
 
 def _job(raster_path=None, pending=True):
@@ -63,3 +67,45 @@ def test_ensure_returns_none_on_sh_failure_keeps_pending():
         assert ensure_copernicus_raster(db, j) is None
     assert j.result["raster_pending"] is True
     assert j.result["raster_path"] is None
+
+
+@pytest.mark.asyncio
+async def test_materialize_if_pending_runs_off_event_loop():
+    """Regression (the #23 production bug): ensure_copernicus_raster is sync and
+    internally calls asyncio.run() for the SH round-trip. It MUST be offloaded via
+    materialize_if_pending -> asyncio.to_thread so it does not raise
+    'asyncio.run() cannot be called from a running event loop' (which the broker
+    swallowed as a silent 'materialization failure', leaving raster_pending forever).
+
+    This drives the REAL ensure_copernicus_raster from inside pytest-asyncio's
+    running loop, mocking only the network boundary + the MinIO upload. If someone
+    reverts the to_thread offload, ensure runs on the loop thread, asyncio.run
+    raises, the except swallows it -> raster_path stays None -> this test FAILS.
+    """
+    db = MagicMock()
+    db.refresh.side_effect = lambda o: None
+    job = _job(raster_path=None, pending=True)
+
+    with patch("app.services.copernicus_raster._resolve_credentials",
+               return_value=("id", "sec")), \
+         patch("app.services.sentinel_hub_client.SentinelHubClient.process_raster",
+               new_callable=AsyncMock, return_value=b"II*\x00fake-tiff"), \
+         patch("app.services.copernicus_raster._upload") as up:
+        # cog_translate on the fake bytes fails internally -> falls back to raw bytes.
+        path = await materialize_if_pending(db, job)
+
+    assert path is not None and path.endswith("NDVI.tif")
+    assert job.result["raster_path"] == path
+    assert job.result["raster_pending"] is False
+    up.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_materialize_if_pending_noop_when_not_pending():
+    """Already-materialized job: return the path, never touch the network/thread."""
+    db = MagicMock()
+    job = _job(raster_path="montiko/entities/p1/copernicus/2026-07-20/NDVI.tif", pending=False)
+    with patch("app.services.copernicus_raster.ensure_copernicus_raster") as ensure:
+        path = await materialize_if_pending(db, job)
+    assert path == job.result["raster_path"]
+    ensure.assert_not_called()

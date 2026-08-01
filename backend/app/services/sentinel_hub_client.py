@@ -175,8 +175,19 @@ class SentinelHubClient:
         date_str: str,
         resx: float,
         resy: float,
+        window_days: int = 2,
     ) -> bytes:
-        """Sentinel Hub Process API → single-band FLOAT32 GeoTIFF for a geometry+date."""
+        """Sentinel Hub Process API → single-band FLOAT32 GeoTIFF for a geometry+date.
+
+        `date_str` is the window-midpoint sensing date. Sentinel-2's ~5-day
+        revisit means the exact calendar day usually has NO acquisition (an
+        all-NaN raster), so we search a +/- ``window_days`` window — matching the
+        Statistical API's 5-day aggregation — and SIMPLE/leastCC mosaics the
+        least-cloudy scene in it.
+        """
+        d = date.fromisoformat(date_str)
+        d_from = (d - timedelta(days=window_days)).isoformat()
+        d_to = (d + timedelta(days=window_days)).isoformat()
         headers = await self._auth_headers()
         headers["Content-Type"] = "application/json"
         headers["Accept"] = "image/tiff"
@@ -190,8 +201,8 @@ class SentinelHubClient:
                     "type": "sentinel-2-l2a",
                     "dataFilter": {
                         "timeRange": {
-                            "from": f"{date_str}T00:00:00Z",
-                            "to": f"{date_str}T23:59:59Z",
+                            "from": f"{d_from}T00:00:00Z",
+                            "to": f"{d_to}T23:59:59Z",
                         },
                         "mosaickingOrder": "leastCC",
                     },
