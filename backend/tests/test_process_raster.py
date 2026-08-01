@@ -40,7 +40,8 @@ async def test_process_raster_posts_tiff_request_and_returns_bytes():
     # geometry bounds + single-date time range
     assert body["input"]["bounds"]["geometry"] == GEOM
     df = body["input"]["data"][0]["dataFilter"]["timeRange"]
-    assert df["from"].startswith("2026-07-20") and df["to"].startswith("2026-07-20")
+    # single date is expanded to a +/-2d window (Sentinel-2 revisit) that brackets it
+    assert df["from"].startswith("2026-07-18") and df["to"].startswith("2026-07-22")
     # dynamic resolution passed through
     assert body["output"]["resx"] == 0.0001 and body["output"]["resy"] == 0.0001
     assert body["evalscript"] == "//eval//"

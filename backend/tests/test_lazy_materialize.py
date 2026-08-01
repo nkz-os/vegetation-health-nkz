@@ -1,13 +1,19 @@
-"""Tests for lazy raster materialization on tile/bounds/results endpoints."""
+"""Tests for lazy raster materialization on the tile/bounds endpoints.
+
+These drive the REAL `get_tile_bounds` async handler (not a re-implementation)
+so they actually verify the handler routes pending Copernicus jobs through
+`materialize_if_pending` (the off-event-loop offload) before reading the COG.
+"""
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 from app.api import tiles as tiles_mod
+from app.api.tiles import get_tile_bounds
 
 
-def _pending_job():
+def _job(raster_path=None, pending=True):
     j = MagicMock()
     j.id = uuid4()
     j.tenant_id = "montiko"
@@ -15,72 +21,61 @@ def _pending_job():
     j.result = {
         "index_type": "NDVI",
         "sensing_date": "2026-07-05",
-        "raster_path": None,
-        "raster_pending": True,
+        "raster_path": raster_path,
+        "raster_pending": pending,
         "geometry": {"type": "Polygon", "coordinates": []},
     }
     return j
 
 
-def test_get_tile_materializes_pending_then_renders():
-    """get_tile should call ensure_copernicus_raster when raster_pending."""
-    called = {}
-
-    def _ensure(db, job):
-        job.result["raster_path"] = "montiko/.../NDVI.tif"
-        job.result["raster_pending"] = False
-        called["materialized"] = True
-        return job.result["raster_path"]
-
-    # Verify the import/module-level patching path
-    with patch.object(tiles_mod, "ensure_copernicus_raster", _ensure):
-        # Simulate the logic inline (integration test for the code path)
-        j = _pending_job()
-        assert j.result["raster_pending"] is True
-        assert j.result["raster_path"] is None
-
-        # This is the code we'll inject into get_tile/get_tile_bounds
-        if j.result and j.result.get("raster_pending") and not j.result.get("raster_path"):
-            tiles_mod.ensure_copernicus_raster(MagicMock(), j)
-
-        assert called.get("materialized") is True
-        assert j.result["raster_path"] == "montiko/.../NDVI.tif"
-        assert j.result["raster_pending"] is False
+def _db_returning(job):
+    db = MagicMock()
+    db.query.return_value.filter.return_value.first.return_value = job
+    return db
 
 
-def test_get_tile_skips_when_already_materialized():
-    """No call to ensure_copernicus_raster when raster_path already set."""
-    called = False
+@pytest.mark.asyncio
+async def test_bounds_materializes_pending_via_offload_then_reads():
+    job = _job(raster_path=None, pending=True)
+    db = _db_returning(job)
 
-    def _ensure(db, job):
-        nonlocal called
-        called = True
-        return job.result["raster_path"]
-
-    with patch.object(tiles_mod, "ensure_copernicus_raster", _ensure):
-        j = _pending_job()
-        j.result["raster_path"] = "already/there.tif"
+    async def _materialize(db_, j):
+        j.result["raster_path"] = "montiko/entities/p1/copernicus/2026-07-05/NDVI.tif"
         j.result["raster_pending"] = False
+        return j.result["raster_path"]
 
-        if j.result and j.result.get("raster_pending") and not j.result.get("raster_path"):
-            tiles_mod.ensure_copernicus_raster(MagicMock(), j)
+    with patch.object(tiles_mod, "materialize_if_pending", side_effect=_materialize) as mat, \
+         patch.object(tiles_mod, "_get_wgs84_bounds", return_value={"bounds": [-2.08, 42.63, -2.07, 42.64]}) as gb:
+        out = await get_tile_bounds(str(job.id), db=db)
 
-        assert called is False
+    mat.assert_awaited_once()                       # went through the offload wrapper
+    gb.assert_called_once()
+    assert gb.call_args.args[0].endswith("NDVI.tif")  # read the freshly-materialized COG
+    assert out["bounds"] == [-2.08, 42.63, -2.07, 42.64]
 
 
-def test_get_tile_skips_when_not_pending():
-    """No call when raster_pending is not set."""
-    called = False
+@pytest.mark.asyncio
+async def test_bounds_skips_materialize_when_already_present():
+    job = _job(raster_path="already/there.tif", pending=False)
+    db = _db_returning(job)
 
-    def _ensure(db, job):
-        nonlocal called
-        called = True
+    with patch.object(tiles_mod, "materialize_if_pending", new_callable=AsyncMock) as mat, \
+         patch.object(tiles_mod, "_get_wgs84_bounds", return_value={"bounds": [0, 0, 1, 1]}):
+        out = await get_tile_bounds(str(job.id), db=db)
 
-    with patch.object(tiles_mod, "ensure_copernicus_raster", _ensure):
-        j = _pending_job()
-        j.result["raster_pending"] = False
+    mat.assert_not_awaited()
+    assert out["bounds"] == [0, 0, 1, 1]
 
-        if j.result and j.result.get("raster_pending") and not j.result.get("raster_path"):
-            tiles_mod.ensure_copernicus_raster(MagicMock(), j)
 
-        assert called is False
+@pytest.mark.asyncio
+async def test_bounds_404_when_no_raster_and_not_pending():
+    from fastapi import HTTPException
+    job = _job(raster_path=None, pending=False)
+    db = _db_returning(job)
+
+    with patch.object(tiles_mod, "materialize_if_pending", new_callable=AsyncMock) as mat:
+        with pytest.raises(HTTPException) as ei:
+            await get_tile_bounds(str(job.id), db=db)
+
+    mat.assert_not_awaited()
+    assert ei.value.status_code == 404

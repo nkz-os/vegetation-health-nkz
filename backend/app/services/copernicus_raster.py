@@ -87,6 +87,26 @@ def _upload(cog_bytes: bytes, bucket: str, remote_path: str):
         storage.upload_file(tmp.name, remote_path, bucket)
 
 
+async def materialize_if_pending(db, job) -> "str | None":
+    """Materialize a pending Copernicus raster OFF the event-loop thread.
+
+    `ensure_copernicus_raster` is SYNCHRONOUS and internally runs a blocking
+    Sentinel Hub round-trip via `asyncio.run(...)` (plus COG conversion + MinIO
+    upload). Calling it directly from a FastAPI async handler raises
+    ``RuntimeError: asyncio.run() cannot be called from a running event loop``
+    (silently swallowed as a "materialization failure") AND would stall the loop
+    for the ~5-15 s SH call. Async handlers MUST call THIS wrapper, which offloads
+    to a worker thread — matching the codebase convention documented in
+    `app/engines/selector.py` (`asyncio.to_thread` for blocking sync calls).
+    """
+    result = job.result or {}
+    if result.get("raster_path"):
+        return result["raster_path"]
+    if not result.get("raster_pending"):
+        return None
+    return await asyncio.to_thread(ensure_copernicus_raster, db, job)
+
+
 def ensure_copernicus_raster(db, job) -> str | None:
     result = job.result or {}
     if result.get("raster_path"):
