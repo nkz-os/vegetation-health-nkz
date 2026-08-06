@@ -11,7 +11,6 @@ import logging
 from app.database import get_db_with_tenant
 from app.middleware.auth import require_auth
 from app.models import VegetationScene, VegetationIndexCache, VegetationJob, VegetationCropSeason
-from app.services.fiware_integration import FIWAREClient
 from nkz_platform_sdk import OrionClient
 
 router = APIRouter(prefix="/api/vegetation/entities", tags=["entities"])
@@ -39,24 +38,26 @@ async def _resolve_entity_name(entity_id: str, tenant_id: str) -> Optional[str]:
 async def create_roi(request: dict, current_user: dict = Depends(require_auth)):
     """Crea una Management Zone (ROI) en Orion-LD."""
     try:
-        cb_url = os.getenv("FIWARE_CONTEXT_BROKER_URL", "http://orion-ld-service:1026")
-        client = FIWAREClient(cb_url, current_user['tenant_id'])
-        
-        entity_id = f"urn:ngsi-ld:AgriParcel:{uuid4()}"
-        entity = {
-            "id": entity_id,
-            "type": "AgriParcel",
-            "name": {"type": "Property", "value": request.get("name")},
-            "location": {"type": "GeoProperty", "value": request.get("geometry")},
-            "category": {"type": "Property", "value": ["managementZone"]},
-            "dateCreated": {"type": "Property", "value": datetime.now().isoformat()}
-        }
-        
-        if request.get("parent_id"):
-            entity["hasParent"] = {"type": "Relationship", "object": request.get("parent_id")}
+        tenant_id = current_user['tenant_id']
+        orion = OrionClient(tenant_id)
+        try:
+            entity_id = f"urn:ngsi-ld:AgriParcel:{uuid4()}"
+            entity = {
+                "id": entity_id,
+                "type": "AgriParcel",
+                "name": {"type": "Property", "value": request.get("name")},
+                "location": {"type": "GeoProperty", "value": request.get("geometry")},
+                "category": {"type": "Property", "value": ["managementZone"]},
+                "dateCreated": {"type": "Property", "value": datetime.now().isoformat()}
+            }
             
-        client.create_entity(entity)
-        return {"id": entity_id, "message": "ROI created successfully"}
+            if request.get("parent_id"):
+                entity["hasParent"] = {"type": "Relationship", "object": request.get("parent_id")}
+                
+            await orion.create_entity(entity)
+            return {"id": entity_id, "message": "ROI created successfully"}
+        finally:
+            await orion.close()
     except Exception as e:
         logger.error(f"ROI creation failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
