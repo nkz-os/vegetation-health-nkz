@@ -57,7 +57,7 @@ const StatusPill: React.FC<{ status: string }> = ({ status }) => {
     completed: { cls: 'bg-emerald-100 text-emerald-700', label: t('parcelDetail.statusCompleted', 'Completed') },
     running: { cls: 'bg-blue-100 text-blue-700', label: t('parcelDetail.statusRunning', 'Running') },
     pending: { cls: 'bg-slate-100 text-slate-600', label: t('parcelDetail.statusPending', 'Pending') },
-    failed: { cls: 'bg-rose-100 text-rose-700', label: t('parcelDetail.statusFailed', 'Failed') },
+    failed: { cls: 'bg-nkz-danger-soft text-nkz-danger-strong', label: t('parcelDetail.statusFailed', 'Failed') },
     skipped: { cls: 'bg-amber-100 text-amber-800', label: t('parcelDetail.statusSkipped', 'Skipped (clouds)') },
     cancelled: { cls: 'bg-slate-100 text-slate-500', label: t('parcelDetail.statusCancelled', 'Cancelled') },
   };
@@ -146,25 +146,25 @@ const JobRow: React.FC<JobRowProps> = ({ job, onDelete, bulkMode, isSelected, on
           )}
         </div>
         {job.error_message && (
-          <p className="text-[11px] text-rose-600 mt-1 truncate">{job.error_message}</p>
+          <p className="text-[11px] text-nkz-danger-strong mt-1 truncate">{job.error_message}</p>
         )}
         {confirming && (
-          <div className="mt-2 flex items-center gap-2 bg-rose-50 border border-rose-200 rounded-lg px-2 py-1.5 text-[11px]">
-            <span className="text-rose-700">
+          <div className="mt-2 flex items-center gap-2 bg-nkz-danger-soft border border-nkz-danger-soft rounded-lg px-2 py-1.5 text-[11px]">
+            <span className="text-nkz-danger-strong">
               {t('parcelDetail.deleteConfirm', 'Delete this job and its raster?')}
               {cascadeWarning && <> {cascadeWarning}</>}
             </span>
             <button
               onClick={handleDelete}
               disabled={busy}
-              className="px-2 py-0.5 rounded bg-rose-600 text-white font-semibold disabled:opacity-50"
+              className="px-2 py-0.5 rounded bg-nkz-danger text-white font-semibold disabled:opacity-50"
             >
               {busy ? t('parcelDetail.deleting', 'Deleting…') : t('parcelDetail.deleteYes', 'Delete')}
             </button>
             <button
               onClick={() => setConfirming(false)}
               disabled={busy}
-              className="px-2 py-0.5 rounded text-rose-700 hover:bg-rose-100"
+              className="px-2 py-0.5 rounded text-nkz-danger-strong hover:bg-nkz-danger-soft"
             >
               {t('parcelDetail.deleteCancel', 'Cancel')}
             </button>
@@ -179,7 +179,7 @@ const JobRow: React.FC<JobRowProps> = ({ job, onDelete, bulkMode, isSelected, on
         <button
           onClick={() => setConfirming(true)}
           disabled={confirming || busy}
-          className="p-1.5 text-slate-300 hover:text-rose-600 hover:bg-rose-50 rounded transition-colors disabled:opacity-30"
+          className="p-1.5 text-slate-300 hover:text-nkz-danger-strong hover:bg-nkz-danger-soft rounded transition-colors disabled:opacity-30"
           title={t('parcelDetail.deleteTooltip', 'Delete this job (irreversible)')}
           aria-label={t('parcelDetail.deleteTooltip', 'Delete this job (irreversible)')}
         >
@@ -324,7 +324,7 @@ const AnalyzeInSeasonForm: React.FC<AnalyzeFormProps> = ({ entityId, seasonId, o
 
 
       {error && (
-        <p className="text-xs text-rose-600 bg-rose-50 border border-rose-200 rounded p-2">{error}</p>
+        <p className="text-xs text-nkz-danger-strong bg-nkz-danger-soft border border-nkz-danger-soft rounded p-2">{error}</p>
       )}
       {success && (
         <p className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded p-2">
@@ -519,7 +519,7 @@ const NewSeasonForm: React.FC<NewSeasonFormProps> = ({ entityId, onCreated }) =>
       )}
 
       {error && (
-        <p className="text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded p-2">{error}</p>
+        <p className="text-xs text-nkz-danger-strong bg-nkz-danger-soft border border-nkz-danger-soft rounded p-2">{error}</p>
       )}
 
       <div className="flex items-center gap-2 justify-end">
@@ -803,7 +803,7 @@ const AdvancedSection: React.FC<AdvancedSectionProps> = ({ entityId, defaultInde
                 className={`text-xs mt-2 px-2 py-1 rounded ${
                   vraMsg.type === 'ok'
                     ? 'text-emerald-700 bg-emerald-50 border border-emerald-200'
-                    : 'text-rose-700 bg-rose-50 border border-rose-200'
+                    : 'text-nkz-danger-strong bg-nkz-danger-soft border border-nkz-danger-soft'
                 }`}
               >
                 {vraMsg.text}
@@ -846,7 +846,7 @@ const AdvancedSection: React.FC<AdvancedSectionProps> = ({ entityId, defaultInde
                     )}
                     <button
                       onClick={() => handleDeleteFormula(f.id)}
-                      className="p-1 text-slate-400 hover:text-rose-600 rounded"
+                      className="p-1 text-slate-400 hover:text-nkz-danger-strong rounded"
                       title={t('parcelDetail.deleteFormula', 'Delete formula')}
                       aria-label={t('parcelDetail.deleteFormula', 'Delete formula')}
                     >
@@ -887,7 +887,7 @@ const AdvancedSection: React.FC<AdvancedSectionProps> = ({ entityId, defaultInde
                 className={`text-xs mt-2 px-2 py-1 rounded ${
                   formulaMsg.type === 'ok'
                     ? 'text-emerald-700 bg-emerald-50 border border-emerald-200'
-                    : 'text-rose-700 bg-rose-50 border border-rose-200'
+                    : 'text-nkz-danger-strong bg-nkz-danger-soft border border-nkz-danger-soft'
                 }`}
               >
                 {formulaMsg.text}
@@ -921,7 +921,7 @@ const AdvancedSection: React.FC<AdvancedSectionProps> = ({ entityId, defaultInde
               ))}
             </div>
             {exportError && (
-              <p className="text-xs mt-2 px-2 py-1 rounded text-rose-700 bg-rose-50 border border-rose-200">
+              <p className="text-xs mt-2 px-2 py-1 rounded text-nkz-danger-strong bg-nkz-danger-soft border border-nkz-danger-soft">
                 {exportError}
               </p>
             )}
@@ -1028,7 +1028,7 @@ const SeasonBlock: React.FC<SeasonBlockProps> = ({
             <button
               onClick={(e) => { e.stopPropagation(); setConfirmDeleteSeason(true); }}
               disabled={deletingSeason}
-              className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors disabled:opacity-50"
+              className="p-1.5 text-slate-400 hover:text-nkz-danger-strong hover:bg-nkz-danger-soft rounded-lg transition-colors disabled:opacity-50"
               title={t('parcelDetail.deleteSeason', 'Delete season')}
               aria-label={t('parcelDetail.deleteSeason', 'Delete season')}
             >
@@ -1038,21 +1038,21 @@ const SeasonBlock: React.FC<SeasonBlockProps> = ({
         </div>
       </button>
       {confirmDeleteSeason && (
-        <div className="mx-4 mb-3 flex items-center gap-2 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 text-[11px]">
-          <span className="text-rose-700 flex-1">
+        <div className="mx-4 mb-3 flex items-center gap-2 bg-nkz-danger-soft border border-nkz-danger-soft rounded-lg px-3 py-2 text-[11px]">
+          <span className="text-nkz-danger-strong flex-1">
             {t('parcelDetail.deleteSeasonConfirm', 'Delete this season and all its jobs, rasters, and entities? This cannot be undone.')}
           </span>
           <button
             onClick={handleDeleteSeason}
             disabled={deletingSeason}
-            className="px-2.5 py-1 rounded bg-rose-600 text-white font-semibold disabled:opacity-50"
+            className="px-2.5 py-1 rounded bg-nkz-danger text-white font-semibold disabled:opacity-50"
           >
             {deletingSeason ? t('parcelDetail.deleting', 'Deleting…') : t('parcelDetail.deleteSeasonYes', 'Delete all')}
           </button>
           <button
             onClick={() => setConfirmDeleteSeason(false)}
             disabled={deletingSeason}
-            className="px-2.5 py-1 rounded text-rose-700 hover:bg-rose-100"
+            className="px-2.5 py-1 rounded text-nkz-danger-strong hover:bg-nkz-danger-soft"
           >
             {t('parcelDetail.cancel', 'Cancel')}
           </button>
@@ -1299,7 +1299,7 @@ export const ParcelDetail: React.FC = () => {
   if (error) {
     return (
       <div className="p-8 max-w-3xl mx-auto">
-        <div className="bg-rose-50 border border-rose-200 rounded-xl p-4 text-sm text-rose-800">
+        <div className="bg-nkz-danger-soft border border-nkz-danger-soft rounded-xl p-4 text-sm text-nkz-danger-strong">
           <div className="flex items-center gap-2 font-semibold">
             <AlertTriangle className="w-4 h-4" />
             {t('parcelDetail.errorTitle', 'Could not load parcel')}
@@ -1327,7 +1327,7 @@ export const ParcelDetail: React.FC = () => {
           aria-live="polite"
           className={`flex items-start gap-2 rounded-xl border px-3 py-2 text-sm ${
             flash.kind === 'error'
-              ? 'bg-rose-50 border-rose-200 text-rose-800'
+              ? 'bg-nkz-danger-soft border-nkz-danger-soft text-nkz-danger-strong'
               : 'bg-blue-50 border-blue-200 text-blue-800'
           }`}
         >
@@ -1354,7 +1354,7 @@ export const ParcelDetail: React.FC = () => {
             <span
               className={`inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full border ${
                 quota.used >= quota.limit
-                  ? 'text-rose-700 bg-rose-50 border-rose-200'
+                  ? 'text-nkz-danger-strong bg-nkz-danger-soft border-nkz-danger-soft'
                   : quota.used >= quota.limit * 0.8
                     ? 'text-amber-700 bg-amber-50 border-amber-200'
                     : 'text-slate-600 bg-slate-50 border-slate-200'
@@ -1527,7 +1527,11 @@ export const ParcelDetail: React.FC = () => {
       </div>
 
       {/* Bulk delete action bar */}
-      {bulkMode && selectedJobIds.size > 0 && (
+      {/* Shown whenever bulk mode is on, not only once something is selected:
+          "Select all" lives inside this bar, so gating it on a non-empty
+          selection meant you had to tick rows by hand before you could reach
+          the control that ticks them all. */}
+      {bulkMode && (
         <div className="sticky bottom-4 z-10 flex items-center justify-between gap-3 bg-white border border-slate-300 rounded-xl px-4 py-3 shadow-lg max-w-4xl mx-auto">
           <div className="flex items-center gap-3 text-sm">
             <button
@@ -1542,8 +1546,8 @@ export const ParcelDetail: React.FC = () => {
           </div>
           <button
             onClick={handleBulkDelete}
-            disabled={bulkDeleting}
-            className="inline-flex items-center gap-1.5 text-xs px-4 py-2 rounded-lg bg-rose-600 text-white font-semibold hover:bg-rose-700 disabled:opacity-50 transition-colors"
+            disabled={bulkDeleting || selectedJobIds.size === 0}
+            className="inline-flex items-center gap-1.5 text-xs px-4 py-2 rounded-lg bg-nkz-danger text-white font-semibold hover:bg-nkz-danger-strong disabled:opacity-50 transition-colors"
           >
             {bulkDeleting ? (
               <Loader2 className="w-3.5 h-3.5 animate-spin" />
