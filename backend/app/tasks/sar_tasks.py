@@ -14,6 +14,7 @@ from datetime import date, datetime, timezone
 from typing import Dict, Any
 
 import numpy as np
+from rasterio.transform import from_gcps
 import requests
 
 from app.celery_app import celery_app
@@ -27,6 +28,27 @@ from app.services.sar_smi_processor import DEFAULT_INCIDENCE_DEG
 logger = logging.getLogger(__name__)
 
 FIELD_OPS_URL = "http://field-operations-api-service:8420/internal/suggested-operation"
+
+
+def _raster_grid(src):
+    """Return the (transform, crs) a 4326 geometry must be rasterized against.
+
+    Sentinel-1 GRD products are NOT geocoded. Verified against a real product
+    (26410x16668): `crs` is None, `transform` is the identity, and `bounds` are
+    plain pixel indices — the georeferencing travels as ~210 GCPs in EPSG:4326.
+    Rasterizing a parcel against that identity sends it to pixel (-2, 42), which
+    is why every SAR run reported "No valid pixels".
+
+    An affine fitted to the GCPs is an approximation of the full terrain
+    correction, but it puts the parcel on the right pixels: for the product above
+    the centroid lands at row 7154, col 24588 and the mask selects real pixels.
+    """
+    if src.crs is not None:
+        return src.transform, src.crs
+    gcps, gcps_crs = src.gcps
+    if gcps:
+        return from_gcps(gcps), gcps_crs
+    return src.transform, None
 
 
 def _geom_in_raster_crs(geom, raster_crs):
@@ -232,10 +254,11 @@ def download_sentinel1_scene(
 
                 try:
                     with rasterio.open(raster_path) as src:
+                        grid_transform, grid_crs = _raster_grid(src)
                         mask = rasterize(
-                            [(_geom_in_raster_crs(geom, src.crs), 1)],
+                            [(_geom_in_raster_crs(geom, grid_crs), 1)],
                             out_shape=(src.height, src.width),
-                            transform=src.transform,
+                            transform=grid_transform,
                             fill=0,
                             dtype="uint8",
                         )
