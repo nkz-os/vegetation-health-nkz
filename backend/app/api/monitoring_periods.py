@@ -266,12 +266,14 @@ async def delete_monitoring_period(
             job.deleted_at = datetime.now(timezone.utc)
             deleted_jobs += 1
 
-            # Delete EOProduct from Orion-LD
-            if job.sensing_date:
+            # Remove only this job's index: the EOProduct is shared by every
+            # index of the same (parcel, sensingDate).
+            job_index = (job.parameters or {}).get("index_type") or (job.result or {}).get("index_type")
+            if job.sensing_date and job_index:
                 sensing_str = job.sensing_date.isoformat() if hasattr(job.sensing_date, 'isoformat') else str(job.sensing_date)
-                from app.services.fiware_integration import _entity_id_for_acquisition
+                from app.services.fiware_integration import _entity_id_for_acquisition, delete_eo_index
                 eo_id = _entity_id_for_acquisition(tenant_id, entity_id, sensing_str)
-                delete_eo_product(tenant_id, eo_id)
+                delete_eo_index(tenant_id, eo_id, job_index)
 
             # Delete raster from MinIO
             raster_url = (job.parameters or {}).get("raster_url", "")
