@@ -119,7 +119,7 @@ export const CampaignList: React.FC<{
                   }
                 }}
                 disabled={busy}
-                className="inline-flex items-center gap-1 text-[11px] px-2.5 py-1.5 rounded-lg border border-rose-200 bg-white text-rose-600 hover:bg-rose-50 disabled:opacity-50 transition-colors"
+                className="inline-flex items-center gap-1 text-[11px] px-2.5 py-1.5 rounded-lg border border-nkz-danger-soft bg-white text-nkz-danger-strong hover:bg-nkz-danger-soft disabled:opacity-50 transition-colors"
                 title={t('campaignList.deleteTooltip', 'Delete campaign and all associated data')}
               >
                 {deleting === c.id ? (
