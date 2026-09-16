@@ -112,9 +112,9 @@ async def _resolve_parcel_meta(entity_id: str, tenant_id: str) -> Dict[str, Any]
     out: Dict[str, Any] = {"entity_id": entity_id, "name": None, "location": None}
     try:
         orion = SyncOrionClient(tenant_id)
-        resp = orion.get(f"/ngsi-ld/v1/entities/{entity_id}")
-        if resp.status_code == 200:
-            ent = resp.json()
+        from app.services.fiware_integration import orion_get_entity
+        ent = orion_get_entity(orion, entity_id)
+        if ent is not None:
             # name may live under any of several keys depending on context expansion
             for key in ("name", "https://schema.org/name"):
                 val = ent.get(key)
@@ -314,17 +314,11 @@ async def _delete_orion_entity_if_orphan(
     veg_entity_id = f"urn:ngsi-ld:VegetationIndex:{tenant_id}:{parcel_short}"
     try:
         orion = SyncOrionClient(tenant_id)
-        resp = orion.delete(f"/ngsi-ld/v1/entities/{veg_entity_id}")
-        if resp.status_code in (204, 404):
-            logger.info(
-                "Orion-LD VegetationIndex %s: %s (parcel cleaned)",
-                veg_entity_id, resp.status_code,
-            )
+        from app.services.fiware_integration import orion_delete_entity
+        if orion_delete_entity(orion, veg_entity_id):
+            logger.info("Orion-LD VegetationIndex %s removed (parcel cleaned)", veg_entity_id)
         else:
-            logger.warning(
-                "Orion-LD entity DELETE returned %s for %s: %s",
-                resp.status_code, veg_entity_id, resp.text[:200],
-            )
+            logger.warning("Orion-LD entity DELETE failed for %s", veg_entity_id)
     except Exception as exc:
         logger.warning("Orion-LD DELETE %s failed: %s", veg_entity_id, exc)
 

@@ -389,13 +389,16 @@ def download_sentinel1_scene(
 
                 # Query previous EOProduct for ΔVV comparison
                 orion = SyncOrionClient(tenant_id)
-                prev_resp = orion.get(
-                    f"/ngsi-ld/v1/entities?type=EOProduct&q="
-                    f'hasAgriParcel=="{entity_id}"|refAgriParcel=="{entity_id}"'
-                    f';productType=="GRD"'
-                    f"&limit=2&options=keyValues"
-                )
-                prev_entities = prev_resp.json() if prev_resp.status_code == 200 else []
+                try:
+                    prev_entities = orion.query_entities(
+                        type="EOProduct",
+                        q=f'hasAgriParcel=="{entity_id}"|refAgriParcel=="{entity_id}";productType=="GRD"',
+                        limit=2,
+                        options="keyValues",
+                    )
+                except Exception as exc:
+                    logger.warning("Previous EOProduct lookup failed: %s", exc)
+                    prev_entities = []
                 # Pick the one before current (if any)
                 prev_vv = None
                 prev_ndvi = None
@@ -408,12 +411,16 @@ def download_sentinel1_scene(
                         break
 
                 # NDVI check: latest EOProduct with ndvi
-                ndvi_resp = orion.get(
-                    f"/ngsi-ld/v1/entities?type=EOProduct&q="
-                    f'hasAgriParcel=="{entity_id}"|refAgriParcel=="{entity_id}"'
-                    f"&limit=1&options=keyValues"
-                )
-                ndvi_entities = ndvi_resp.json() if ndvi_resp.status_code == 200 else []
+                try:
+                    ndvi_entities = orion.query_entities(
+                        type="EOProduct",
+                        q=f'hasAgriParcel=="{entity_id}"|refAgriParcel=="{entity_id}"',
+                        limit=1,
+                        options="keyValues",
+                    )
+                except Exception as exc:
+                    logger.warning("NDVI lookup failed: %s", exc)
+                    ndvi_entities = []
                 ndvi_current = None
                 if isinstance(ndvi_entities, list) and ndvi_entities:
                     for ne in ndvi_entities:
