@@ -269,8 +269,10 @@ async def delete_monitoring_period(
             # Remove only this job's index: the EOProduct is shared by every
             # index of the same (parcel, sensingDate).
             job_index = (job.parameters or {}).get("index_type") or (job.result or {}).get("index_type")
-            if job.sensing_date and job_index:
-                sensing_str = job.sensing_date.isoformat() if hasattr(job.sensing_date, 'isoformat') else str(job.sensing_date)
+            # VegetationJob has no sensing_date column — the acquisition date is
+            # recorded in its result payload.
+            sensing_str = (job.result or {}).get("sensing_date")
+            if sensing_str and job_index:
                 from app.services.fiware_integration import _entity_id_for_acquisition, delete_eo_index
                 eo_id = _entity_id_for_acquisition(tenant_id, entity_id, sensing_str)
                 delete_eo_index(tenant_id, eo_id, job_index)

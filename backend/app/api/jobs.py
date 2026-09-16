@@ -270,10 +270,11 @@ async def bulk_delete_jobs(
             # every index of the same (parcel, sensingDate), so it must not be
             # deleted outright — that erased the other indices for that date.
             job_index = (job.parameters or {}).get("index_type") or (job.result or {}).get("index_type")
-            if job.sensing_date and job_index:
+            # VegetationJob has no sensing_date column — it lives in the result.
+            sensing_str = (job.result or {}).get("sensing_date")
+            if sensing_str and job_index:
                 from app.services.fiware_integration import delete_eo_index, _entity_id_for_acquisition
                 try:
-                    sensing_str = job.sensing_date.isoformat() if hasattr(job.sensing_date, 'isoformat') else str(job.sensing_date)
                     eo_id = _entity_id_for_acquisition(tenant_id, job.entity_id, sensing_str)
                     delete_eo_index(tenant_id, eo_id, job_index)
                 except Exception as e:
