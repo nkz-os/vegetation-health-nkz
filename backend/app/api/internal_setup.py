@@ -35,11 +35,11 @@ async def _fetch_parcel_location(
     try:
         from nkz_platform_sdk import SyncOrionClient
         orion = SyncOrionClient(tenant_id)
-        resp = orion.get(f"/ngsi-ld/v1/entities/{parcel_id}")
-        if resp.status_code != 200:
-            logger.warning("Parcel %s not found in Orion (%d)", parcel_id, resp.status_code)
+        from app.services.fiware_integration import orion_get_entity
+        entity = orion_get_entity(orion, parcel_id)
+        if entity is None:
+            logger.warning("Parcel %s not found in Orion", parcel_id)
             return None, None, None
-        entity = resp.json()
         location = entity.get("location")
         if isinstance(location, dict):
             location = location.get("value") or location

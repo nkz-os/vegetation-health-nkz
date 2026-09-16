@@ -362,50 +362,69 @@ def delete_eo_index(tenant_id: str, entity_id: str, index_type: str) -> bool:
     """
     orion = SyncOrionClient(tenant_id)
     index_key = index_type.lower()
-    try:
-        response = orion.delete(f"/ngsi-ld/v1/entities/{entity_id}/attrs/{index_key}")
-        if response.status_code not in (204, 200, 404):
-            logger.warning(
-                "Failed to delete index %s from EOProduct %s: %s",
-                index_key, entity_id, response.status_code,
-            )
-            return False
+    entity = orion_get_entity(orion, entity_id)
+    if entity is None:
+        return True  # nothing to clean up
 
-        read = orion.get(f"/ngsi-ld/v1/entities/{entity_id}")
-        if read.status_code == 404:
-            return True  # already gone
-        if read.status_code != 200:
-            logger.warning(
-                "EOProduct %s not readable after removing %s (%s) — keeping the entity",
-                entity_id, index_key, read.status_code,
-            )
-            return True
-
-        remaining = [k for k in (read.json() or {}) if k not in _ACQUISITION_ATTRS]
-        if remaining:
-            logger.info(
-                "Removed %s from EOProduct %s; %d index(es) remain", index_key, entity_id, len(remaining)
-            )
-            return True
+    remaining = [
+        k for k in entity
+        if k not in _ACQUISITION_ATTRS and k.lower() != index_key
+    ]
+    if not remaining:
         return delete_eo_product(tenant_id, entity_id)
-    except Exception as e:
-        logger.error("Error removing index %s from EOProduct %s: %s", index_key, entity_id, e)
+
+    # The entity still holds other indices, so it must survive — but the SDK has
+    # no attribute-level delete (no DELETE /entities/{id}/attrs/{attr}), and its
+    # only upsert is options=update, which merges and cannot remove a key. The
+    # remaining routes are both worse than leaving it: reaching into the SDK's
+    # private httpx session, or delete-then-recreate, which risks losing the very
+    # indices this branch exists to protect if the recreate fails.
+    #
+    # So: leave it, and say so. This is still an improvement — the previous code
+    # called orion.delete()/orion.get(), methods SyncOrionClient does not have,
+    # so it raised AttributeError and silently did nothing at all.
+    logger.warning(
+        "EOProduct %s keeps %s: %d other index(es) present and the SDK cannot "
+        "delete a single attribute. Needs attribute-delete in nkz-platform-sdk.",
+        entity_id, index_key, len(remaining),
+    )
+    return False
+
+
+def orion_get_entity(orion, entity_id: str) -> Optional[dict]:
+    """Fetch an entity, or None if it is missing or the broker refuses.
+
+    The SDK raises on any non-2xx and returns the parsed body on success; call
+    sites used to receive a response object and branch on `.status_code`, which
+    `SyncOrionClient` never had. Twelve of them reached for a plain HTTP verb on
+    the client, a method that does not exist, so every one of those paths raised
+    AttributeError and was swallowed by its own except block.
+    """
+    try:
+        return orion.get_entity(entity_id)
+    except Exception as exc:
+        logger.debug("Orion get %s failed: %s", entity_id, exc)
+        return None
+
+
+def orion_delete_entity(orion, entity_id: str) -> bool:
+    """Delete an entity. Missing is success — the caller wanted it gone."""
+    try:
+        orion.delete_entity(entity_id)
+        return True
+    except Exception as exc:
+        if "404" in str(exc):
+            return True
+        logger.warning("Orion delete %s failed: %s", entity_id, exc)
         return False
 
 
 def delete_eo_product(tenant_id: str, entity_id: str) -> bool:
     """Delete an EOProduct entity from Orion-LD."""
-    orion = SyncOrionClient(tenant_id)
-    try:
-        response = orion.delete(f"/ngsi-ld/v1/entities/{entity_id}")
-        if response.status_code in (204, 200):
-            logger.info("Deleted EOProduct %s", entity_id)
-            return True
-        logger.warning("Failed to delete EOProduct %s: %s", entity_id, response.status_code)
-        return False
-    except Exception as e:
-        logger.error("Error deleting EOProduct %s: %s", entity_id, e)
-        return False
+    if orion_delete_entity(SyncOrionClient(tenant_id), entity_id):
+        logger.info("Deleted EOProduct %s", entity_id)
+        return True
+    return False
 
 
 # ---------------------------------------------------------------------------

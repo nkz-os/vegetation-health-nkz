@@ -31,11 +31,12 @@ def _get_parcel_geometry(tenant_id: str, entity_id: str) -> tuple:
     from nkz_platform_sdk import SyncOrionClient
 
     orion = SyncOrionClient(tenant_id)
-    resp = orion.get(f"/ngsi-ld/v1/entities/{entity_id}?attrs=location")
-    if resp.status_code != 200:
+    # get_entity has no attrs filter; fetching the whole parcel costs a little
+    # more payload and removes a call that never worked.
+    from app.services.fiware_integration import orion_get_entity
+    entity = orion_get_entity(orion, entity_id)
+    if entity is None:
         raise ValueError(f"Parcel {entity_id} not found in Orion-LD")
-
-    entity = resp.json()
     loc = entity.get("location", {})
     geom = loc.get("value") or loc
     if not geom or "coordinates" not in geom:

@@ -60,13 +60,13 @@ async def analyze_sar(
     # Get parcel geometry from Orion-LD
     try:
         orion = SyncOrionClient(tenant_id)
-        resp = orion.get(f"/ngsi-ld/v1/entities/{entity_id}")
-        if resp.status_code != 200:
+        from app.services.fiware_integration import orion_get_entity
+        entity_data = orion_get_entity(orion, entity_id)
+        if entity_data is None:
             raise HTTPException(
                 status_code=404,
                 detail=f"Parcel {entity_id} not found in context broker",
             )
-        entity_data = resp.json()
     except Exception as e:
         raise HTTPException(
             status_code=502,

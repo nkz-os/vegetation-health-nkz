@@ -72,16 +72,12 @@ async def get_history(
 
     try:
         orion = SyncOrionClient(tenant_id)
-        resp = orion.get("/ngsi-ld/v1/entities", params={
-            "type": "AgriParcelRecord",
-            "q": q,
-            "limit": 500,
-            "attrs": f"observedAt,{attr},{index.lower()}Min,{index.lower()}Max,{index.lower()}Std,windowSize,year",
-        })
-        if resp.status_code != 200:
-            raise HTTPException(502, detail=f"Orion-LD query failed: {resp.status_code}")
-
-        records = resp.json()
+        records = orion.query_entities(
+            type="AgriParcelRecord",
+            q=q,
+            limit=500,
+            attrs=f"observedAt,{attr},{index.lower()}Min,{index.lower()}Max,{index.lower()}Std,windowSize,year",
+        )
     except Exception as e:
         raise HTTPException(502, detail=f"Orion-LD unreachable: {e}")
 

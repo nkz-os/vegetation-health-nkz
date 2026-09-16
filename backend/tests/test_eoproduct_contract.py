@@ -182,39 +182,48 @@ def _entity(*index_keys):
     return e
 
 
-def test_delete_eo_index_removes_only_that_index_when_others_remain():
-    orion = MagicMock()
-    orion.delete.return_value = _resp(204)
-    get = MagicMock(); get.status_code = 200; get.json.return_value = _entity("ndre", "evi")
-    orion.get.return_value = get
+def _orion(entity=None, raises=False):
+    """A stub shaped like the real SyncOrionClient: get_entity / delete_entity.
+
+    Mocking `.get`/`.delete` is what let the original version of this code ship —
+    a MagicMock answers to any attribute, so the tests passed while the client had
+    no such methods. Only the names the SDK really exposes are stubbed here.
+    """
+    orion = MagicMock(spec=["get_entity", "delete_entity"])
+    if raises:
+        orion.get_entity.side_effect = RuntimeError("404 not found")
+    else:
+        orion.get_entity.return_value = entity
+    return orion
+
+
+def test_delete_eo_index_keeps_the_entity_while_other_indices_remain():
+    """The SDK cannot delete a single attribute, so the entity is left intact.
+
+    There is no DELETE /entities/{id}/attrs/{attr} in the client and its only
+    upsert merges, so removing one index without touching the others is not
+    expressible. Reaching into the SDK's private session or delete-then-recreate
+    would both risk the indices this branch exists to protect, so it declines and
+    says so. Returns False because the index was not in fact removed.
+    """
+    orion = _orion(_entity("ndvi", "ndre", "evi"))
+    with patch.object(fi, "SyncOrionClient", return_value=orion):
+        assert fi.delete_eo_index("montiko", _EID, "NDVI") is False
+    orion.delete_entity.assert_not_called()
+
+
+def test_delete_eo_index_removes_the_entity_when_it_holds_nothing_else():
+    orion = _orion(_entity("ndvi"))
     with patch.object(fi, "SyncOrionClient", return_value=orion):
         assert fi.delete_eo_index("montiko", _EID, "NDVI") is True
-    paths = [c.args[0] for c in orion.delete.call_args_list]
-    assert paths == [f"/ngsi-ld/v1/entities/{_EID}/attrs/ndvi"]
+    orion.delete_entity.assert_called_once_with(_EID)
 
 
-def test_delete_eo_index_removes_entity_once_no_index_is_left():
-    orion = MagicMock()
-    orion.delete.return_value = _resp(204)
-    get = MagicMock(); get.status_code = 200; get.json.return_value = _entity()
-    orion.get.return_value = get
+def test_delete_eo_index_is_a_no_op_when_the_entity_is_already_gone():
+    orion = _orion(raises=True)
     with patch.object(fi, "SyncOrionClient", return_value=orion):
         assert fi.delete_eo_index("montiko", _EID, "NDVI") is True
-    paths = [c.args[0] for c in orion.delete.call_args_list]
-    assert paths[0] == f"/ngsi-ld/v1/entities/{_EID}/attrs/ndvi"
-    assert paths[-1] == f"/ngsi-ld/v1/entities/{_EID}"
-
-
-def test_delete_eo_index_keeps_entity_when_it_cannot_be_read_back():
-    """A failed read must not be taken as "no indices left"."""
-    orion = MagicMock()
-    orion.delete.return_value = _resp(204)
-    get = MagicMock(); get.status_code = 500; get.json.return_value = {}
-    orion.get.return_value = get
-    with patch.object(fi, "SyncOrionClient", return_value=orion):
-        fi.delete_eo_index("montiko", _EID, "NDVI")
-    paths = [c.args[0] for c in orion.delete.call_args_list]
-    assert f"/ngsi-ld/v1/entities/{_EID}" not in paths
+    orion.delete_entity.assert_not_called()
 
 
 def test_delete_paths_do_not_remove_the_shared_entity_directly():
