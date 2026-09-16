@@ -1,19 +1,26 @@
 """Engine routing — decide which engine serves a given index request.
 
-Copernicus (Sentinel Hub Statistical API) is only used for indices that are
-native at 10 m and carry no tenant custom formula. Red-edge (NDRE) MUST stay
-on the legacy local engine to preserve the Sen2Res 10 m super-resolution —
-Copernicus would serve the coarser 20 m native red-edge band. Any custom
-formula, unknown index, or explicitly local-only index falls to local.
+Copernicus (Sentinel Hub Statistical API) serves every standard index; a tenant
+custom formula or an unknown index still falls to the local engine.
+
+NDRE used to be pinned to local to keep Sen2Res 10 m super-resolution, because
+Copernicus serves the red-edge band at its native 20 m. That split meant the two
+engines picked different scenes, so NDRE and the optical indices never shared a
+sensing date: whenever an NDRE job finished with a newer date, every other layer
+in the viewer went blank on a date it did not have. Owner decision 2026-09-16:
+one engine and aligned dates are worth more than 10 m red-edge.
+
+To put red-edge back on the local engine, move "NDRE" into LOCAL_ONLY — the
+routing itself needs no change.
 
 Pure function, no I/O — safe to call on the request hot path.
 """
 
-# 10 m-native indices that Copernicus can serve at full resolution.
-COPERNICUS_ELIGIBLE = {"NDVI", "EVI", "SAVI", "GNDVI"}
+# Indices Copernicus serves. NDRE is included at its native 20 m (see above).
+COPERNICUS_ELIGIBLE = {"NDVI", "EVI", "SAVI", "GNDVI", "NDRE"}
 
-# Red-edge: 20 m native on Copernicus → keep local for Sen2Res 10 m super-res.
-LOCAL_ONLY = {"NDRE"}
+# Indices forced onto the local engine. Empty by owner decision (2026-09-16).
+LOCAL_ONLY: set[str] = set()
 
 
 def route_index(index_type: str, has_custom_formula: bool) -> str:

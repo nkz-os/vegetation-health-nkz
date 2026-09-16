@@ -58,6 +58,10 @@ export const TimelineWidget: React.FC<TimelineWidgetProps> = ({ entityId }) => {
   // Load timeline from availability API (§12.8.1) — sparse ticks, mean_value for heatmap, local_cloud_pct for tooltips
   // Ref to track if we already auto-selected a date for this entity+index
   const autoSelectedRef = React.useRef<string | null>(null);
+  // Mirrors selectedDate so loadStats can read it without depending on it:
+  // adding it to the deps would refetch the whole timeline on every date click.
+  const selectedDateRef = React.useRef(selectedDate);
+  React.useEffect(() => { selectedDateRef.current = selectedDate; }, [selectedDate]);
 
   const loadStats = useCallback(async () => {
     if (!effectiveEntityId) return;
@@ -100,9 +104,20 @@ export const TimelineWidget: React.FC<TimelineWidgetProps> = ({ entityId }) => {
       mapped.sort((a, b) => a.sensing_date.localeCompare(b.sensing_date));
       setStats(mapped);
 
-      // Auto-select most recent date only once per entity+index
+      // The selected date is shared across indices, but each index has its own
+      // dates: NDRE runs on the local engine and NDVI/EVI/SAVI/GNDVI on
+      // Copernicus, so their timelines rarely overlap. Auto-selecting only once
+      // per index left the shared date on whatever another index had picked, and
+      // this index then rendered "no data for the selected range" on a date it
+      // never had. Re-select whenever the current date is not one of ours.
       const autoKey = `${effectiveEntityId}:${selectedIndex}`;
-      if (autoSelectedRef.current !== autoKey && mapped.length > 0) {
+      const currentIso = selectedDateRef.current
+        ? new Date(selectedDateRef.current).toISOString().split('T')[0]
+        : null;
+      const currentIsAvailable =
+        currentIso != null && mapped.some((s) => s.sensing_date === currentIso);
+
+      if (mapped.length > 0 && (autoSelectedRef.current !== autoKey || !currentIsAvailable)) {
         autoSelectedRef.current = autoKey;
         const mostRecent = mapped[mapped.length - 1];
         setSelectedDate(new Date(mostRecent.sensing_date));

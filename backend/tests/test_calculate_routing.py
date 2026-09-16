@@ -55,8 +55,18 @@ class TestRouteIndex:
         for idx in ("NDVI", "EVI", "SAVI", "GNDVI"):
             assert route_index(idx, has_custom_formula=False) == "copernicus"
 
-    def test_ndre_stays_local(self):
-        assert route_index("NDRE", has_custom_formula=False) == "local"
+    def test_ndre_routes_copernicus_like_the_rest(self):
+        """NDRE moved to Copernicus on 2026-09-16 (owner decision).
+
+        It was pinned local to keep Sen2Res 10 m super-resolution, but the split
+        meant NDRE and the optical indices never shared a sensing date, so the
+        viewer blanked every other layer whenever an NDRE job landed a newer one.
+        Red-edge is now served at its native 20 m; see routing.py.
+        """
+        assert route_index("NDRE", has_custom_formula=False) == "copernicus"
+
+    def test_a_custom_formula_still_overrides_red_edge(self):
+        assert route_index("NDRE", has_custom_formula=True) == "local"
 
     def test_custom_formula_forces_local_even_for_eligible(self):
         assert route_index("NDVI", has_custom_formula=True) == "local"
@@ -152,8 +162,13 @@ def test_ndvi_routes_to_copernicus_and_charges_quota():
     task.delay.assert_not_called()  # Copernicus path enqueues no local task
 
 
-def test_ndre_routes_local_no_quota_charge():
-    """(b) NDRE (red-edge) → legacy local dispatch, quota never touched."""
+def test_ndre_routes_copernicus_and_charges_quota():
+    """(b) NDRE now goes through Copernicus like every other standard index.
+
+    It used to dispatch to the local Celery task without touching quota. Since
+    2026-09-16 it is served by Copernicus, so it consumes quota like the rest —
+    that is the cost of keeping all indices on one set of sensing dates.
+    """
     db = _make_db(download_bounds=GEOM)
     selector = MagicMock()
     selector.compute_indices = AsyncMock()
@@ -173,10 +188,9 @@ def test_ndre_routes_local_no_quota_charge():
         )
 
     assert resp.status_code == 200, resp.text
-    selector.compute_indices.assert_not_awaited()
-    QuotaCls.assert_not_called()  # no quota object even constructed
-    task.delay.assert_called_once()
-    assert task.delay.call_args.kwargs.get("index_type") == "NDRE"
+    # Copernicus produces the statistics; the local task still runs afterwards to
+    # render the raster (the `raster_pending` follow-up), so it is expected here.
+    selector.compute_indices.assert_awaited()
 
 
 def test_custom_formula_ndvi_routes_local_formula_preserved():
