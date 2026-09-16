@@ -33,6 +33,7 @@ from app.tasks import calculate_vegetation_index, download_sentinel2_scene
 from app.engines.routing import route_index
 from app.engines.base import EngineDegradedException
 from app.services.satellite_quota import SatelliteQuota
+from app.services.fiware_integration import upsert_eo_index
 from nkz_platform_sdk import OrionClient
 
 router = APIRouter(prefix="/api/vegetation", tags=["scenes"])
@@ -615,6 +616,26 @@ async def _dispatch_analyze_for_parcel(
                     db.add(wjob)
                     db.commit()
                     db.refresh(wjob)
+
+                    # Publish to the broker. Only the local pipeline used to do
+                    # this, so every Copernicus run left the broker empty and
+                    # anything reading EOProduct (crop-health) saw nothing.
+                    # Best-effort: a broker outage must not lose the statistics
+                    # we just computed and stored.
+                    try:
+                        upsert_eo_index(
+                            tenant_id=tenant_id,
+                            parcel_id=entity_id,
+                            index_type=idx,
+                            # Copernicus reports valid_pixels; upsert reads pixel_count.
+                            statistics={**stats, "pixel_count": stats.get("valid_pixels", 0)},
+                            sensing_date=r.sensing_date,
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "EOProduct publish failed for %s/%s: %s", entity_id, idx, exc
+                        )
+
                     if is_latest and engine_label == "copernicus":
                         await materialize_if_pending(db, wjob)   # eager latest (off-loop)
                     cop_job_ids.append(str(wjob.id))

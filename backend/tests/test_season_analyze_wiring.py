@@ -313,3 +313,72 @@ def test_copernicus_creates_per_window_jobs_latest_has_raster():
     assert older.result.get("raster_path") is None
     assert all(str(j.crop_season_id) == SEASON for j in ndvi_jobs)
     assert all(j.result.get("geometry") for j in ndvi_jobs)  # geometry stored for lazy gen
+
+
+# ---------------------------------------------------------------------------
+# The Copernicus engine must publish to the broker, like the local one does.
+#
+# Only processing_tasks (local), sar_tasks and historical_baseline ever wrote an
+# EOProduct. scenes.py — which serves every Copernicus request — never did, so
+# the broker held zero EOProduct entities no matter how many jobs ran, and
+# crop-health sat waiting for readings that were never going to arrive.
+# ---------------------------------------------------------------------------
+
+def test_copernicus_publishes_an_eoproduct_per_index():
+    db = _make_db()
+    selector = _selector(sh_usable=True, results=[_index_result("NDVI")])
+    quota = MagicMock()
+    quota.check_and_reserve.return_value = True
+
+    cop_client = MagicMock()
+    cop_client.search_scenes.return_value = [
+        {"id": "S2_1", "sensing_date": "2026-07-10", "cloud_cover": 5},
+    ]
+
+    with _orion_patch(), \
+         patch.object(scenes, "SatelliteQuota", return_value=quota), \
+         patch.object(scenes, "upsert_eo_index") as eo, \
+         patch("app.services.copernicus_raster.ensure_copernicus_raster", MagicMock()), \
+         patch("app.services.copernicus_client.CopernicusDataSpaceClient", return_value=cop_client), \
+         patch("app.services.platform_credentials.get_copernicus_credentials_with_fallback",
+               return_value={"client_id": "x", "client_secret": "y"}), \
+         patch("app.services.temporal_utils.group_scenes_into_windows",
+               return_value=[{"scenes": [{"id": "S2_1", "cloud_cover": 5}]}]), \
+         patch.object(scenes, "download_sentinel2_scene") as dl:
+        dl.delay.return_value = MagicMock(id="celery-1")
+        _run(db=db, indices=["NDVI"], engine_selector=selector)
+
+    eo.assert_called_once()
+    kwargs = eo.call_args.kwargs
+    assert kwargs["index_type"] == "NDVI"
+    assert kwargs["parcel_id"].startswith("urn:ngsi-ld:AgriParcel:")
+    # Copernicus reports valid_pixels; upsert_eo_index reads pixel_count.
+    assert kwargs["statistics"]["pixel_count"] == kwargs["statistics"]["valid_pixels"]
+
+
+def test_a_broker_failure_does_not_fail_the_request():
+    """Publishing is best-effort: the job and its statistics still stand."""
+    db = _make_db()
+    selector = _selector(sh_usable=True, results=[_index_result("NDVI")])
+    quota = MagicMock()
+    quota.check_and_reserve.return_value = True
+
+    cop_client = MagicMock()
+    cop_client.search_scenes.return_value = [
+        {"id": "S2_1", "sensing_date": "2026-07-10", "cloud_cover": 5},
+    ]
+
+    with _orion_patch(), \
+         patch.object(scenes, "SatelliteQuota", return_value=quota), \
+         patch.object(scenes, "upsert_eo_index", side_effect=RuntimeError("broker down")), \
+         patch("app.services.copernicus_raster.ensure_copernicus_raster", MagicMock()), \
+         patch("app.services.copernicus_client.CopernicusDataSpaceClient", return_value=cop_client), \
+         patch("app.services.platform_credentials.get_copernicus_credentials_with_fallback",
+               return_value={"client_id": "x", "client_secret": "y"}), \
+         patch("app.services.temporal_utils.group_scenes_into_windows",
+               return_value=[{"scenes": [{"id": "S2_1", "cloud_cover": 5}]}]), \
+         patch.object(scenes, "download_sentinel2_scene") as dl:
+        dl.delay.return_value = MagicMock(id="celery-1")
+        out = _run(db=db, indices=["NDVI"], engine_selector=selector)
+
+    assert out["job_ids"], "the job must survive a broker failure"
