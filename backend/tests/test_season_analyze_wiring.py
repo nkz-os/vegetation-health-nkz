@@ -136,7 +136,14 @@ def test_all_copernicus_indices_persist_with_season_and_skip_download():
 # Mixed: NDVI → Copernicus, NDRE → local (download carries season)
 # ---------------------------------------------------------------------------
 
-def test_mixed_indices_split_copernicus_and_local():
+def test_standard_indices_all_route_to_copernicus():
+    """NDRE joined the Copernicus set on 2026-09-16 (owner decision).
+
+    This used to assert the split: NDVI on Copernicus, NDRE on the local download
+    pipeline. Keeping them apart meant they never shared a sensing date, which
+    blanked the viewer. The remaining local route is the custom-formula one,
+    covered by test_calculate_routing.
+    """
     db = _make_db()
     selector = _selector(sh_usable=True, results=[_index_result("NDVI")])
     quota = MagicMock()
@@ -164,25 +171,16 @@ def test_mixed_indices_split_copernicus_and_local():
         dl.delay.return_value = MagicMock(id="celery-1")
         out = _run(db=db, indices=["NDVI", "NDRE"], engine_selector=selector)
 
-    # NDVI ran on Copernicus (season-bound completed job, per-window).
-    selector.compute_indices.assert_awaited_once()
+    # Both indices ran on Copernicus — one await each, where NDRE used to be
+    # dispatched to Celery instead.
+    assert selector.compute_indices.await_count == 2
     cop_job = db.add.call_args_list[0].args[0]
     assert cop_job.result["index_type"] == "NDVI"
     assert str(cop_job.crop_season_id) == SEASON
 
-    # NDRE went to the local download pipeline; the download job carries the
-    # season in BOTH the FK and its parameters (so the worker propagates it).
-    dl.delay.assert_called_once()
-    download_jobs = db.add_all.call_args.args[0]
-    assert len(download_jobs) == 1
-    dj = download_jobs[0]
-    assert dj.job_type == "download"
-    assert str(dj.crop_season_id) == SEASON
-    assert dj.parameters["crop_season_id"] == SEASON
-    assert dj.parameters["calculate_indices"] == ["NDRE"]  # only the local index
-
-    # Merged response has both jobs.
-    assert len(out["job_ids"]) == 2
+    # NDRE no longer falls out to the local download pipeline.
+    dl.delay.assert_not_called()
+    assert out["job_ids"], "Copernicus jobs must still be returned"
 
 
 # ---------------------------------------------------------------------------
