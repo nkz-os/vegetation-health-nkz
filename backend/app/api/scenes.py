@@ -157,6 +157,24 @@ def _persist_completed_copernicus_job(
     return job
 
 
+async def _publish_eo_index(**kwargs) -> None:
+    """Publish one index to the broker from async code, best-effort.
+
+    `upsert_eo_index` reaches the async SDK through an `asyncio.run()` bridge
+    meant for the sync callers (the Celery tasks). Calling it straight from this
+    async handler raised "asyncio.run() cannot be called from a running event
+    loop" on every index, so the broker stayed empty while the request still
+    succeeded — the failure showed up only in the pod logs. Running it in a
+    worker thread gives the bridge the loop-free context it expects.
+    """
+    try:
+        await asyncio.to_thread(lambda: upsert_eo_index(**kwargs))
+    except Exception as exc:
+        logger.warning(
+            "EOProduct publish failed for %s/%s: %s",
+            kwargs.get("parcel_id"), kwargs.get("index_type"), exc,
+        )
+
 @router.post("/calculate")
 async def calculate_index_endpoint(
     request: CalculateRequest,
@@ -622,19 +640,14 @@ async def _dispatch_analyze_for_parcel(
                     # anything reading EOProduct (crop-health) saw nothing.
                     # Best-effort: a broker outage must not lose the statistics
                     # we just computed and stored.
-                    try:
-                        upsert_eo_index(
-                            tenant_id=tenant_id,
-                            parcel_id=entity_id,
-                            index_type=idx,
-                            # Copernicus reports valid_pixels; upsert reads pixel_count.
-                            statistics={**stats, "pixel_count": stats.get("valid_pixels", 0)},
-                            sensing_date=r.sensing_date,
-                        )
-                    except Exception as exc:
-                        logger.warning(
-                            "EOProduct publish failed for %s/%s: %s", entity_id, idx, exc
-                        )
+                    await _publish_eo_index(
+                        tenant_id=tenant_id,
+                        parcel_id=entity_id,
+                        index_type=idx,
+                        # Copernicus reports valid_pixels; upsert reads pixel_count.
+                        statistics={**stats, "pixel_count": stats.get("valid_pixels", 0)},
+                        sensing_date=r.sensing_date,
+                    )
 
                     if is_latest and engine_label == "copernicus":
                         await materialize_if_pending(db, wjob)   # eager latest (off-loop)
