@@ -202,8 +202,6 @@ async def export_arrow(
 # Parcel lifecycle: setup/teardown
 # ---------------------------------------------------------------------------
 
-from nkz_platform_sdk.subscriptions import SubscriptionRegistrar
-
 INTERNAL_SECRET = os.getenv("INTERNAL_SERVICE_SECRET", "")
 
 
@@ -219,8 +217,10 @@ async def setup_parcel(request: Request, body: SetupParcelRequest):
     """Internal endpoint called by entity-manager on parcel activation.
 
     Validates X-Internal-Service-Secret (defense-in-depth, primary auth is
-    api-gateway OIDC). Ensures the EOProduct subscription for the tenant.
-    EOProduct entities themselves are created on first analysis, not here.
+    api-gateway OIDC). Activation is a no-op: vegetation-health has no
+    notification-driven pipeline, and the previous EOProduct subscription
+    targeted /api/vegetation/webhooks/fiware — a route that was never
+    implemented — so it only delivered 404s to a nonexistent receiver.
     """
     secret = request.headers.get("X-Internal-Service-Secret", "")
     if not INTERNAL_SECRET or not hmac.compare_digest(secret, INTERNAL_SECRET):
@@ -237,29 +237,4 @@ async def setup_parcel(request: Request, body: SetupParcelRequest):
         logger.info("Deactivated vegetation-health for parcel %s", parcel_urn)
         return {"message": "deactivated", "parcel_id": body.parcel_id}
 
-    # Ensure the EOProduct subscription for this tenant
-    orion_url = os.getenv("ORION_LD_URL", "http://orion-ld-service:1026")
-    context_url = os.getenv("ORION_LD_CONTEXT", "http://api-gateway-service:5000/ngsi-ld-context.json")
-    notification_url = os.getenv(
-        "SELF_URL",
-        "http://vegetation-prime-api-service:8000",
-    ) + "/api/vegetation/webhooks/fiware"
-    registrar = SubscriptionRegistrar(
-        orion_url=orion_url,
-        notification_url=notification_url,
-        subscriptions=[{"type": "EOProduct"}],
-        module_name="vegetation-health",
-        context_url=context_url,
-    )
-    sub_result = await registrar.ensure_all([body.tenant_id])
-    logger.info(
-        "setup-parcel subscription ensure tenant=%s: created=%d skipped=%d errors=%d",
-        body.tenant_id, sub_result["created"], sub_result["skipped"], len(sub_result["errors"]),
-    )
-
-    return {
-        "message": "activated",
-        "parcel_id": body.parcel_id,
-        "subscription_created": sub_result["created"],
-        "subscription_skipped": sub_result["skipped"],
-    }
+    return {"message": "activated", "parcel_id": body.parcel_id}
