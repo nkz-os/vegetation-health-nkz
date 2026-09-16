@@ -155,3 +155,73 @@ def test_real_orion_client_contract_for_wrapper():
     from nkz_platform_sdk import OrionClient
     assert hasattr(OrionClient, "upsert_entities_batch")
     assert hasattr(OrionClient, "close")
+
+
+# ---------------------------------------------------------------------------
+# Deleting one index must not take the whole acquisition with it.
+#
+# The EOProduct id is per (parcel, sensingDate) and every index for that date
+# merges into it as a named Property. Both delete paths removed the entity, so
+# deleting one NDVI job also erased NDRE/EVI/SAVI/GNDVI for that date. After the
+# July job cleanups the broker was left with no EOProduct at all.
+# ---------------------------------------------------------------------------
+
+_EID = "urn:ngsi-ld:EOProduct:montiko:da36ccd2-1:2025-09-06"
+
+
+def _entity(*index_keys):
+    e = {
+        "id": _EID, "type": "EOProduct",
+        "hasAgriParcel": {"type": "Relationship", "object": "urn:ngsi-ld:AgriParcel:p"},
+        "sensingDate": {"type": "Property", "value": "2025-09-06"},
+        "pixelCount": {"type": "Property", "value": 10},
+        "source": {"type": "Property", "value": "vegetation_health"},
+    }
+    for k in index_keys:
+        e[k] = {"type": "Property", "value": 0.5}
+    return e
+
+
+def test_delete_eo_index_removes_only_that_index_when_others_remain():
+    orion = MagicMock()
+    orion.delete.return_value = _resp(204)
+    get = MagicMock(); get.status_code = 200; get.json.return_value = _entity("ndre", "evi")
+    orion.get.return_value = get
+    with patch.object(fi, "SyncOrionClient", return_value=orion):
+        assert fi.delete_eo_index("montiko", _EID, "NDVI") is True
+    paths = [c.args[0] for c in orion.delete.call_args_list]
+    assert paths == [f"/ngsi-ld/v1/entities/{_EID}/attrs/ndvi"]
+
+
+def test_delete_eo_index_removes_entity_once_no_index_is_left():
+    orion = MagicMock()
+    orion.delete.return_value = _resp(204)
+    get = MagicMock(); get.status_code = 200; get.json.return_value = _entity()
+    orion.get.return_value = get
+    with patch.object(fi, "SyncOrionClient", return_value=orion):
+        assert fi.delete_eo_index("montiko", _EID, "NDVI") is True
+    paths = [c.args[0] for c in orion.delete.call_args_list]
+    assert paths[0] == f"/ngsi-ld/v1/entities/{_EID}/attrs/ndvi"
+    assert paths[-1] == f"/ngsi-ld/v1/entities/{_EID}"
+
+
+def test_delete_eo_index_keeps_entity_when_it_cannot_be_read_back():
+    """A failed read must not be taken as "no indices left"."""
+    orion = MagicMock()
+    orion.delete.return_value = _resp(204)
+    get = MagicMock(); get.status_code = 500; get.json.return_value = {}
+    orion.get.return_value = get
+    with patch.object(fi, "SyncOrionClient", return_value=orion):
+        fi.delete_eo_index("montiko", _EID, "NDVI")
+    paths = [c.args[0] for c in orion.delete.call_args_list]
+    assert f"/ngsi-ld/v1/entities/{_EID}" not in paths
+
+
+def test_delete_paths_do_not_remove_the_shared_entity_directly():
+    """Neither delete path may call delete_eo_product on an acquisition entity."""
+    import inspect
+    from app.api import jobs as jobs_api
+    from app.api import monitoring_periods as mp_api
+    for mod in (jobs_api, mp_api):
+        src = inspect.getsource(mod)
+        assert "delete_eo_product(" not in src, f"{mod.__name__} still deletes the whole EOProduct"

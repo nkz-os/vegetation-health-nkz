@@ -340,6 +340,59 @@ def upsert_eo_product(
         return None
 
 
+# Attributes that describe the acquisition itself rather than a vegetation index.
+# Anything else on an EOProduct is an index Property contributed by some job.
+_ACQUISITION_ATTRS = frozenset({
+    "id", "type", "hasAgriParcel", "sensingDate", "pixelCount", "source",
+    "cloudCoverPercentage", "sceneId", "@context", "createdAt", "modifiedAt",
+})
+
+
+def delete_eo_index(tenant_id: str, entity_id: str, index_type: str) -> bool:
+    """Remove one index from an EOProduct, and the entity only once it is empty.
+
+    An EOProduct is per (parcel, sensingDate): every index for that acquisition
+    merges into the same entity as a named Property. Deleting the entity to clean
+    up a single index job therefore erased every other index for that date, which
+    is how the broker ended up with no EOProduct at all after the job cleanups.
+
+    The entity is removed only when the read-back shows no index Property left. A
+    read that fails leaves it alone: not knowing is not the same as knowing it is
+    empty, and dropping it on a transient error would repeat the original bug.
+    """
+    orion = SyncOrionClient(tenant_id)
+    index_key = index_type.lower()
+    try:
+        response = orion.delete(f"/ngsi-ld/v1/entities/{entity_id}/attrs/{index_key}")
+        if response.status_code not in (204, 200, 404):
+            logger.warning(
+                "Failed to delete index %s from EOProduct %s: %s",
+                index_key, entity_id, response.status_code,
+            )
+            return False
+
+        read = orion.get(f"/ngsi-ld/v1/entities/{entity_id}")
+        if read.status_code == 404:
+            return True  # already gone
+        if read.status_code != 200:
+            logger.warning(
+                "EOProduct %s not readable after removing %s (%s) — keeping the entity",
+                entity_id, index_key, read.status_code,
+            )
+            return True
+
+        remaining = [k for k in (read.json() or {}) if k not in _ACQUISITION_ATTRS]
+        if remaining:
+            logger.info(
+                "Removed %s from EOProduct %s; %d index(es) remain", index_key, entity_id, len(remaining)
+            )
+            return True
+        return delete_eo_product(tenant_id, entity_id)
+    except Exception as e:
+        logger.error("Error removing index %s from EOProduct %s: %s", index_key, entity_id, e)
+        return False
+
+
 def delete_eo_product(tenant_id: str, entity_id: str) -> bool:
     """Delete an EOProduct entity from Orion-LD."""
     orion = SyncOrionClient(tenant_id)
