@@ -29,6 +29,27 @@ logger = logging.getLogger(__name__)
 FIELD_OPS_URL = "http://field-operations-api-service:8420/internal/suggested-operation"
 
 
+def _geom_in_raster_crs(geom, raster_crs):
+    """Return `geom` (EPSG:4326) in the raster's CRS, ready for rasterize().
+
+    Sentinel-1 GRD products are projected in UTM metres while NGSI-LD parcel
+    geometry is in degrees. Rasterizing the unprojected geometry against the
+    raster transform selects no pixels at all, which the caller used to treat as
+    "no valid pixels" and skip — leaving polarizations_computed empty on a job
+    that reported success. Same idiom as lst_processor / scl_validation.
+
+    A raster already in 4326, or one carrying no CRS, is left untouched: guessing
+    a projection would be worse than not converting.
+    """
+    if raster_crs is None or str(raster_crs) == "EPSG:4326":
+        return geom
+    from pyproj import Transformer
+    from shapely.ops import transform as shp_transform
+
+    transformer = Transformer.from_crs("EPSG:4326", raster_crs, always_xy=True)
+    return shp_transform(transformer.transform, geom)
+
+
 def _notify_field_operations(
     tenant_id: str,
     parcel_id: str,
@@ -212,7 +233,7 @@ def download_sentinel1_scene(
                 try:
                     with rasterio.open(raster_path) as src:
                         mask = rasterize(
-                            [(geom, 1)],
+                            [(_geom_in_raster_crs(geom, src.crs), 1)],
                             out_shape=(src.height, src.width),
                             transform=src.transform,
                             fill=0,
@@ -422,13 +443,26 @@ def download_sentinel1_scene(
             except Exception as exc:
                 logger.warning("SAR change detection skipped for %s: %s", entity_id, exc)
 
-            # ── Mark download job complete ────────────────────────────
-            download_job.mark_completed({
+            # ── Close the download job ────────────────────────────────
+            job_result = {
                 "scene_id": scene_id,
                 "sensing_date": sensing_date_str,
                 "bands_downloaded": list(band_paths.keys()),
                 "polarizations_computed": list(stats_by_pol.keys()),
-            })
+            }
+            if stats_by_pol:
+                download_job.mark_completed(job_result)
+            else:
+                # Bands on disk but nothing measured off them. This used to be
+                # reported as success, so the pipeline looked healthy while every
+                # run produced polarizations_computed: [] and no EOProduct.
+                download_job.mark_failed(
+                    "Bands downloaded but no polarization yielded statistics "
+                    f"(bands={list(band_paths.keys())}) — see the per-polarization "
+                    "warnings above for whether the raster was missing or the mask "
+                    "selected no pixels"
+                )
+                download_job.result = job_result
             db.commit()
 
     except Exception as e:

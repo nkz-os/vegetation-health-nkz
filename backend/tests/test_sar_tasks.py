@@ -49,6 +49,9 @@ class TestS1DownloadTask:
         mock_dataset.height = 2
         mock_dataset.width = 2
         mock_dataset.transform = MagicMock()
+        # A real dataset always declares a CRS; without one the reprojection
+        # helper receives a MagicMock and cannot build a Transformer.
+        mock_dataset.crs = "EPSG:4326"
         mock_rasterio = MagicMock()
         mock_rasterio.open.return_value.__enter__.return_value = mock_dataset
         mock_rasterio.features = MagicMock()
@@ -111,6 +114,9 @@ class TestS1DownloadTask:
             mock_dataset.height = 2
             mock_dataset.width = 2
             mock_dataset.transform = MagicMock()
+            # A real dataset always declares a CRS; without one the reprojection
+            # helper receives a MagicMock and cannot build a Transformer.
+            mock_dataset.crs = "EPSG:4326"
             mock_rasterio = MagicMock()
             mock_rasterio.open.return_value.__enter__.return_value = mock_dataset
             mock_rasterio.features = MagicMock()
