@@ -202,7 +202,7 @@ const DashboardContent: React.FC = () => {
                       const latestNdvi = parcel.latestNDVI?.value ?? parcel.vegetationIndex?.value ?? parcel.ndvi?.value ?? null;
                       const healthColor = latestNdvi === null ? 'bg-slate-300' :
                         latestNdvi >= 0.6 ? 'bg-emerald-500' :
-                          latestNdvi >= 0.3 ? 'bg-amber-400' : 'bg-red-500';
+                          latestNdvi >= 0.3 ? 'bg-nkz-warning' : 'bg-red-500';
 
                       return (
                         <tr
@@ -211,7 +211,7 @@ const DashboardContent: React.FC = () => {
                           onClick={() => setSelectedEntityId(parcel.id)}
                         >
                           <td className="p-4 font-medium text-slate-900 flex items-center gap-3">
-                            <div className="p-2 bg-green-100 text-green-700 rounded-lg">
+                            <div className="p-2 bg-nkz-success-soft text-nkz-success rounded-lg">
                               <Leaf className="w-4 h-4" />
                             </div>
                             {parcelName}

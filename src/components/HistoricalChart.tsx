@@ -151,7 +151,7 @@ export const HistoricalChart: React.FC<HistoricalChartProps> = ({ entityId }) =>
           <button
             onClick={handleBuild}
             disabled={building}
-            className="text-xs px-2 py-1 rounded-lg bg-emerald-100 text-emerald-700 hover:bg-emerald-200 disabled:opacity-50"
+            className="text-xs px-2 py-1 rounded-lg bg-emerald-100 text-emerald-700 hover:bg-nkz-success-soft disabled:opacity-50"
           >
             {building ? '…' : 'Rebuild'}
           </button>

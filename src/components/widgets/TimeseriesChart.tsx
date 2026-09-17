@@ -49,7 +49,7 @@ const TimeseriesChart: React.FC<TimeseriesChartProps> = ({ entityId, indexType }
   if (error) {
     return (
       <div className="w-full h-full flex items-center justify-center bg-red-50 rounded-lg">
-        <AlertCircle className="w-6 h-6 text-red-500" />
+        <AlertCircle className="w-6 h-6 text-nkz-danger" />
         <span className="ml-2 text-sm text-red-600">{error}</span>
       </div>
     );

@@ -72,7 +72,7 @@ export const CalculationButton: React.FC<CalculationButtonProps> = ({
           disabled:opacity-50 disabled:cursor-not-allowed
           flex items-center gap-2 justify-center
           ${variant === 'primary'
-            ? 'bg-blue-600 text-white hover:bg-blue-700 active:bg-blue-800'
+            ? 'bg-blue-600 text-white hover:bg-blue-700 active:bg-nkz-accent-strong'
             : 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 active:bg-slate-100'}
           ${size === 'sm' ? 'text-xs px-2 py-1' : size === 'lg' ? 'text-lg px-6 py-3' : 'text-sm'}
           ${className}
@@ -99,7 +99,7 @@ export const CalculationButton: React.FC<CalculationButtonProps> = ({
       )}
 
       {success && (
-        <div className="flex items-center gap-2 text-xs text-green-600 bg-green-50 p-2 rounded">
+        <div className="flex items-center gap-2 text-xs text-green-600 bg-nkz-success-soft p-2 rounded">
           <CheckCircle className="w-4 h-4" />
           <span>{t('calculationButton.success')}</span>
         </div>

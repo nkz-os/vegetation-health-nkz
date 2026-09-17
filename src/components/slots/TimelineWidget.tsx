@@ -245,11 +245,11 @@ export const TimelineWidget: React.FC<TimelineWidgetProps> = ({ entityId }) => {
             {/* Subtle compact legend bar below the timeline */}
             <div className="flex items-center justify-center gap-nkz-inline mt-nkz-inline text-[10px] text-nkz-text-muted">
               <span className="flex items-center gap-nkz-tight">
-                <span className="w-3 h-1.5 rounded-full bg-red-400 inline-block" />
+                <span className="w-3 h-1.5 rounded-full bg-nkz-danger inline-block" />
                 {t('legend.low')}
               </span>
               <span className="flex items-center gap-nkz-tight">
-                <span className="w-3 h-1.5 rounded-full bg-amber-400 inline-block" />
+                <span className="w-3 h-1.5 rounded-full bg-nkz-warning inline-block" />
                 {t('legend.moderate')}
               </span>
               <span className="flex items-center gap-nkz-tight">

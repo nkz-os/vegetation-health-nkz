@@ -182,7 +182,7 @@ export const SmartTimeline: React.FC<SmartTimelineProps> = ({
   if (hasError && sortedStats.length === 0) {
     return (
       <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 p-6">
-        <div className="flex items-center justify-center h-20 text-red-500">
+        <div className="flex items-center justify-center h-20 text-nkz-danger">
           <AlertCircle className="w-5 h-5 mr-2" />
           <span className="text-sm">{internalError}</span>
         </div>
@@ -259,7 +259,7 @@ export const SmartTimeline: React.FC<SmartTimelineProps> = ({
                   onMouseLeave={handleMouseLeave}
                   className={`
                     relative z-10 w-4 h-4 rounded-full transition-all cursor-pointer
-                    hover:scale-150 focus:outline-none focus:ring-2 focus:ring-emerald-400
+                    hover:scale-150 focus:outline-none focus:ring-2 focus:ring-nkz-accent-base
                     ${isSelected ? 'ring-2 ring-white scale-150 shadow-md' : ''}
                   `}
                   style={{

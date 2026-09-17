@@ -50,7 +50,7 @@ export const DateSelector: React.FC<DateSelectorProps> = ({ selectedSceneId, sce
                 onClick={() => onSelect(scene.id)}
                 className={`p-2 rounded-lg border text-xs transition-all ${
                   isSelected
-                    ? 'bg-green-50 border-green-300 ring-2 ring-green-500'
+                    ? 'bg-nkz-success-soft border-green-300 ring-2 ring-green-500'
                     : 'bg-white border-slate-200 hover:border-slate-300 hover:bg-slate-50'
                 }`}
               >
