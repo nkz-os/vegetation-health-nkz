@@ -44,7 +44,10 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
 # Copy code with appropriate ownership
 COPY --chown=appuser:appgroup backend/app ./app
 COPY --chown=appuser:appgroup backend/migrations ./migrations
-COPY --chown=appuser:appgroup backend/scripts/run_migrations.py ./scripts/run_migrations.py
+# The whole directory: every script here documents itself as running inside
+# this container, but only the migration runner was ever shipped, so the
+# operational ones could not actually be run.
+COPY --chown=appuser:appgroup backend/scripts ./scripts
 COPY --chown=appuser:appgroup backend/entrypoint.sh ./entrypoint.sh
 
 # Ensure scripts are executable

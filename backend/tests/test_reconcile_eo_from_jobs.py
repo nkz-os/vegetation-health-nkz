@@ -101,3 +101,14 @@ def test_dry_run_writes_nothing(monkeypatch):
 def test_selection_is_constrained(clause):
     """Read from source: a mocked session accepts any query, so assert the text."""
     assert clause in _SCRIPT.read_text()
+
+
+def test_the_script_is_shipped_in_the_image():
+    """A reconciler that is not in the container cannot reconcile anything.
+
+    The Dockerfile used to copy scripts/run_migrations.py by name, so every
+    other operational script was absent from the image even though each one
+    documents itself as running inside the container.
+    """
+    dockerfile = (_SCRIPT.parent.parent / "Dockerfile").read_text()
+    assert "backend/scripts ./scripts" in dockerfile
