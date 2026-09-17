@@ -44,21 +44,21 @@ const FallbackButton = ({ children, variant, size, disabled, onClick, className,
 const FallbackInput = (props: any) => (
   <input
     {...props}
-    className={`border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 ${props.className || ''}`}
+    className={`border border-nkz-border rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 ${props.className || ''}`}
   />
 );
 
 const FallbackSelect = (props: any) => (
   <select
     {...props}
-    className={`border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 ${props.className || ''}`}
+    className={`border border-nkz-border rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 ${props.className || ''}`}
   />
 );
 
 const FallbackBadge = ({ children, variant, className }: any) => {
   const colorClass = variant === 'success' ? 'bg-green-100 text-green-800' :
                      variant === 'error' ? 'bg-red-100 text-red-800' :
-                     'bg-yellow-100 text-yellow-800';
+                     'bg-nkz-warning-soft text-yellow-800';
   return (
     <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${colorClass} ${className || ''}`}>
       {children}

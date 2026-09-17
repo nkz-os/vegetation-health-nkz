@@ -103,7 +103,7 @@ export const DateRangePicker: React.FC<DateRangePickerProps> = ({
                     <button
                         type="button"
                         onClick={() => setYearPreset(currentYear)}
-                        className="px-2 py-1 text-xs bg-blue-100 hover:bg-blue-200 text-blue-700 rounded-md transition-colors"
+                        className="px-2 py-1 text-xs bg-blue-100 hover:bg-blue-200 text-nkz-info rounded-md transition-colors"
                     >
                         {currentYear}
                     </button>

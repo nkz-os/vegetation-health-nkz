@@ -301,7 +301,7 @@ export const VegetationLayer: React.FC = () => {
       }`}
     >
       <div className="bg-slate-900 text-white px-4 py-1.5 rounded-full text-sm font-medium flex items-center gap-2 shadow-lg border border-slate-700">
-        <span className={`w-2 h-2 rounded-full ${isTransitioning ? 'bg-emerald-400 animate-pulse' : 'bg-emerald-500'}`} />
+        <span className={`w-2 h-2 rounded-full ${isTransitioning ? 'bg-nkz-success animate-pulse' : 'bg-emerald-500'}`} />
         <span>{selectedIndex}</span>
         <span className="text-slate-400">·</span>
         <span>{dateLabel}</span>

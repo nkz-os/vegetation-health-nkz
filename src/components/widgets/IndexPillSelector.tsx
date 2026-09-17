@@ -19,29 +19,32 @@ export interface CustomIndexOption {
 
 const INDEX_GROUPS: Array<{
   labelKey: string;
+  // `color` is a literal hex, not a Tailwind class: these are categorical index
+  // colours with no semantic token, and the host's Tailwind build never scans
+  // module sources, so an arbitrary palette class would render with no colour.
   indices: Array<{ value: VegetationIndexType; shortLabel: string; color: string }>;
 }> = [
   {
     labelKey: 'indices.categoryGeneral',
     indices: [
-      { value: 'NDVI', shortLabel: 'NDVI', color: 'bg-green-600' },
-      { value: 'EVI', shortLabel: 'EVI', color: 'bg-emerald-500' },
-      { value: 'SAVI', shortLabel: 'SAVI', color: 'bg-lime-500' },
-      { value: 'GNDVI', shortLabel: 'GNDVI', color: 'bg-teal-500' },
-      { value: 'NDRE', shortLabel: 'NDRE', color: 'bg-cyan-600' },
+      { value: 'NDVI', shortLabel: 'NDVI', color: '#16a34a' },
+      { value: 'EVI', shortLabel: 'EVI', color: '#10b981' },
+      { value: 'SAVI', shortLabel: 'SAVI', color: '#84cc16' },
+      { value: 'GNDVI', shortLabel: 'GNDVI', color: '#14b8a6' },
+      { value: 'NDRE', shortLabel: 'NDRE', color: '#0891b2' },
     ],
   },
   {
     labelKey: 'indices.categorySAR',
     indices: [
-      { value: 'SAR-VV', shortLabel: 'VV', color: 'bg-indigo-500' },
-      { value: 'SAR-VH', shortLabel: 'VH', color: 'bg-indigo-400' },
+      { value: 'SAR-VV', shortLabel: 'VV', color: '#6366f1' },
+      { value: 'SAR-VH', shortLabel: 'VH', color: '#818cf8' },
     ],
   },
   {
     labelKey: 'indices.categoryManagement',
     indices: [
-      { value: 'VRA_ZONES', shortLabel: 'VRA', color: 'bg-purple-600' },
+      { value: 'VRA_ZONES', shortLabel: 'VRA', color: '#9333ea' },
     ],
   },
 ];
@@ -70,7 +73,7 @@ export const IndexPillSelector: React.FC<IndexPillSelectorProps> = ({
 
   const allIndices = INDEX_GROUPS.flatMap(g => g.indices);
 
-  const renderPill = (value: string, shortLabel: string, colorClass?: string) => {
+  const renderPill = (value: string, shortLabel: string, color?: string) => {
     const isSelected = selectedIndex === value;
     const isCustom = value.startsWith('custom:');
     const isAvailable = !availableIndices || availableIndices.includes(value);
@@ -91,8 +94,11 @@ export const IndexPillSelector: React.FC<IndexPillSelectorProps> = ({
         `}
         title={isAvailable ? shortLabel : `${shortLabel} — ${t('layerControl.indexNotAvailable', 'No data available')}`}
       >
-        {!isSelected && colorClass && !isCustom && (
-          <span className={`inline-block w-1.5 h-1.5 rounded-full ${colorClass} mr-1.5 align-middle ${isAvailable ? 'opacity-60' : 'opacity-20'}`} />
+        {!isSelected && color && !isCustom && (
+          <span
+            className={`inline-block w-1.5 h-1.5 rounded-full mr-1.5 align-middle ${isAvailable ? 'opacity-60' : 'opacity-20'}`}
+            style={{ backgroundColor: color }}
+          />
         )}
         {isSelected && !isCustom && (
           <span className="inline-block w-1.5 h-1.5 rounded-full bg-white mr-1.5 align-middle" />

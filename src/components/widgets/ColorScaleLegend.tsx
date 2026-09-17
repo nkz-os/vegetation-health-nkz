@@ -65,7 +65,7 @@ export const ColorScaleLegend: React.FC<ColorScaleLegendProps> = ({
                 type="checkbox"
                 checked={dynamic}
                 onChange={(e) => onDynamicToggle(e.target.checked)}
-                className="rounded border-gray-300 text-green-600 focus:ring-green-500"
+                className="rounded border-nkz-border text-green-600 focus:ring-green-500"
               />
               <span className="text-gray-600">Auto-stretch</span>
             </label>
@@ -73,14 +73,14 @@ export const ColorScaleLegend: React.FC<ColorScaleLegendProps> = ({
         </div>
         <p className="text-xs text-gray-500">{legend.description}</p>
         {dynamic && dataMin !== undefined && dataMax !== undefined && (
-          <p className="text-xs text-blue-600 mt-1">
+          <p className="text-xs text-nkz-info mt-1">
             Rango dinámico: {dataMin.toFixed(3)} - {dataMax.toFixed(3)}
           </p>
         )}
       </div>
 
       {/* Color Scale */}
-      <div className="relative h-6 w-full rounded overflow-hidden mb-2 border border-gray-300">
+      <div className="relative h-6 w-full rounded overflow-hidden mb-2 border border-nkz-border">
         <div
           className="absolute inset-0"
           style={{
@@ -106,7 +106,7 @@ export const ColorScaleLegend: React.FC<ColorScaleLegendProps> = ({
         {legend.stops.slice(1, -1).map((stop, idx) => (
           <div key={idx} className="flex items-center gap-2 text-xs">
             <div
-              className="w-4 h-4 rounded border border-gray-300"
+              className="w-4 h-4 rounded border border-nkz-border"
               style={{ backgroundColor: stop.color }}
             />
             <span className="text-gray-600">{stop.label}</span>

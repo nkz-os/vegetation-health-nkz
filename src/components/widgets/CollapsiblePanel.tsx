@@ -58,7 +58,7 @@ export const CollapsiblePanel: React.FC<CollapsiblePanelProps> = ({
                     onClick={() => setIsCollapsed(false)}
                 >
                     <div className="p-2 bg-green-100 rounded-lg mb-2">
-                        <Leaf className="w-5 h-5 text-green-700" />
+                        <Leaf className="w-5 h-5 text-nkz-success" />
                     </div>
                     <span
                         className="text-xs font-medium text-slate-600 writing-mode-vertical"

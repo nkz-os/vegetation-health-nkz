@@ -3,6 +3,18 @@ import { X, Info, Beaker, Target, AlertTriangle, Leaf } from 'lucide-react';
 import { useTranslation } from '@nekazari/sdk';
 import { getIndexInfo } from '../../data/indexInfo';
 
+// Continuous vigour scale. Literal hex, not Tailwind classes: the host's build
+// never scans module sources, so only bg-red-500 and bg-green-500 happened to be
+// generated and the three middle steps rendered with no colour at all.
+const VIGOUR_SCALE: Record<string, string> = {
+    veryLow: '#ef4444',
+    low: '#fb923c',
+    medium: '#facc15',
+    high: '#84cc16',
+    veryHigh: '#22c55e',
+};
+
+
 interface IndexInfoModalProps {
     indexType: string;
     isOpen: boolean;
@@ -92,12 +104,8 @@ export const IndexInfoModal: React.FC<IndexInfoModalProps> = ({
                                     className="flex items-center gap-3 p-2 rounded-lg bg-slate-50"
                                 >
                                     <div
-                                        className={`w-3 h-3 rounded-full ${key === 'veryLow' ? 'bg-red-500' :
-                                            key === 'low' ? 'bg-orange-400' :
-                                                key === 'medium' ? 'bg-yellow-400' :
-                                                    key === 'high' ? 'bg-lime-500' :
-                                                        'bg-green-500'
-                                            }`}
+                                        className="w-3 h-3 rounded-full"
+                                        style={{ backgroundColor: VIGOUR_SCALE[key] ?? VIGOUR_SCALE.veryHigh }}
                                     />
                                     <span className="font-mono text-xs text-slate-600 w-24">{range}</span>
                                     <span className="text-sm text-slate-700">{meaning}</span>

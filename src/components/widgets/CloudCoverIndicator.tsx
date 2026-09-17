@@ -46,7 +46,7 @@ export const CloudCoverIndicator: React.FC<CloudCoverIndicatorProps> = ({
   const colorClasses = isHigh
     ? 'text-red-600'
     : isMedium
-    ? 'text-yellow-600'
+    ? 'text-nkz-warning'
     : 'text-green-600';
 
   return (
@@ -90,7 +90,7 @@ export const CloudCoverBadge: React.FC<{
   const badgeClasses = isHigh
     ? 'bg-red-100 text-red-800'
     : isMedium
-    ? 'bg-yellow-100 text-yellow-800'
+    ? 'bg-nkz-warning-soft text-yellow-800'
     : 'bg-green-100 text-green-800';
 
   return (
