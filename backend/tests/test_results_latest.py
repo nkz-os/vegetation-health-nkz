@@ -52,8 +52,17 @@ _STUBS = [
     "app.tasks.historical_baseline",
     "app.celery_app",
 ]
+# The stubs are only needed while `app.main` is being imported: once the app
+# modules hold their references, the entries must come back out of sys.modules.
+# Leaving them in poisons every test module imported later in the session --
+# app/services/superresolution.py would pick up a MagicMock scipy and fail with
+# shape errors that have nothing to do with the code under test. Collection
+# order decided whether the suite was green (see test_scene_selection.py for
+# the same save/restore shape).
+_ORIGINALS = {}
 for _mod in _STUBS:
     if _mod not in sys.modules:
+        _ORIGINALS[_mod] = None
         sys.modules[_mod] = MagicMock()
 
 # Stub the entire app.database module before app.main imports it.
@@ -62,15 +71,30 @@ for _mod in _STUBS:
 _db_stub = MagicMock()
 _session_stub = MagicMock()
 _db_stub.SessionLocal = _session_stub
+_ORIGINALS["app.database"] = sys.modules.get("app.database")
 sys.modules["app.database"] = _db_stub
 
 # Now it is safe to import the app.
 from app.main import app  # noqa: E402
-from app.middleware.auth import require_auth  # noqa: E402
 
-# Retrieve get_db_with_tenant from the stub (it was set when app.api.scenes
-# imported app.database).
-get_db_with_tenant = _db_stub.get_db_with_tenant
+# The app now holds the stubbed references it captured at import time; give the
+# rest of the session its real modules back.
+for _mod, _original in _ORIGINALS.items():
+    if _original is None:
+        sys.modules.pop(_mod, None)
+    else:
+        sys.modules[_mod] = _original
+
+# The override key must be the exact object the route closure references.
+# app/api/scenes.py binds it with `from app.database import get_db_with_tenant`
+# at its own import time, so whether that is the real function or the stub
+# depends on which test module was collected first. Reading it back off the
+# route's module is correct either way -- keying off the stub made the suite
+# pass alone and 400 ("X-Tenant-ID header is required") in a full run.
+import app.api.scenes as _scenes_mod  # noqa: E402
+
+get_db_with_tenant = _scenes_mod.get_db_with_tenant
+require_auth = _scenes_mod.require_auth
 
 TENANT = "test-tenant-results-latest"
 
@@ -383,3 +407,19 @@ def test_tenant_isolation():
     assert r.status_code == 200, r.text
     ids = {i["entity_id"] for i in r.json()}
     assert ids == {"urn:E:1"}
+
+
+def test_the_heavy_stubs_do_not_leak_into_the_session():
+    """These stubs are import-time scaffolding, not session-wide state.
+
+    While they stayed in sys.modules, any test module imported later got a
+    MagicMock in place of the real package. Collection order alone decided
+    whether the suite passed.
+    """
+    import importlib
+
+    for name in ("numpy", "scipy", "rasterio", "shapely"):
+        mod = sys.modules.get(name)
+        if mod is None:
+            mod = importlib.import_module(name)
+        assert not isinstance(mod, MagicMock), f"{name} is still stubbed"
