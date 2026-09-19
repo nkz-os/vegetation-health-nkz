@@ -26,7 +26,7 @@ NDVI_COLOR = _load("ndvi_color.js")
 
 # Process API — single-index FLOAT32 GeoTIFF (parameterized)
 INDEX_FLOAT = _load("index_float.js")
-_SUPPORTED_FLOAT_INDICES = {"NDVI", "EVI", "SAVI", "GNDVI"}
+_SUPPORTED_FLOAT_INDICES = {"NDVI", "EVI", "SAVI", "GNDVI", "NDRE"}
 
 
 def build_index_float(index_type: str) -> str:

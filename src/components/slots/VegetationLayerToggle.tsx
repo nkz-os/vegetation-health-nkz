@@ -6,8 +6,6 @@ import { useTranslation } from '@nekazari/sdk';
 
 const vegetationAccent = { base: '#65A30D', soft: '#ECFCCB', strong: '#4D7C0F' };
 
-const AVAILABLE_INDICES = ['NDVI', 'NDRE', 'NDMI', 'SAVI', 'EVI'];
-
 const VegetationLayerToggle: React.FC = () => {
   const { t } = useTranslation();
   const {
@@ -22,6 +20,10 @@ const VegetationLayerToggle: React.FC = () => {
 
   const hasSelectedData = !!(activeJobId || activeRasterPath || (selectedIndex && indexResults?.[selectedIndex]?.job_id));
   const hasAnyDataInTenant = entityDataStatus?.has_any_data;
+  // Indices are derived from the computed set (same source as the context-panel
+  // selector) — never a hardcoded list, which drifted and offered indices with
+  // no data (or hid indices that did).
+  const availableIndices = entityDataStatus?.available_indices ?? [];
 
   const disabledReason = (() => {
     if (layerScope === 'selected' && !selectedEntityId) return t('layerToggle.needsSelection', 'Select a parcel or switch to All');
@@ -47,7 +49,7 @@ const VegetationLayerToggle: React.FC = () => {
       opacityLabel={t('layerToggle.opacity', 'Opacity')}
       mode={
         <div className="flex flex-wrap gap-nkz-tight">
-          {AVAILABLE_INDICES.map(idx => (
+          {availableIndices.map(idx => (
             <button
               key={idx}
               type="button"
