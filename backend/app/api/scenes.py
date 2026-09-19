@@ -572,97 +572,114 @@ async def _dispatch_analyze_for_parcel(
     cop_d1 = _parse_iso_date(end_date_iso)
     if copernicus_indices and cop_d0 and cop_d1:
         quota = SatelliteQuota()
+        # Reserve one unit per index up front. Over quota → stop reserving;
+        # remaining Copernicus indices are simply not computed this run (the
+        # local pipeline is NOT a substitute — the quota protects the shared
+        # credential). Under-quota indices still run.
+        reserved: List[str] = []
         for idx in list(copernicus_indices):
-            # Reserve one unit up front. Over quota → stop reserving; remaining
-            # Copernicus indices are simply not computed this run (the local
-            # pipeline is NOT a substitute — the quota protects the shared
-            # credential). Under-quota indices still run.
             if not quota.check_and_reserve(tenant_id):
                 logger.warning(
                     "Satellite quota exhausted for tenant %s — skipping remaining "
                     "Copernicus indices from %s", tenant_id, idx,
                 )
                 break
+            reserved.append(idx)
+        copernicus_indices = reserved
+
+        if copernicus_indices:
+            # ONE Statistical API round-trip for every Copernicus index: the
+            # engine's multi-index evalscript computes them together in a
+            # single request. Calling it once per index (as before) multiplied
+            # identical round-trips and blew the gateway's 30s proxy timeout.
             try:
                 results = await engine_selector.compute_indices(
                     tenant_id=tenant_id,
                     parcel_id=entity_id,
                     parcel_geometry=geometry,
                     date_range=(cop_d0, cop_d1),
-                    index_types=[idx],
+                    index_types=copernicus_indices,
                 )
                 ran_local = any(
                     getattr(r, "data_fidelity", None) == "degraded_fallback"
                     for r in results
                 )
                 if ran_local:
-                    # Selector degraded to the free local pipeline — refund.
-                    quota.release(tenant_id)
+                    # Selector degraded to the free local pipeline — refund all.
+                    for _ in copernicus_indices:
+                        quota.release(tenant_id)
+
                 # One calculate_index job per (index, window) — mirrors local shape.
                 from app.services.copernicus_raster import materialize_if_pending
-                by_date = sorted(results, key=lambda r: r.sensing_date)
-                latest_date = by_date[-1].sensing_date if by_date else None
-                for r in by_date:
-                    is_latest = (r.sensing_date == latest_date)
-                    stats = {
-                        "mean": r.mean, "min": r.min, "max": r.max, "std": r.std,
-                        "p10": r.p10, "p90": r.p90,
-                        "valid_pixels": r.valid_pixels, "total_pixels": r.total_pixels,
-                    }
-                    engine_label = ("local_processing"
-                                    if r.data_fidelity == "degraded_fallback" else "copernicus")
-                    wjob = VegetationJob(
-                        tenant_id=tenant_id,
-                        job_type="calculate_index",
-                        entity_id=entity_id,
-                        entity_type="AgriParcel",
-                        parameters={"index_type": idx, "entity_id": entity_id, "engine": engine_label},
-                        created_by=user_id,
-                        crop_season_id=season_uuid,
-                    )
-                    wjob.mark_completed({
-                        "index_type": idx,
-                        "index_key": idx,
-                        "engine": engine_label,
-                        "data_fidelity": r.data_fidelity,
-                        "sensing_date": r.sensing_date.isoformat(),
-                        "statistics": stats,
-                        "geometry": geometry,          # for lazy raster materialization
-                        "raster_path": None,
-                        "raster_pending": (engine_label == "copernicus"),
-                    })
-                    db.add(wjob)
-                    db.commit()
-                    db.refresh(wjob)
+                by_index = {}
+                for r in results:
+                    by_index.setdefault(r.index_type, []).append(r)
+                for idx in copernicus_indices:
+                    by_date = sorted(by_index.get(idx, []), key=lambda r: r.sensing_date)
+                    latest_date = by_date[-1].sensing_date if by_date else None
+                    for r in by_date:
+                        is_latest = (r.sensing_date == latest_date)
+                        stats = {
+                            "mean": r.mean, "min": r.min, "max": r.max, "std": r.std,
+                            "p10": r.p10, "p90": r.p90,
+                            "valid_pixels": r.valid_pixels, "total_pixels": r.total_pixels,
+                        }
+                        engine_label = ("local_processing"
+                                        if r.data_fidelity == "degraded_fallback" else "copernicus")
+                        wjob = VegetationJob(
+                            tenant_id=tenant_id,
+                            job_type="calculate_index",
+                            entity_id=entity_id,
+                            entity_type="AgriParcel",
+                            parameters={"index_type": idx, "entity_id": entity_id, "engine": engine_label},
+                            created_by=user_id,
+                            crop_season_id=season_uuid,
+                        )
+                        wjob.mark_completed({
+                            "index_type": idx,
+                            "index_key": idx,
+                            "engine": engine_label,
+                            "data_fidelity": r.data_fidelity,
+                            "sensing_date": r.sensing_date.isoformat(),
+                            "statistics": stats,
+                            "geometry": geometry,          # for lazy raster materialization
+                            "raster_path": None,
+                            "raster_pending": (engine_label == "copernicus"),
+                        })
+                        db.add(wjob)
+                        db.commit()
+                        db.refresh(wjob)
 
-                    # Publish to the broker. Only the local pipeline used to do
-                    # this, so every Copernicus run left the broker empty and
-                    # anything reading EOProduct (crop-health) saw nothing.
-                    # Best-effort: a broker outage must not lose the statistics
-                    # we just computed and stored.
-                    await _publish_eo_index(
-                        tenant_id=tenant_id,
-                        parcel_id=entity_id,
-                        index_type=idx,
-                        # Copernicus reports valid_pixels; upsert reads pixel_count.
-                        statistics={**stats, "pixel_count": stats.get("valid_pixels", 0)},
-                        sensing_date=r.sensing_date,
-                    )
+                        # Publish to the broker. Only the local pipeline used to do
+                        # this, so every Copernicus run left the broker empty and
+                        # anything reading EOProduct (crop-health) saw nothing.
+                        # Best-effort: a broker outage must not lose the statistics
+                        # we just computed and stored.
+                        await _publish_eo_index(
+                            tenant_id=tenant_id,
+                            parcel_id=entity_id,
+                            index_type=idx,
+                            # Copernicus reports valid_pixels; upsert reads pixel_count.
+                            statistics={**stats, "pixel_count": stats.get("valid_pixels", 0)},
+                            sensing_date=r.sensing_date,
+                        )
 
-                    if is_latest and engine_label == "copernicus":
-                        await materialize_if_pending(db, wjob)   # eager latest (off-loop)
-                    cop_job_ids.append(str(wjob.id))
-                cop_job_ids_indices.append(idx)
+                        if is_latest and engine_label == "copernicus":
+                            await materialize_if_pending(db, wjob)   # eager latest (off-loop)
+                        cop_job_ids.append(str(wjob.id))
+                    cop_job_ids_indices.append(idx)
             except Exception as exc:
                 # Genuine SH/persist failure (no degraded result) — refund and
-                # route this index through the local pipeline so it still runs.
-                quota.release(tenant_id)
+                # route the indices through the local pipeline so they still run.
+                for _ in copernicus_indices:
+                    quota.release(tenant_id)
                 logger.warning(
-                    "Copernicus compute failed for index %s (tenant %s): %s — routing local",
-                    idx, tenant_id, exc,
+                    "Copernicus compute failed for indices %s (tenant %s): %s — routing local",
+                    copernicus_indices, tenant_id, exc,
                 )
-                if idx not in local_indices:
-                    local_indices.append(idx)
+                local_indices.extend(
+                    idx for idx in copernicus_indices if idx not in local_indices
+                )
 
     # Nothing left for the local pipeline → return the Copernicus jobs only.
     need_local = bool(local_indices or custom_formula_specs or include_sar)

@@ -171,9 +171,11 @@ def test_standard_indices_all_route_to_copernicus():
         dl.delay.return_value = MagicMock(id="celery-1")
         out = _run(db=db, indices=["NDVI", "NDRE"], engine_selector=selector)
 
-    # Both indices ran on Copernicus — one await each, where NDRE used to be
-    # dispatched to Celery instead.
-    assert selector.compute_indices.await_count == 2
+    # Both indices ran on Copernicus — in ONE statistical call carrying both
+    # (one round-trip per index multiplied identical requests and blew the
+    # gateway's 30s proxy timeout).
+    assert selector.compute_indices.await_count == 1
+    assert set(selector.compute_indices.await_args.kwargs["index_types"]) == {"NDVI", "NDRE"}
     cop_job = db.add.call_args_list[0].args[0]
     assert cop_job.result["index_type"] == "NDVI"
     assert str(cop_job.crop_season_id) == SEASON
@@ -382,3 +384,63 @@ def test_a_broker_failure_does_not_fail_the_request():
         out = _run(db=db, indices=["NDVI"], engine_selector=selector)
 
     assert out["job_ids"], "the job must survive a broker failure"
+
+
+# ---------------------------------------------------------------------------
+# Regression (502 timeout): ALL Copernicus indices in ONE statistical call
+# ---------------------------------------------------------------------------
+
+def test_multiple_copernicus_indices_single_statistical_call():
+    """One request per index multiplied identical Sentinel Hub round-trips and
+    blew the gateway's 30s proxy timeout (502). The engine's multi-index
+    evalscript computes them together — the dispatcher must call it once."""
+    db = _make_db()
+    selector = _selector(
+        sh_usable=True,
+        results=[
+            _index_result("NDVI"),
+            _index_result("SAVI"),
+            _index_result("GNDVI"),
+        ],
+    )
+    quota = MagicMock()
+    quota.check_and_reserve.return_value = True
+
+    with _orion_patch(), \
+         patch.object(scenes, "SatelliteQuota", return_value=quota), \
+         patch("app.services.copernicus_raster.ensure_copernicus_raster"), \
+         patch("app.services.copernicus_client.CopernicusDataSpaceClient"), \
+         patch.object(scenes, "download_sentinel2_scene") as dl:
+        out = _run(db=db, indices=["NDVI", "SAVI", "GNDVI"], engine_selector=selector)
+
+    # THE regression: one call, carrying every index.
+    selector.compute_indices.assert_awaited_once()
+    assert selector.compute_indices.await_args.kwargs["index_types"] == ["NDVI", "SAVI", "GNDVI"]
+    # Quota: one unit per index, none refunded.
+    assert quota.check_and_reserve.call_count == 3
+    quota.release.assert_not_called()
+    # One job per (index, result), all season-bound.
+    assert len(out["job_ids"]) == 3
+    assert out["indices"] == ["NDVI", "SAVI", "GNDVI"]
+    dl.delay.assert_not_called()
+
+
+def test_quota_exhaustion_stops_at_reserved_prefix():
+    """Over quota → only the already-reserved indices run; no local substitute."""
+    db = _make_db()
+    selector = _selector(sh_usable=True, results=[_index_result("NDVI")])
+    quota = MagicMock()
+    quota.check_and_reserve.side_effect = [True, False]  # 1st ok, 2nd exhausted
+
+    with _orion_patch(), \
+         patch.object(scenes, "SatelliteQuota", return_value=quota), \
+         patch("app.services.copernicus_raster.ensure_copernicus_raster"), \
+         patch("app.services.copernicus_client.CopernicusDataSpaceClient") as CopCls, \
+         patch.object(scenes, "download_sentinel2_scene") as dl:
+        out = _run(db=db, indices=["NDVI", "SAVI"], engine_selector=selector)
+
+    # Only the reserved index computed; the other is skipped (NOT local).
+    selector.compute_indices.assert_awaited_once()
+    assert selector.compute_indices.await_args.kwargs["index_types"] == ["NDVI"]
+    assert out["indices"] == ["NDVI"]
+    dl.delay.assert_not_called()
