@@ -31,6 +31,69 @@ logger = logging.getLogger(__name__)
 FIELD_OPS_URL = "http://field-operations-api-service:8420/internal/suggested-operation"
 
 
+def _clip_sar_to_parcel(
+    src_path: str,
+    dst_path: str,
+    bounds_4326,
+    pad_deg: float = 0.005,
+) -> None:
+    """Warp a GCP-only SAR band to EPSG:4326, clipped to the parcel bounds.
+
+    The raw Sentinel-1 GRD band is NOT geocoded (crs=None, identity transform,
+    ~210 GCPs in EPSG:4326). This warps it via the GCPs to a georeferenced
+    EPSG:4326 raster covering only the parcel (plus a small pad), so the COG is
+    parcel-sized instead of the full ~26410x16668 scene (which is identical and
+    redundant across parcels in the same scene).
+    """
+    import rasterio
+    from rasterio.vrt import WarpedVRT
+    from rasterio.warp import reproject, Resampling, calculate_default_transform
+
+    left, bottom, right, top = bounds_4326
+    left -= pad_deg
+    bottom -= pad_deg
+    right += pad_deg
+    top += pad_deg
+
+    with rasterio.open(src_path) as src:
+        gcps, gcps_crs = src.gcps
+        dst_crs = "EPSG:4326"
+        with WarpedVRT(
+            src,
+            src_crs=gcps_crs,
+            crs=dst_crs,
+            resampling=Resampling.bilinear,
+            src_nodata=0,
+            nodata=0,
+        ) as vrt:
+            dst_transform, dst_width, dst_height = calculate_default_transform(
+                dst_crs, dst_crs, vrt.width, vrt.height,
+                left=left, bottom=bottom, right=right, top=top,
+            )
+            kwargs = {
+                "driver": "GTiff",
+                "height": dst_height,
+                "width": dst_width,
+                "count": 1,
+                "dtype": src.dtypes[0],
+                "crs": dst_crs,
+                "transform": dst_transform,
+                "nodata": 0,
+            }
+            with rasterio.open(dst_path, "w", **kwargs) as dst:
+                reproject(
+                    source=rasterio.band(vrt, 1),
+                    destination=rasterio.band(dst, 1),
+                    src_transform=vrt.transform,
+                    src_crs=dst_crs,
+                    src_nodata=0,
+                    dst_transform=dst_transform,
+                    dst_crs=dst_crs,
+                    dst_nodata=0,
+                    resampling=Resampling.bilinear,
+                )
+
+
 def _upload_sar_cog(
     local_tiff: str,
     tenant_id: str,
@@ -38,13 +101,15 @@ def _upload_sar_cog(
     scene_id: str,
     pol: str,
     sensing_date_str: str,
+    bounds_4326=None,
 ) -> Optional[str]:
     """Persist a downloaded SAR band to MinIO as a COG.
 
     The raw band lives in a ``TemporaryDirectory`` that is deleted when the task
     ends, so it must be uploaded here (and its object key stored as
-    ``raster_path``) for the tile endpoints to render the map layer. Returns the
-    S3 object key, or ``None`` on failure (the job degrades to stats-only).
+    ``raster_path``) for the tile endpoints to render the map layer. When
+    ``bounds_4326`` is given the band is clipped to the parcel before COG-ifying.
+    Returns the S3 object key, or ``None`` on failure (job degrades to stats-only).
     """
     bucket = os.getenv("VEGETATION_COG_BUCKET") or generate_tenant_bucket_name(tenant_id)
     date_key = sensing_date_str or "unknown"
@@ -56,10 +121,15 @@ def _upload_sar_cog(
             try:
                 from rio_cogeo.cogeo import cog_translate
                 from rio_cogeo.profiles import cog_profiles
+                source = local_tiff
+                if bounds_4326:
+                    clipped = os.path.join(td, "clipped.tif")
+                    _clip_sar_to_parcel(local_tiff, clipped, bounds_4326)
+                    source = clipped
                 # in_memory=False streams to disk: a full S1 IW scene is ~880 MB
                 # and would OOM the worker if built in a MemoryFile. cog_translate
-                # georeferences the GCP-only GRD band into EPSG:4326 for tiles.
-                cog_translate(local_tiff, cog_path, cog_profiles.get("deflate"), in_memory=False, quiet=True)
+                # georeferences the (clipped) GRD band into EPSG:4326 for tiles.
+                cog_translate(source, cog_path, cog_profiles.get("deflate"), in_memory=False, quiet=True)
             except Exception as e:  # noqa: BLE001
                 logger.warning("SAR COG conversion failed for %s (%s); uploading raw GeoTIFF", pol, e)
                 cog_path = local_tiff
@@ -342,7 +412,8 @@ def download_sentinel1_scene(
                         # Persist the band to MinIO as a COG before the local temp
                         # dir is deleted, and store the object key as raster_path.
                         s3_path = _upload_sar_cog(
-                            raster_path, tenant_id, entity_id, scene_id, pol, sensing_date_str
+                            raster_path, tenant_id, entity_id, scene_id, pol, sensing_date_str,
+                            bounds_4326=geom.bounds,
                         )
 
                         completed_result = {
