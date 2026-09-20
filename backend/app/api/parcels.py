@@ -564,28 +564,22 @@ async def check_parcel_size(
     current_user: dict = Depends(require_auth),
 ):
     """Check if parcel area exceeds the limit for vegetation index processing."""
-    import requests as req
-    from app.services.fiware_integration import ORION_URL, _make_headers
+    import httpx
 
     tenant_id = current_user["tenant_id"]
-    parcel_urn = f"urn:ngsi-ld:AgriParcel:{entity_id}"
-    headers = _make_headers(tenant_id)
 
     try:
-        resp = req.get(
-            f"{ORION_URL}/ngsi-ld/v1/entities/{parcel_urn}?options=keyValues",
-            headers=headers,
-            timeout=10,
+        orion = SyncOrionClient(tenant_id)
+        entity = orion.get_entity(entity_id, options="keyValues")
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            raise HTTPException(status_code=404, detail="Parcel not found")
+        raise HTTPException(
+            status_code=502, detail=f"Orion-LD error: {e.response.status_code}"
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Failed to query Orion-LD: {e}")
 
-    if resp.status_code == 404:
-        raise HTTPException(status_code=404, detail="Parcel not found")
-    if not resp.ok:
-        raise HTTPException(status_code=502, detail="Orion-LD error")
-
-    entity = resp.json()
     location = entity.get("location", {})
     coords = location.get("coordinates") if isinstance(location, dict) else None
 
