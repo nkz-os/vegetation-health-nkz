@@ -32,6 +32,10 @@ INDEX_RENDER_CONFIG = {
     'LAI': {'colormap_name': 'greens', 'rescale': (0, 6)},
     'CIre': {'colormap_name': 'greens', 'rescale': (0, 5)},
     'CUSTOM': {'colormap_name': 'rdylgn', 'rescale': (-1, 1)},
+    # SAR backscatter is stored as Sentinel-1 GRD DN (roughly 0–1000, no dB
+    # calibration). A sequential ramp over that scale renders the field pattern.
+    'SAR-VV': {'colormap_name': 'viridis', 'rescale': (0, 500)},
+    'SAR-VH': {'colormap_name': 'viridis', 'rescale': (0, 350)},
 }
 DEFAULT_RENDER = {'colormap_name': 'rdylgn', 'rescale': (-1, 1)}
 

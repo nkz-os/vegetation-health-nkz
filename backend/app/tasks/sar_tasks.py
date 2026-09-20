@@ -11,7 +11,7 @@ import os
 import tempfile
 import uuid
 from datetime import date, datetime, timezone
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 import numpy as np
 from rasterio.transform import from_gcps
@@ -24,10 +24,55 @@ from app.services.copernicus_client import CopernicusDataSpaceClient
 from app.services.platform_credentials import get_copernicus_credentials_with_fallback
 from app.services.fiware_integration import upsert_eo_product
 from app.services.sar_smi_processor import DEFAULT_INCIDENCE_DEG
+from app.services.storage import create_storage_service, generate_tenant_bucket_name
 
 logger = logging.getLogger(__name__)
 
 FIELD_OPS_URL = "http://field-operations-api-service:8420/internal/suggested-operation"
+
+
+def _upload_sar_cog(
+    local_tiff: str,
+    tenant_id: str,
+    entity_id: str,
+    scene_id: str,
+    pol: str,
+    sensing_date_str: str,
+) -> Optional[str]:
+    """Persist a downloaded SAR band to MinIO as a COG.
+
+    The raw band lives in a ``TemporaryDirectory`` that is deleted when the task
+    ends, so it must be uploaded here (and its object key stored as
+    ``raster_path``) for the tile endpoints to render the map layer. Returns the
+    S3 object key, or ``None`` on failure (the job degrades to stats-only).
+    """
+    bucket = os.getenv("VEGETATION_COG_BUCKET") or generate_tenant_bucket_name(tenant_id)
+    date_key = sensing_date_str or "unknown"
+    remote_path = f"{tenant_id}/entities/{entity_id}/sar/{date_key}/{scene_id}-{pol}.tif"
+
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            cog_path = os.path.join(td, "cog.tif")
+            try:
+                from rio_cogeo.cogeo import cog_translate
+                from rio_cogeo.profiles import cog_profiles
+                # in_memory=False streams to disk: a full S1 IW scene is ~880 MB
+                # and would OOM the worker if built in a MemoryFile. cog_translate
+                # georeferences the GCP-only GRD band into EPSG:4326 for tiles.
+                cog_translate(local_tiff, cog_path, cog_profiles.get("deflate"), in_memory=False, quiet=True)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("SAR COG conversion failed for %s (%s); uploading raw GeoTIFF", pol, e)
+                cog_path = local_tiff
+
+            storage = create_storage_service(
+                storage_type=os.getenv("STORAGE_TYPE", "s3"),
+                default_bucket=bucket,
+            )
+            storage.upload_file(cog_path, remote_path, bucket)
+        return remote_path
+    except Exception as e:  # noqa: BLE001
+        logger.warning("SAR COG upload failed for %s (%s): %s", pol, scene_id, e)
+        return None
 
 
 def _raster_grid(src):
@@ -294,16 +339,24 @@ def download_sentinel1_scene(
                         db.add(calc_job)
                         db.commit()
 
-                        calc_job.mark_completed({
+                        # Persist the band to MinIO as a COG before the local temp
+                        # dir is deleted, and store the object key as raster_path.
+                        s3_path = _upload_sar_cog(
+                            raster_path, tenant_id, entity_id, scene_id, pol, sensing_date_str
+                        )
+
+                        completed_result = {
                             "index_type": f"SAR-{pol}",
                             "index_key": f"SAR-{pol}",
                             "statistics": stats,
-                            "raster_path": raster_path,
                             "scene_id": str(scene_record.id),
                             "sensing_date": sensing_date_str,
                             "source_image_count": 1,
                             "is_composite": False,
-                        })
+                        }
+                        if s3_path:
+                            completed_result["raster_path"] = s3_path
+                        calc_job.mark_completed(completed_result)
                         db.commit()
 
                         logger.info(

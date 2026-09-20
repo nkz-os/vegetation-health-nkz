@@ -24,16 +24,19 @@ class TestSARImports:
 class TestS1DownloadTask:
     """download_sentinel1_scene — one task: download + zonal stats + EOProduct."""
 
+    @patch("app.tasks.sar_tasks._upload_sar_cog")
     @patch("app.tasks.sar_tasks.get_db_session")
     @patch("app.tasks.sar_tasks.get_copernicus_credentials_with_fallback")
     @patch("app.tasks.sar_tasks.CopernicusDataSpaceClient")
     def test_creates_calculate_index_jobs_for_vv_and_vh(
-        self, mock_client_cls, mock_creds, mock_db
+        self, mock_client_cls, mock_creds, mock_db, mock_upload
     ):
         """download_sentinel1_scene creates 2 VegetationJob records (SAR-VV, SAR-VH)."""
         from app.tasks.sar_tasks import download_sentinel1_scene
+        from app.models import VegetationJob
 
         mock_creds.return_value = {"client_id": "id", "client_secret": "secret"}
+        mock_upload.return_value = "test-tenant/entities/urn:ngsi-ld:AgriParcel:parcel-1/sar/2026-06-01/S1A_TEST-VV.tif"
 
         mock_client = MagicMock()
         mock_client.download_s1_bands.return_value = {
@@ -94,9 +97,22 @@ class TestS1DownloadTask:
         # At least 2 add calls for SAR-VV and SAR-VH calculate_index jobs
         assert len(add_calls) >= 2
 
+        # The calculate_index jobs must persist an S3 object key (not the local
+        # temp path) so the tile endpoints can render the SAR map layer.
+        calc_jobs = [
+            c.args[0] for c in mock_session.add.call_args_list
+            if isinstance(c.args[0], VegetationJob) and c.args[0].job_type == "calculate_index"
+        ]
+        assert calc_jobs, "expected calculate_index jobs to be added"
+        for j in calc_jobs:
+            rp = (j.result or {}).get("raster_path")
+            assert rp and rp.startswith("test-tenant/entities/"), f"expected S3 key, got {rp!r}"
+            assert not rp.startswith("/tmp/"), f"local temp path leaked into raster_path: {rp!r}"
+
+    @patch("app.tasks.sar_tasks._upload_sar_cog")
     @patch("app.tasks.sar_tasks.get_db_session")
     @patch("app.tasks.sar_tasks.get_copernicus_credentials_with_fallback")
-    def test_handles_missing_vh_band(self, mock_creds, mock_db):
+    def test_handles_missing_vh_band(self, mock_creds, mock_db, mock_upload):
         """download_sentinel1_scene handles missing VH gracefully."""
         from app.tasks.sar_tasks import download_sentinel1_scene
 
