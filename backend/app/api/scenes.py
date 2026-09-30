@@ -29,11 +29,11 @@ from app.middleware.auth import require_auth
 from app.models import VegetationScene, VegetationIndexCache, VegetationJob, VegetationCustomFormula
 from app.schemas import LatestResultsItem
 from app.services.tile_auth import generate_tile_token
-from app.tasks import calculate_vegetation_index, download_sentinel2_scene
+from app.tasks import analyze_copernicus, calculate_vegetation_index
 from app.engines.routing import route_index
 from app.engines.base import EngineDegradedException
 from app.services.satellite_quota import SatelliteQuota
-from app.services.fiware_integration import upsert_eo_index
+from app.services.local_analyze import AnalyzeDispatchError, dispatch_local_pipeline
 from nkz_platform_sdk import OrionClient
 
 router = APIRouter(prefix="/api/vegetation", tags=["scenes"])
@@ -156,24 +156,6 @@ def _persist_completed_copernicus_job(
     db.refresh(job)
     return job
 
-
-async def _publish_eo_index(**kwargs) -> None:
-    """Publish one index to the broker from async code, best-effort.
-
-    `upsert_eo_index` reaches the async SDK through an `asyncio.run()` bridge
-    meant for the sync callers (the Celery tasks). Calling it straight from this
-    async handler raised "asyncio.run() cannot be called from a running event
-    loop" on every index, so the broker stayed empty while the request still
-    succeeded — the failure showed up only in the pod logs. Running it in a
-    worker thread gives the bridge the loop-free context it expects.
-    """
-    try:
-        await asyncio.to_thread(lambda: upsert_eo_index(**kwargs))
-    except Exception as exc:
-        logger.warning(
-            "EOProduct publish failed for %s/%s: %s",
-            kwargs.get("parcel_id"), kwargs.get("index_type"), exc,
-        )
 
 @router.post("/calculate")
 async def calculate_index_endpoint(
@@ -484,9 +466,9 @@ async def _dispatch_analyze_for_parcel(
 ) -> Dict[str, Any]:
     """Shared analyze pipeline.
 
-    Copernicus-eligible indices (10 m-native, no custom formula) are computed
-    INLINE via the Sentinel Hub Statistical API when it is usable for the
-    tenant — no scene download. Red-edge / custom / SAR go through the local
+    Copernicus-eligible indices (10 m-native, no custom formula) are queued as
+    one `copernicus_analyze` job computed in the worker via the Sentinel Hub
+    Statistical API when it is usable for the tenant — no scene download. Red-edge / custom / SAR go through the local
     download→calc Celery pipeline. Every resulting job (both engines) is bound
     to `crop_season_id` when provided. Mirrors the POST /calculate routing.
 
@@ -588,93 +570,47 @@ async def _dispatch_analyze_for_parcel(
         copernicus_indices = reserved
 
         if copernicus_indices:
-            # ONE Statistical API round-trip for every Copernicus index: the
-            # engine's multi-index evalscript computes them together in a
-            # single request. Calling it once per index (as before) multiplied
-            # identical round-trips and blew the gateway's 30s proxy timeout.
+            # Computed in the worker: the Statistical API call plus persistence,
+            # broker publish and the eager raster exceeded the gateway's 30 s
+            # proxy timeout when run inside this request.
+            cop_job = VegetationJob(
+                tenant_id=tenant_id,
+                job_type="copernicus_analyze",
+                entity_id=entity_id,
+                entity_type="AgriParcel",
+                parameters={
+                    "indices": copernicus_indices,
+                    "entity_id": entity_id,
+                    "geometry": geometry,
+                    "bbox": bbox,
+                    "start_date": cop_d0.isoformat(),
+                    "end_date": cop_d1.isoformat(),
+                    "crop_season_id": crop_season_id,
+                    "local_cloud_threshold": local_cloud_threshold,
+                },
+                created_by=user_id,
+                crop_season_id=season_uuid,
+            )
+            db.add(cop_job)
+            db.commit()
+            db.refresh(cop_job)
             try:
-                results = await engine_selector.compute_indices(
-                    tenant_id=tenant_id,
-                    parcel_id=entity_id,
-                    parcel_geometry=geometry,
-                    date_range=(cop_d0, cop_d1),
-                    index_types=copernicus_indices,
+                async_result = analyze_copernicus.delay(
+                    str(cop_job.id), tenant_id, cop_job.parameters
                 )
-                ran_local = any(
-                    getattr(r, "data_fidelity", None) == "degraded_fallback"
-                    for r in results
-                )
-                if ran_local:
-                    # Selector degraded to the free local pipeline — refund all.
-                    for _ in copernicus_indices:
-                        quota.release(tenant_id)
-
-                # One calculate_index job per (index, window) — mirrors local shape.
-                from app.services.copernicus_raster import materialize_if_pending
-                by_index = {}
-                for r in results:
-                    by_index.setdefault(r.index_type, []).append(r)
-                for idx in copernicus_indices:
-                    by_date = sorted(by_index.get(idx, []), key=lambda r: r.sensing_date)
-                    latest_date = by_date[-1].sensing_date if by_date else None
-                    for r in by_date:
-                        is_latest = (r.sensing_date == latest_date)
-                        stats = {
-                            "mean": r.mean, "min": r.min, "max": r.max, "std": r.std,
-                            "p10": r.p10, "p90": r.p90,
-                            "valid_pixels": r.valid_pixels, "total_pixels": r.total_pixels,
-                        }
-                        engine_label = ("local_processing"
-                                        if r.data_fidelity == "degraded_fallback" else "copernicus")
-                        wjob = VegetationJob(
-                            tenant_id=tenant_id,
-                            job_type="calculate_index",
-                            entity_id=entity_id,
-                            entity_type="AgriParcel",
-                            parameters={"index_type": idx, "entity_id": entity_id, "engine": engine_label},
-                            created_by=user_id,
-                            crop_season_id=season_uuid,
-                        )
-                        wjob.mark_completed({
-                            "index_type": idx,
-                            "index_key": idx,
-                            "engine": engine_label,
-                            "data_fidelity": r.data_fidelity,
-                            "sensing_date": r.sensing_date.isoformat(),
-                            "statistics": stats,
-                            "geometry": geometry,          # for lazy raster materialization
-                            "raster_path": None,
-                            "raster_pending": (engine_label == "copernicus"),
-                        })
-                        db.add(wjob)
-                        db.commit()
-                        db.refresh(wjob)
-
-                        # Publish to the broker. Only the local pipeline used to do
-                        # this, so every Copernicus run left the broker empty and
-                        # anything reading EOProduct (crop-health) saw nothing.
-                        # Best-effort: a broker outage must not lose the statistics
-                        # we just computed and stored.
-                        await _publish_eo_index(
-                            tenant_id=tenant_id,
-                            parcel_id=entity_id,
-                            index_type=idx,
-                            # Copernicus reports valid_pixels; upsert reads pixel_count.
-                            statistics={**stats, "pixel_count": stats.get("valid_pixels", 0)},
-                            sensing_date=r.sensing_date,
-                        )
-
-                        if is_latest and engine_label == "copernicus":
-                            await materialize_if_pending(db, wjob)   # eager latest (off-loop)
-                        cop_job_ids.append(str(wjob.id))
-                    cop_job_ids_indices.append(idx)
+                cop_job.celery_task_id = async_result.id
+                db.commit()
+                cop_job_ids.append(str(cop_job.id))
+                cop_job_ids_indices.extend(copernicus_indices)
             except Exception as exc:
-                # Genuine SH/persist failure (no degraded result) — refund and
-                # route the indices through the local pipeline so they still run.
+                # Queue down — refund and run these indices on the local
+                # pipeline, which reports its own enqueue failure if it persists.
                 for _ in copernicus_indices:
                     quota.release(tenant_id)
+                cop_job.mark_failed(f"Could not enqueue Celery task: {exc}")
+                db.commit()
                 logger.warning(
-                    "Copernicus compute failed for indices %s (tenant %s): %s — routing local",
+                    "Copernicus enqueue failed for indices %s (tenant %s): %s — routing local",
                     copernicus_indices, tenant_id, exc,
                 )
                 local_indices.extend(
@@ -687,7 +623,7 @@ async def _dispatch_analyze_for_parcel(
         return {
             "job_id": cop_job_ids[0] if cop_job_ids else None,
             "job_ids": cop_job_ids,
-            "message": f"Analysis started: {len(cop_job_ids)} Copernicus index/indices",
+            "message": f"Analysis queued: {len(cop_job_ids_indices)} Copernicus index/indices",
             "indices": [i for i in indices_list if i in cop_job_ids_indices],
             "custom_formulas": custom_formula_specs,
             "windows": 0,
@@ -698,177 +634,41 @@ async def _dispatch_analyze_for_parcel(
 
     # The local download pipeline processes ONLY the non-Copernicus indices.
     indices_list = local_indices
-
-    from app.services.copernicus_client import CopernicusDataSpaceClient
-    from app.services.platform_credentials import get_copernicus_credentials_with_fallback
-    from app.services.temporal_utils import group_scenes_into_windows
-
-    creds = get_copernicus_credentials_with_fallback()
-    if not creds:
-        raise HTTPException(status_code=503, detail="Copernicus credentials not configured")
-    copernicus = CopernicusDataSpaceClient()
-    copernicus.set_credentials(creds["client_id"], creds["client_secret"])
-
-    from shapely.geometry import shape as shp_fn
-    geom_obj = shp_fn(geometry)
-    intersects_geojson = geometry
-    if geom_obj.geom_type == "MultiPolygon":
-        largest = max(geom_obj.geoms, key=lambda g: g.area)
-        intersects_geojson = largest.__geo_interface__
-
-    from datetime import timezone,  date as _date_type
-    all_scenes = copernicus.search_scenes(
-        intersects=intersects_geojson,
-        start_date=_date_type.fromisoformat(start_date_iso),
-        end_date=_date_type.fromisoformat(end_date_iso),
-        cloud_cover_lte=50,
-        limit=50,
-    )
-
-    if not all_scenes:
-        raise HTTPException(status_code=404, detail="No scenes found in the selected date range")
-
-    windows = group_scenes_into_windows(all_scenes, date_key="sensing_date")
-
-    # Stage 1: build all VegetationJob rows in memory and commit them in a
-    # single transaction. Avoids the per-iteration commit pattern that left
-    # the caller with a partial set of rows + 503 when window N failed.
-    pending_jobs: List[VegetationJob] = []
-    for window in windows:
-        best = sorted(window["scenes"], key=lambda s: s.get("cloud_cover", 100))[0]
-
-        job_parameters = {
-            "scene_id": best["id"],
-            "bbox": bbox,
-            "bounds": geometry,
-            "entity_id": entity_id,
-            "cloud_coverage_threshold": 50,
-            "calculate_indices": indices_list,
-            "calculate_custom_formulas": custom_formula_specs,
-        }
-        if local_cloud_threshold is not None:
-            job_parameters["local_cloud_threshold"] = float(local_cloud_threshold)
-        # Propagate season binding to the worker so the child calculate_index
-        # jobs it spawns inherit crop_season_id (else they orphan into legacy).
-        if crop_season_id:
-            job_parameters["crop_season_id"] = crop_season_id
-
-        pending_jobs.append(
-            VegetationJob(
-                tenant_id=tenant_id,
-                job_type="download",
-                entity_id=entity_id,
-                entity_type="AgriParcel",
-                parameters=job_parameters,
-                created_by=user_id,
-                crop_season_id=season_uuid,
-            )
+    try:
+        local = dispatch_local_pipeline(
+            db,
+            tenant_id=tenant_id,
+            entity_id=entity_id,
+            user_id=user_id,
+            geometry=geometry,
+            bbox=bbox,
+            indices=indices_list,
+            custom_formula_specs=custom_formula_specs,
+            start_date_iso=start_date_iso,
+            end_date_iso=end_date_iso,
+            local_cloud_threshold=local_cloud_threshold,
+            crop_season_id=crop_season_id,
+            season_uuid=season_uuid,
+            include_sar=include_sar,
         )
+    except AnalyzeDispatchError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    job_ids = local["job_ids"]
+    windows = local["windows"]
+    scenes_found = local["scenes_found"]
 
-    db.add_all(pending_jobs)
-    db.commit()
-    for j in pending_jobs:
-        db.refresh(j)
-
-    # Stage 2: dispatch each Celery task. If any .delay() fails, mark every
-    # already-enqueued job (and the rest) as failed in a single follow-up
-    # commit so the response is consistent with the DB state.
-    job_ids: List[str] = []
-    enqueue_error: Optional[Exception] = None
-    for idx, job in enumerate(pending_jobs):
-        try:
-            async_result = download_sentinel2_scene.delay(
-                str(job.id), tenant_id, job.parameters
-            )
-            job.celery_task_id = async_result.id
-            job_ids.append(str(job.id))
-        except Exception as exc:
-            logger.exception("Failed to enqueue download task for job %s", job.id)
-            enqueue_error = exc
-            for k in range(idx, len(pending_jobs)):
-                pending_jobs[k].status = "failed"
-                pending_jobs[k].error_message = (
-                    f"Could not enqueue Celery task: {exc}"
-                )
-            break
-    db.commit()
-
-    if enqueue_error is not None:
-        raise HTTPException(
-            status_code=503,
-            detail="Job queue unavailable, please retry shortly.",
-        ) from enqueue_error
-
-    # Trigger SAR analysis if requested
-    if include_sar:
-        try:
-            from app.tasks.sar_tasks import download_sentinel1_scene
-
-            try:
-                creds = get_copernicus_credentials_with_fallback()
-                copernicus = CopernicusDataSpaceClient()
-                if creds:
-                    copernicus.set_credentials(creds["client_id"], creds["client_secret"])
-
-                s1_scenes = copernicus.search_s1_scenes(
-                    intersects=intersects_geojson,
-                    start_date=_date_type.fromisoformat(start_date_iso),
-                    end_date=_date_type.fromisoformat(end_date_iso),
-                    limit=3,
-                )
-
-                for s1_scene in s1_scenes:
-                    s1_params = {
-                        "scene_id": s1_scene["id"],
-                        "bounds": intersects_geojson,
-                        "bbox": bbox,
-                        "sensing_date": s1_scene["sensing_date"],
-                        "entity_id": entity_id,
-                    }
-                    if crop_season_id:
-                        s1_params["crop_season_id"] = crop_season_id
-                    sar_job = VegetationJob(
-                        tenant_id=tenant_id,
-                        entity_id=entity_id,
-                        job_type="download_sar",
-                        status="pending",
-                        parameters=s1_params,
-                        crop_season_id=season_uuid,
-                    )
-                    db.add(sar_job)
-                    db.commit()
-
-                    try:
-                        download_sentinel1_scene.delay(
-                            job_id=str(sar_job.id),
-                            tenant_id=tenant_id,
-                            parameters=s1_params,
-                        )
-                    except Exception as enq_exc:
-                        sar_job.status = "failed"
-                        sar_job.error_message = f"SAR enqueue failed: {enq_exc}"
-                        db.commit()
-            except Exception as e:
-                logger.warning("SAR trigger failed (non-fatal) for %s: %s", entity_id, e)
-        except Exception as e:
-            logger.warning("SAR setup failed (non-fatal) for %s: %s", entity_id, e)
-
-    logger.info(
-        "Multi-scene analysis: %d windows dispatched for entity %s (scenes: %d, indices: %s, season: %s)",
-        len(windows), entity_id, len(all_scenes), indices_list, crop_season_id,
-    )
     all_job_ids = cop_job_ids + job_ids
     return {
         "job_id": all_job_ids[0] if all_job_ids else None,
         "job_ids": all_job_ids,
         "message": (
-            f"Analysis started: {len(windows)} date windows, {len(all_scenes)} scenes found"
-            + (f" + {len(cop_job_ids)} Copernicus index/indices" if cop_job_ids else "")
+            f"Analysis started: {windows} date windows, {scenes_found} scenes found"
+            + (f" + {len(cop_job_ids_indices)} Copernicus index/indices" if cop_job_ids else "")
         ),
         "indices": cop_job_ids_indices + indices_list,
         "custom_formulas": custom_formula_specs,
-        "windows": len(windows),
-        "scenes_found": len(all_scenes),
+        "windows": windows,
+        "scenes_found": scenes_found,
         "date_range": {"start": start_date_iso, "end": end_date_iso},
         "crop_season_id": crop_season_id,
     }

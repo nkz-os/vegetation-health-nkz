@@ -12,7 +12,7 @@ was only visible in the pod logs, because publishing is best-effort.
 import asyncio
 from unittest.mock import patch
 
-from app.api.scenes import _publish_eo_index
+from app.services.copernicus_analyze import publish_eo_index as _publish_eo_index
 
 
 def test_publishing_works_inside_a_running_loop():
@@ -29,7 +29,7 @@ def test_publishing_works_inside_a_running_loop():
         return "urn:ngsi-ld:EOProduct:x"
 
     async def _drive():
-        with patch("app.api.scenes.upsert_eo_index", _fake_upsert):
+        with patch("app.services.copernicus_analyze.upsert_eo_index", _fake_upsert):
             await _publish_eo_index(tenant_id="montiko", parcel_id="p", index_type="NDVI")
 
     asyncio.run(_drive())
@@ -39,7 +39,7 @@ def test_publishing_works_inside_a_running_loop():
 
 def test_a_publish_failure_is_swallowed():
     async def _drive():
-        with patch("app.api.scenes.upsert_eo_index", side_effect=RuntimeError("broker down")):
+        with patch("app.services.copernicus_analyze.upsert_eo_index", side_effect=RuntimeError("broker down")):
             await _publish_eo_index(tenant_id="montiko", parcel_id="p", index_type="NDVI")
 
     asyncio.run(_drive())  # must not raise
