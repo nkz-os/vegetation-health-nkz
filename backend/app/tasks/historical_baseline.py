@@ -10,8 +10,6 @@ import os
 import tempfile
 from datetime import date, timedelta
 
-import numpy as np
-
 from app.celery_app import celery_app
 from app.services.fiware_integration import upsert_eo_index
 
@@ -24,6 +22,24 @@ BAND_MAP = {
     "SAVI": ["B04", "B08"],
     "EVI": ["B02", "B04", "B08"],
 }
+
+# Formula per index lives in VegetationIndexProcessor; each entry's bands must
+# match what that method loads (BAND_MAP above).
+_INDEX_CALCULATORS = {
+    "NDVI": "calculate_ndvi",
+    "GNDVI": "calculate_gndvi",
+    "NDRE": "calculate_ndre",
+    "SAVI": "calculate_savi",
+    "EVI": "calculate_evi",
+}
+
+
+def index_bands(index: str) -> list:
+    """Bands to download for `index`. Unknown indices are rejected, never
+    silently computed as NDVI and stored under another index's name."""
+    if index not in BAND_MAP:
+        raise ValueError(f"Unsupported index for historical baseline: {index}")
+    return BAND_MAP[index]
 
 
 def _get_parcel_geometry(tenant_id: str, entity_id: str) -> tuple:
@@ -70,11 +86,10 @@ def _process_window(
 ) -> bool:
     """Process a single sensing window: search, download, calc, persist.
 
-    Returns True if a record was created, False otherwise.
+    Returns True if a record was created, False when the window has no usable
+    scene or no valid pixels. Raster processing errors propagate to the caller.
     """
-    import rasterio
-    from rasterio.mask import mask as rio_mask
-    from shapely.geometry import shape
+    from app.services.processor import VegetationIndexProcessor
 
     # Search for best scene in window
     scenes = copernicus_client.search_scenes(
@@ -100,32 +115,19 @@ def _process_window(
         if not band_paths:
             return False
 
-        # Read red (B04) and NIR (B08) bands for NDVI computation
-        red_band = band_paths.get('B04')
-        nir_band = band_paths.get('B08')
-        if not red_band or not nir_band:
-            logger.warning("Missing B04 or B08 for NDVI computation")
+        missing = [b for b in required_bands if not band_paths.get(b)]
+        if missing:
+            logger.warning("Scene %s missing bands %s for %s", best["id"], missing, index)
             return False
 
-        try:
-            with rasterio.open(red_band) as red_src, rasterio.open(nir_band) as nir_src:
-                parcel_shape = shape(intersects)
-                red_data, _ = rio_mask(red_src, [parcel_shape], crop=True, nodata=np.nan)
-                nir_data, _ = rio_mask(nir_src, [parcel_shape], crop=True, nodata=np.nan)
-                red = red_data[0].astype(np.float32)
-                nir = nir_data[0].astype(np.float32)
-                ndvi = np.where((nir + red) > 0, (nir - red) / (nir + red), np.nan)
-                valid = np.isfinite(ndvi)
+        # The processor crops to the parcel bbox and rasterizes the parcel in
+        # the raster's CRS: Sentinel-2 bands are UTM, the parcel is EPSG:4326.
+        processor = VegetationIndexProcessor(band_paths, bbox=bbox)
+        index_array = getattr(processor, _INDEX_CALCULATORS[index])()
+        geometry_mask = processor.create_geometry_mask(intersects)
+        statistics = processor.calculate_statistics(index_array, mask=geometry_mask)
 
-                if not np.any(valid):
-                    return False
-
-                mean_val = float(np.nanmean(ndvi))
-                min_val = float(np.nanmin(ndvi))
-                max_val = float(np.nanmax(ndvi))
-                std_val = float(np.nanstd(ndvi))
-        except Exception as e:
-            logger.warning("Raster processing failed for %s: %s", best["id"], e)
+        if statistics["pixel_count"] == 0:
             return False
 
     try:
@@ -138,7 +140,7 @@ def _process_window(
         tenant_id=tenant_id,
         parcel_id=entity_id if entity_id.startswith("urn:ngsi-ld:AgriParcel:") else f"urn:ngsi-ld:AgriParcel:{entity_id}",
         index_type=index,
-        statistics={"mean": mean_val, "min": min_val, "max": max_val, "std": std_val, "pixel_count": int(np.sum(valid))},
+        statistics=statistics,
         sensing_date=sensing_dt,
     )
 
@@ -173,7 +175,7 @@ def build_historical_baseline(
     from app.services.copernicus_client import CopernicusDataSpaceClient
     from app.services.platform_credentials import get_copernicus_credentials_with_fallback
 
-    required_bands = BAND_MAP.get(index, ["B04", "B08"])
+    required_bands = index_bands(index)
     today = date.today()
 
     try:
@@ -187,6 +189,7 @@ def build_historical_baseline(
             copernicus.set_credentials(creds["client_id"], creds["client_secret"])
 
         records_created = 0
+        windows_failed = 0
 
         # 3. Iterate years backwards
         for year_offset in range(years):
@@ -211,27 +214,47 @@ def build_historical_baseline(
                     },
                 )
 
-                if _process_window(
-                    tenant_id=tenant_id,
-                    entity_id=entity_id,
-                    intersects=intersects,
-                    bbox=bbox,
-                    copernicus_client=copernicus,
-                    window_start=current,
-                    window_end=window_end,
-                    index=index,
-                    cloud_threshold=cloud_threshold,
-                    required_bands=required_bands,
-                ):
-                    records_created += 1
+                try:
+                    if _process_window(
+                        tenant_id=tenant_id,
+                        entity_id=entity_id,
+                        intersects=intersects,
+                        bbox=bbox,
+                        copernicus_client=copernicus,
+                        window_start=current,
+                        window_end=window_end,
+                        index=index,
+                        cloud_threshold=cloud_threshold,
+                        required_bands=required_bands,
+                    ):
+                        records_created += 1
+                except Exception:
+                    # One bad scene must not abort years of windows, but it must
+                    # be visible: a systematic error used to look like "no data".
+                    windows_failed += 1
+                    logger.exception(
+                        "Historical window %s..%s failed for %s (%s)",
+                        current.isoformat(), window_end.isoformat(), entity_id, index,
+                    )
 
                 current = window_end + timedelta(days=1)
 
+        if windows_failed and records_created == 0:
+            raise RuntimeError(
+                f"Historical baseline for {entity_id} ({index}): every processed window "
+                f"failed ({windows_failed}); see window errors above"
+            )
+
         logger.info(
-            "Historical baseline complete for %s: %d records (%d years, %s)",
-            entity_id, records_created, years, index,
+            "Historical baseline complete for %s: %d records, %d failed windows (%d years, %s)",
+            entity_id, records_created, windows_failed, years, index,
         )
-        return {"records_created": records_created, "years": years, "index": index}
+        return {
+            "records_created": records_created,
+            "windows_failed": windows_failed,
+            "years": years,
+            "index": index,
+        }
 
     except Exception as e:
         logger.error("Historical baseline failed for %s: %s", entity_id, e, exc_info=True)
