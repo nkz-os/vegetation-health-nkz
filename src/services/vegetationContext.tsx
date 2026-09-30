@@ -76,8 +76,10 @@ function getStore(): VegetationStore {
         selectedSceneId: null,
         selectedDate: null,
         layerOpacity: 75,
-        layerVisible: false,
-        layerScope: 'selected' as LayerScope,
+        // Visible by default: the host's Layers panel switches the whole
+        // module on and off, so an active module shows its layer straight away.
+        layerVisible: true,
+        layerScope: 'all' as LayerScope,
         entityDataStatus: null,
         entityDataStatusLoading: false,
         entityName: null,

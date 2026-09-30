@@ -161,7 +161,9 @@ export const VegetationLayer: React.FC = () => {
       return;
     }
 
-    if (!layerVisible || !selectedIndex) return;
+    // Tenant-wide view with no parcel picked yet: default to NDVI.
+    const index = selectedIndex ?? (layerScope === 'all' ? 'NDVI' : null);
+    if (!layerVisible || !index) return;
 
     const apiBase = window.location.origin;
 
@@ -233,7 +235,7 @@ export const VegetationLayer: React.FC = () => {
     // layerScope === 'all'
     (async () => {
       try {
-        const items = await api.getLatestResultsAllEntities(selectedIndex);
+        const items = await api.getLatestResultsAllEntities(index);
         items.forEach(it => addImagery(
           it.raster_path,
           it.job_id,

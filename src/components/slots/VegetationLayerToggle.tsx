@@ -28,7 +28,9 @@ const VegetationLayerToggle: React.FC = () => {
   const disabledReason = (() => {
     if (layerScope === 'selected' && !selectedEntityId) return t('layerToggle.needsSelection', 'Select a parcel or switch to All');
     if (layerScope === 'selected' && !hasSelectedData) return t('layerToggle.noData', 'No data available');
-    if (layerScope === 'all' && !hasAnyDataInTenant) return t('layerToggle.noTenantData', 'No data in tenant yet');
+    // entityDataStatus describes the selected parcel only; with nothing
+    // selected the tenant-wide layer simply shows whatever results exist.
+    if (layerScope === 'all' && selectedEntityId && !hasAnyDataInTenant) return t('layerToggle.noTenantData', 'No data in tenant yet');
     return undefined;
   })();
 

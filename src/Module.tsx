@@ -20,6 +20,7 @@ export default defineModule({
   displayName: 'Vegetation Prime',
   version: pkg.version,
   hostApiVersion: '^2.0.0',
+  requiredRoles: ['Farmer', 'TechnicalConsultant', 'TenantAdmin', 'PlatformAdmin'],
   description: 'High-performance vegetation intelligence suite — Nekazari Platform Module',
   accent: { base: '#65A30D', soft: '#ECFCCB', strong: '#4D7C0F' },
   icon: 'leaf',
@@ -30,4 +31,5 @@ export default defineModule({
     timeseries: [],
   },
   slots: withModuleProvider(vegetationPrimeSlots) as never,
+  viewer: { defaultActive: false },
 });

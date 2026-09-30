@@ -38,8 +38,7 @@ export const vegetationPrimeSlots: ModuleViewerSlots = {
       moduleId: MODULE_ID,
       component: 'VegetationLayerToggle',
       priority: 10,
-      localComponent: VegetationLayerToggle,
-      showWhen: { entityType: ['AgriParcel'] }
+      localComponent: VegetationLayerToggle
     }
   ],
   'context-panel': [
