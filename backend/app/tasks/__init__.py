@@ -8,6 +8,7 @@ from .scheduler import process_subscriptions, check_and_process_entity, reap_stu
 from .storage_cleanup import cleanup_global_cache
 from .sar_tasks import download_sentinel1_scene
 from .historical_baseline import build_historical_baseline
+from .copernicus_analyze_task import analyze_copernicus
 from .lst_tasks import process_parcel_lst_task, process_parcel_clms_lst_task, dispatch_lst_for_active_parcels
 
 __all__ = [
@@ -21,6 +22,7 @@ __all__ = [
     'cleanup_global_cache',
     'download_sentinel1_scene',
     'build_historical_baseline',
+    'analyze_copernicus',
     'process_parcel_lst_task',
     'process_parcel_clms_lst_task',
     'dispatch_lst_for_active_parcels',

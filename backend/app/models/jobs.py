@@ -68,7 +68,7 @@ class VegetationJob(BaseModel, TenantMixin):
 
     __table_args__ = (
         CheckConstraint(
-            "job_type IN ('download', 'process', 'calculate_index', 'download_sar')",
+            "job_type IN ('download', 'process', 'calculate_index', 'download_sar', 'copernicus_analyze')",
             name='vegetation_jobs_job_type_check'
         ),
         CheckConstraint(
