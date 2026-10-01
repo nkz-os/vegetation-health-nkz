@@ -443,3 +443,37 @@ def test_task_fails_when_local_fallback_also_fails():
     )
     assert job.status == "failed"
     assert "No scenes found" in job.error_message
+
+
+# ---------------------------------------------------------------------------
+# SAR-only local work must not download Sentinel-2 scenes
+# ---------------------------------------------------------------------------
+
+def test_sar_only_local_work_skips_sentinel2_downloads():
+    """Optical indices all on Copernicus + SAR → only Sentinel-1 is downloaded."""
+    from contextlib import ExitStack
+
+    db = _make_db()
+    selector = _selector(sh_usable=True)
+    quota = _quota(True)
+    local_ctx, dl, cop_client = _local_patches()
+    cop_client.search_s1_scenes.return_value = [
+        {"id": "S1_1", "sensing_date": "2026-07-12"},
+    ]
+    s1 = MagicMock()
+    s1.delay.return_value = MagicMock(id="celery-s1")
+
+    with ExitStack() as stack, _orion_patch(), \
+         patch.object(scenes, "SatelliteQuota", return_value=quota), \
+         patch.object(scenes, "analyze_copernicus") as task, \
+         patch("app.tasks.sar_tasks.download_sentinel1_scene", s1):
+        _enter(stack, local_ctx)
+        task.delay.return_value = MagicMock(id="celery-cop")
+        out = _run(db=db, indices=["NDVI"], engine_selector=selector, include_sar=True)
+
+    cop_client.search_scenes.assert_not_called()
+    dl.delay.assert_not_called()
+    s1.delay.assert_called_once()
+    sar_job = next(c.args[0] for c in db.add.call_args_list if c.args[0].job_type == "download_sar")
+    assert str(sar_job.id) in out["job_ids"]
+    assert out["windows"] == 0

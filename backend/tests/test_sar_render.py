@@ -83,10 +83,12 @@ class TestClipSarToParcel:
         import rasterio
         from app.tasks.sar_tasks import _clip_sar_to_parcel
 
+        from shapely.geometry import box
+
         src = self._make_gcp_band(tmp_path)
         out = str(tmp_path / "clipped.tif")
         bounds = (-2.1, 42.63, -2.07, 42.65)
-        _clip_sar_to_parcel(src, out, bounds)
+        _clip_sar_to_parcel(src, out, box(*bounds))
 
         with rasterio.open(out) as o:
             assert str(o.crs) == "EPSG:4326"
@@ -97,3 +99,42 @@ class TestClipSarToParcel:
             # The clip covers the parcel bounds (plus pad)
             assert o.bounds.left <= bounds[0]
             assert o.bounds.right >= bounds[2]
+
+    def test_pixels_outside_the_parcel_polygon_are_nodata(self, tmp_path):
+        """The COG must follow the parcel shape, not its bounding rectangle."""
+        import numpy as np
+        import rasterio
+        from rasterio.transform import rowcol
+        from shapely.geometry import Polygon
+        from app.tasks.sar_tasks import _clip_sar_to_parcel
+
+        src = self._make_gcp_band(tmp_path)
+        out = str(tmp_path / "clipped.tif")
+        # Right triangle: lower-left half of the box is parcel, upper-right is not.
+        tri = Polygon([(-2.1, 42.63), (-2.07, 42.63), (-2.1, 42.65), (-2.1, 42.63)])
+        _clip_sar_to_parcel(src, out, tri)
+
+        with rasterio.open(out) as o:
+            assert o.nodata == 0
+            arr = o.read(1)
+            inside = rowcol(o.transform, -2.097, 42.633)
+            outside = rowcol(o.transform, -2.073, 42.647)   # upper-right corner of the box
+            pad = rowcol(o.transform, -2.103, 42.64)        # left pad, outside the triangle
+            assert arr[inside] != 0
+            assert arr[outside] == 0
+            assert arr[pad] == 0
+            assert np.count_nonzero(arr) < arr.size * 0.6
+
+
+class TestUploadSarCogPassesParcel:
+    """_upload_sar_cog clips with the parcel geometry, not its bounds."""
+
+    @patch("app.tasks.sar_tasks.create_storage_service")
+    @patch("app.tasks.sar_tasks._clip_sar_to_parcel")
+    def test_parcel_geometry_reaches_the_clip(self, mock_clip, mock_storage):
+        from shapely.geometry import box
+        from app.tasks.sar_tasks import _upload_sar_cog
+
+        parcel = box(-2.1, 42.63, -2.07, 42.65)
+        _upload_sar_cog("/tmp/band.tif", "t", "p1", "S1A", "VV", "2026-06-01", parcel_geom=parcel)
+        assert mock_clip.call_args.args[2] is parcel
