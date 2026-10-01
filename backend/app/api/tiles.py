@@ -176,7 +176,7 @@ async def get_tile_by_path(
 @router.get("/{job_id}/{z}/{x}/{y}.png")
 async def get_tile(
     job_id: str, z: int, x: int, y: int,
-    index: str = "NDVI",
+    index: Optional[str] = Query(None, description="Index type; defaults to the job's own"),
     token: Optional[str] = Query(None, description="Tile access token"),
     db: Session = Depends(get_db_session),
 ):

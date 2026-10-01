@@ -62,6 +62,77 @@ def dispatch_local_pipeline(
         largest = max(geom_obj.geoms, key=lambda g: g.area)
         intersects_geojson = largest.__geo_interface__
 
+    job_ids: list[str] = []
+    windows = 0
+    scenes_found = 0
+    # Sentinel-2 downloads only feed optical indices and custom formulas; a
+    # SAR-only request must not download (and discard) optical scenes.
+    if indices or custom_formula_specs:
+        job_ids, windows, scenes_found = _dispatch_optical(
+            db,
+            copernicus=copernicus,
+            download_task=download_sentinel2_scene,
+            group_windows=group_scenes_into_windows,
+            tenant_id=tenant_id,
+            entity_id=entity_id,
+            user_id=user_id,
+            geometry=geometry,
+            intersects_geojson=intersects_geojson,
+            bbox=bbox,
+            indices=indices,
+            custom_formula_specs=custom_formula_specs,
+            start_date_iso=start_date_iso,
+            end_date_iso=end_date_iso,
+            local_cloud_threshold=local_cloud_threshold,
+            crop_season_id=crop_season_id,
+            season_uuid=season_uuid,
+        )
+
+    if include_sar:
+        job_ids += _dispatch_sar(
+            db,
+            copernicus=copernicus,
+            tenant_id=tenant_id,
+            entity_id=entity_id,
+            intersects_geojson=intersects_geojson,
+            bbox=bbox,
+            start_date_iso=start_date_iso,
+            end_date_iso=end_date_iso,
+            crop_season_id=crop_season_id,
+            season_uuid=season_uuid,
+        )
+
+    logger.info(
+        "Multi-scene analysis: %d windows dispatched for entity %s (scenes: %d, indices: %s, sar: %s, season: %s)",
+        windows, entity_id, scenes_found, indices, include_sar, crop_season_id,
+    )
+    return {"job_ids": job_ids, "windows": windows, "scenes_found": scenes_found}
+
+
+def _dispatch_optical(
+    db,
+    *,
+    copernicus,
+    download_task,
+    group_windows,
+    tenant_id: str,
+    entity_id: str,
+    user_id: str | None,
+    geometry: dict[str, Any],
+    intersects_geojson: dict[str, Any],
+    bbox: list[float],
+    indices: list[str],
+    custom_formula_specs: list[dict[str, Any]],
+    start_date_iso: str,
+    end_date_iso: str,
+    local_cloud_threshold: float | None,
+    crop_season_id: str | None,
+    season_uuid,
+) -> tuple[list[str], int, int]:
+    """Search Sentinel-2 scenes and enqueue one download job per window.
+
+    Returns (job_ids, windows, scenes_found).
+    """
     all_scenes = copernicus.search_scenes(
         intersects=intersects_geojson,
         start_date=date_type.fromisoformat(start_date_iso),
@@ -73,7 +144,7 @@ def dispatch_local_pipeline(
     if not all_scenes:
         raise AnalyzeDispatchError(404, "No scenes found in the selected date range")
 
-    windows = group_scenes_into_windows(all_scenes, date_key="sensing_date")
+    windows = group_windows(all_scenes, date_key="sensing_date")
 
     # Stage 1: build all VegetationJob rows in memory and commit them in a
     # single transaction. Avoids the per-iteration commit pattern that left
@@ -122,7 +193,7 @@ def dispatch_local_pipeline(
     enqueue_error: Exception | None = None
     for idx, job in enumerate(pending_jobs):
         try:
-            async_result = download_sentinel2_scene.delay(
+            async_result = download_task.delay(
                 str(job.id), tenant_id, job.parameters
             )
             job.celery_task_id = async_result.id
@@ -143,25 +214,7 @@ def dispatch_local_pipeline(
             503, "Job queue unavailable, please retry shortly."
         ) from enqueue_error
 
-    if include_sar:
-        _dispatch_sar(
-            db,
-            copernicus=copernicus,
-            tenant_id=tenant_id,
-            entity_id=entity_id,
-            intersects_geojson=intersects_geojson,
-            bbox=bbox,
-            start_date_iso=start_date_iso,
-            end_date_iso=end_date_iso,
-            crop_season_id=crop_season_id,
-            season_uuid=season_uuid,
-        )
-
-    logger.info(
-        "Multi-scene analysis: %d windows dispatched for entity %s (scenes: %d, indices: %s, season: %s)",
-        len(windows), entity_id, len(all_scenes), indices, crop_season_id,
-    )
-    return {"job_ids": job_ids, "windows": len(windows), "scenes_found": len(all_scenes)}
+    return job_ids, len(windows), len(all_scenes)
 
 
 def _dispatch_sar(
@@ -176,8 +229,12 @@ def _dispatch_sar(
     end_date_iso: str,
     crop_season_id: str | None,
     season_uuid,
-) -> None:
-    """Trigger Sentinel-1 downloads. Non-fatal: failures are logged only."""
+) -> list[str]:
+    """Trigger Sentinel-1 downloads; returns the enqueued job ids.
+
+    Non-fatal: failures are logged only.
+    """
+    job_ids: list[str] = []
     try:
         from app.tasks.sar_tasks import download_sentinel1_scene
 
@@ -208,6 +265,7 @@ def _dispatch_sar(
             )
             db.add(sar_job)
             db.commit()
+            db.refresh(sar_job)
 
             try:
                 download_sentinel1_scene.delay(
@@ -215,9 +273,13 @@ def _dispatch_sar(
                     tenant_id=tenant_id,
                     parameters=s1_params,
                 )
+                job_ids.append(str(sar_job.id))
             except Exception as enq_exc:
                 sar_job.status = "failed"
                 sar_job.error_message = f"SAR enqueue failed: {enq_exc}"
                 db.commit()
     except Exception as e:
         logger.warning("SAR trigger failed (non-fatal) for %s: %s", entity_id, e)
+    return job_ids
+
+

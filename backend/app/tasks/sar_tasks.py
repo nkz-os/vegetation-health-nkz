@@ -34,22 +34,26 @@ FIELD_OPS_URL = "http://field-operations-api-service:8420/internal/suggested-ope
 def _clip_sar_to_parcel(
     src_path: str,
     dst_path: str,
-    bounds_4326,
+    parcel_geom,
     pad_deg: float = 0.005,
 ) -> None:
-    """Warp a GCP-only SAR band to EPSG:4326, clipped to the parcel bounds.
+    """Warp a GCP-only SAR band to EPSG:4326, masked to the parcel polygon.
 
     The raw Sentinel-1 GRD band is NOT geocoded (crs=None, identity transform,
     ~210 GCPs in EPSG:4326). This warps it via the GCPs to a georeferenced
     EPSG:4326 raster covering only the parcel (plus a small pad), so the COG is
     parcel-sized instead of the full ~26410x16668 scene (which is identical and
-    redundant across parcels in the same scene).
+    redundant across parcels in the same scene). Pixels outside the parcel
+    polygon are set to nodata (0) so the map layer follows the parcel shape,
+    like the optical indices, instead of painting its bounding rectangle.
+    `parcel_geom` is a shapely geometry in EPSG:4326.
     """
     import rasterio
+    from rasterio.features import geometry_mask
     from rasterio.vrt import WarpedVRT
     from rasterio.warp import reproject, Resampling, calculate_default_transform
 
-    left, bottom, right, top = bounds_4326
+    left, bottom, right, top = parcel_geom.bounds
     left -= pad_deg
     bottom -= pad_deg
     right += pad_deg
@@ -80,7 +84,7 @@ def _clip_sar_to_parcel(
                 "transform": dst_transform,
                 "nodata": 0,
             }
-            with rasterio.open(dst_path, "w", **kwargs) as dst:
+            with rasterio.open(dst_path, "w+", **kwargs) as dst:
                 reproject(
                     source=rasterio.band(vrt, 1),
                     destination=rasterio.band(dst, 1),
@@ -92,6 +96,17 @@ def _clip_sar_to_parcel(
                     dst_nodata=0,
                     resampling=Resampling.bilinear,
                 )
+                # all_touched keeps edge pixels that partially overlap the
+                # parcel, matching the optical pipeline's boundary handling.
+                outside = geometry_mask(
+                    [parcel_geom.__geo_interface__],
+                    out_shape=(dst_height, dst_width),
+                    transform=dst_transform,
+                    all_touched=True,
+                )
+                band = dst.read(1)
+                band[outside] = 0
+                dst.write(band, 1)
 
 
 def _upload_sar_cog(
@@ -101,14 +116,15 @@ def _upload_sar_cog(
     scene_id: str,
     pol: str,
     sensing_date_str: str,
-    bounds_4326=None,
+    parcel_geom=None,
 ) -> Optional[str]:
     """Persist a downloaded SAR band to MinIO as a COG.
 
     The raw band lives in a ``TemporaryDirectory`` that is deleted when the task
     ends, so it must be uploaded here (and its object key stored as
     ``raster_path``) for the tile endpoints to render the map layer. When
-    ``bounds_4326`` is given the band is clipped to the parcel before COG-ifying.
+    ``parcel_geom`` (shapely, EPSG:4326) is given the band is clipped and masked
+    to the parcel before COG-ifying.
     Returns the S3 object key, or ``None`` on failure (job degrades to stats-only).
     """
     bucket = os.getenv("VEGETATION_COG_BUCKET") or generate_tenant_bucket_name(tenant_id)
@@ -122,9 +138,9 @@ def _upload_sar_cog(
                 from rio_cogeo.cogeo import cog_translate
                 from rio_cogeo.profiles import cog_profiles
                 source = local_tiff
-                if bounds_4326:
+                if parcel_geom is not None:
                     clipped = os.path.join(td, "clipped.tif")
-                    _clip_sar_to_parcel(local_tiff, clipped, bounds_4326)
+                    _clip_sar_to_parcel(local_tiff, clipped, parcel_geom)
                     source = clipped
                 # in_memory=False streams to disk: a full S1 IW scene is ~880 MB
                 # and would OOM the worker if built in a MemoryFile. cog_translate
@@ -413,7 +429,7 @@ def download_sentinel1_scene(
                         # dir is deleted, and store the object key as raster_path.
                         s3_path = _upload_sar_cog(
                             raster_path, tenant_id, entity_id, scene_id, pol, sensing_date_str,
-                            bounds_4326=geom.bounds,
+                            parcel_geom=geom,
                         )
 
                         completed_result = {
