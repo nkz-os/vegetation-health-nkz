@@ -1,7 +1,7 @@
 # backend/app/api/entities.py
 from fastapi import APIRouter, HTTPException, Depends, Query, status
 from sqlalchemy.orm import Session
-from sqlalchemy import func, distinct
+from sqlalchemy import func, distinct, or_
 from uuid import UUID, uuid4
 import uuid as uuid_mod
 from datetime import datetime, date as date_type
@@ -231,6 +231,49 @@ async def get_entity_data_status(
     }
 
 
+def _timeline_key(result: dict) -> Optional[str]:
+    """Identity of one timeline point: the scene UUID when the job has one,
+    otherwise its sensing date. Copernicus (Sentinel Hub) jobs carry no
+    vegetation_scenes row, so the date is their only acquisition identity."""
+    return result.get("scene_id") or result.get("sensing_date")
+
+
+def build_timeline(jobs: List, cloud_by_scene: Dict[str, Optional[str]]) -> List[dict]:
+    """One point per acquisition, oldest first.
+
+    `jobs` must be ordered newest first, so the first job seen for an
+    acquisition is the one kept: a re-run of the same date supersedes older
+    ones. When the caller filtered by index the points are that index's;
+    otherwise they are deduplicated across indices.
+    """
+    points: Dict[str, dict] = {}
+    for job in jobs:
+        result = job.result or {}
+        key = _timeline_key(result)
+        if not key or not result.get("sensing_date"):
+            continue
+        if key in points:
+            continue
+        stats = result.get("statistics") or {}
+        try:
+            mean_f = float(stats["mean"]) if stats.get("mean") is not None else None
+        except (ValueError, TypeError):
+            mean_f = None
+        scene_uuid = result.get("scene_id")
+        cov = cloud_by_scene.get(scene_uuid) if scene_uuid else None
+        points[key] = {
+            "id": scene_uuid or result.get("sensing_date"),
+            "scene_id": scene_uuid,
+            "date": result.get("sensing_date"),
+            "mean_value": mean_f,
+            "local_cloud_pct": cov,
+            "cloud_pct": cov,
+            "raster_path": result.get("raster_path"),
+            "raster_pending": bool(result.get("raster_pending")) and not result.get("raster_path"),
+        }
+    return sorted(points.values(), key=lambda p: p["date"])
+
+
 @router.get("/{entity_id}/scenes/available")
 async def get_available_scenes(
     entity_id: str,
@@ -239,14 +282,12 @@ async def get_available_scenes(
     db: Session = Depends(get_db_with_tenant)
 ):
     """Timeline metadata (dates with usable data) derived from
-    vegetation_jobs.result. The legacy implementation joined the
-    VegetationIndexCache table which is no longer written by the FIWARE-
-    canonical worker — it always returned an empty timeline regardless
-    of how many real rasters the parcel had.
+    vegetation_jobs.result.
 
-    Each row exposes scene_id, date, mean value of the chosen index and
-    the per-parcel local cloud percentage (from VegetationScene when
-    we can resolve the UUID, null otherwise).
+    Includes Copernicus jobs whose raster is still pending: their statistics
+    are already computed and the raster is materialized on selection (see
+    GET /results/{entity_id}?sensing_date=). Those jobs have no scene_id, so
+    each point carries scene_id (nullable) plus its date as identity.
     """
     tenant_id = current_user["tenant_id"]
 
@@ -256,7 +297,10 @@ async def get_available_scenes(
         VegetationJob.job_type == "calculate_index",
         VegetationJob.status == "completed",
         VegetationJob.deleted_at.is_(None),
-        VegetationJob.result["raster_path"].astext.isnot(None),
+        or_(
+            VegetationJob.result["raster_path"].astext.isnot(None),
+            VegetationJob.result["raster_pending"].astext == "true",
+        ),
     ]
     if index_type:
         base_filters.append(VegetationJob.result["index_type"].astext == index_type.upper())
@@ -264,7 +308,7 @@ async def get_available_scenes(
     jobs = (
         db.query(VegetationJob)
         .filter(*base_filters)
-        .order_by(VegetationJob.result["sensing_date"].astext.asc())
+        .order_by(VegetationJob.created_at.desc())
         .limit(2000)
         .all()
     )
@@ -292,33 +336,5 @@ async def get_available_scenes(
         ):
             cloud_by_scene[str(sid)] = cov
 
-    # Deduplicate by scene_id when caller did not pin an index_type
-    seen_scenes: set = set()
-    timeline = []
-    for job in jobs:
-        result = job.result or {}
-        scene_uuid = result.get("scene_id")
-        if not scene_uuid:
-            continue
-        if not index_type and scene_uuid in seen_scenes:
-            continue
-        seen_scenes.add(scene_uuid)
-        sensing = result.get("sensing_date")
-        stats = result.get("statistics") or {}
-        mean = stats.get("mean")
-        try:
-            mean_f = float(mean) if mean is not None else None
-        except (ValueError, TypeError):
-            mean_f = None
-        cov = cloud_by_scene.get(scene_uuid)
-        timeline.append({
-            "id": scene_uuid,
-            "scene_id": scene_uuid,
-            "date": sensing,
-            "mean_value": mean_f,
-            "local_cloud_pct": cov,
-            "cloud_pct": cov,
-            "raster_path": result.get("raster_path"),
-        })
-
+    timeline = build_timeline(jobs, cloud_by_scene)
     return {"timeline": timeline, "count": len(timeline)}

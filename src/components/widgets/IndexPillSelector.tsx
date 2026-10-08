@@ -113,16 +113,17 @@ export const IndexPillSelector: React.FC<IndexPillSelectorProps> = ({
       <div className={`flex flex-wrap items-center gap-1.5 ${className}`}>
         {allIndices.map(idx => renderPill(idx.value, idx.shortLabel))}
         {customIndexOptions.map(opt => renderPill(opt.key, opt.label))}
-        {allIndices.map(idx => (
+        {/* One info button for the selected index: a row of one per index read
+            as a string of stray circles at bottom-panel size. */}
+        {allIndices.some(idx => idx.value === selectedIndex) && (
           <button
-            key={`info-${idx.value}`}
-            onClick={(e) => { e.stopPropagation(); setInfoModalIndex(idx.value); }}
-            className="p-0.5 text-slate-300 hover:text-slate-500 rounded-full transition-colors"
+            onClick={(e) => { e.stopPropagation(); setInfoModalIndex(selectedIndex); }}
+            className="p-1 text-nkz-text-muted rounded-full transition-colors"
             title={t('indices.infoTooltip')}
           >
-            <Info className="w-3 h-3" />
+            <Info className="w-3.5 h-3.5" />
           </button>
-        ))}
+        )}
         <IndexInfoModal
           indexType={infoModalIndex || ''}
           isOpen={!!infoModalIndex}

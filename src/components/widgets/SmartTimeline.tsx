@@ -1,333 +1,226 @@
 /**
- * SmartTimeline - Sparse timeline from availability API.
+ * SmartTimeline - time-scaled strip of the acquisitions of one index.
  *
- * Fetches scene availability from GET /entities/{entity_id}/scenes/available
- * and renders colored tick marks for dates with actual data.
+ * Each acquisition is a dot placed by its date on a proportional axis, so
+ * gaps between acquisitions read as gaps in time. Dense series scroll
+ * horizontally instead of overlapping, and the selected dot is kept in view.
+ * Arrow keys move to the previous/next acquisition.
  *
- * Supports both self-fetching (via entityId + indexType) and pre-fed (via stats).
+ * Positioning uses inline styles: the host's Tailwind build never scans module
+ * sources, so only utilities the host already ships can be used as classes.
  */
 
-import React, { useEffect, useState, useMemo, useCallback, useRef } from 'react';
-import { Calendar, CloudOff, AlertCircle } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { CloudOff } from 'lucide-react';
 import { useTranslation } from '@nekazari/sdk';
-import { useVegetationApi } from '../../services/api';
 
-/** Flexible tick data — accepts both SceneStats (sensing_date) and API timeline (date) */
-interface TickData {
-  scene_id: string;
-  date?: string;
-  sensing_date?: string;
+export interface TickData {
+  /** Scene UUID; null for acquisitions without a scene (Copernicus). */
+  scene_id: string | null;
+  sensing_date: string;
   mean_value: number | null;
   cloud_coverage?: number | null;
 }
 
 interface SmartTimelineProps {
-  /** Entity ID for self-fetching (when stats not pre-fed) */
-  entityId?: string;
-  /** Pre-fed stats (from TimelineWidget slot) */
-  stats?: TickData[];
-  /** Currently selected date string (YYYY-MM-DD) */
+  stats: TickData[];
+  /** Currently selected acquisition date (YYYY-MM-DD) */
   selectedDate?: string | null;
-  /** Called when user clicks a tick mark */
-  onDateSelect?: (date: string, sceneId: string) => void;
-  /** Index type for fetch and viewer URL */
+  onDateSelect?: (date: string, sceneId: string | null) => void;
   indexType?: string;
-  /** External loading indicator */
   isLoading?: boolean;
-  // Backward-compat props (kept for TimelineWidget slot; unused in sparse rendering)
-  previousYearStats?: any[];
-  showComparison?: boolean;
 }
 
-/** Get the date string from a tick, handling both date and sensing_date fields */
-function tickDate(tick: TickData | null | undefined): string {
-  if (!tick) return '';
-  const d = tick.date || tick.sensing_date;
-  return d || '';
-}
+const DAY_MS = 86_400_000;
+/** Minimum horizontal room per acquisition before the strip starts scrolling. */
+const MIN_PX_PER_TICK = 18;
+const EDGE_PAD_PX = 12;
 
-function getTickColor(meanValue: number | null): string {
-  if (meanValue == null) return '#cbd5e1'; // gray for no data
-  if (meanValue >= 0.6) return '#22c55e';  // green
-  if (meanValue >= 0.3) return '#eab308';  // yellow
-  return '#ef4444';                          // red
-}
-
-const formatDateShort = (dateStr: string): string => {
-  const d = new Date(dateStr);
-  return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+const toUtcMs = (iso: string): number => {
+  const [y, m, d] = iso.split('-').map(Number);
+  return Date.UTC(y, (m || 1) - 1, d || 1);
 };
 
-const formatDateFull = (dateStr: string): string => {
-  const d = new Date(dateStr);
-  return d.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' });
-};
+function getTickColor(meanValue: number | null, indexType: string): string {
+  if (indexType.startsWith('SAR')) return '#818cf8'; // backscatter (dB): no vigour scale
+  if (meanValue == null) return '#94a3b8';
+  if (meanValue >= 0.6) return '#22c55e';
+  if (meanValue >= 0.3) return '#eab308';
+  return '#ef4444';
+}
+
+const formatDay = (iso: string): string =>
+  new Date(toUtcMs(iso)).toLocaleDateString(undefined, { day: 'numeric', month: 'short', timeZone: 'UTC' });
+
+const formatMonth = (ms: number): string =>
+  new Date(ms).toLocaleDateString(undefined, { month: 'short', year: '2-digit', timeZone: 'UTC' });
 
 export const SmartTimeline: React.FC<SmartTimelineProps> = ({
-  entityId,
-  stats: externalStats,
+  stats,
   selectedDate,
   onDateSelect,
   indexType = 'NDVI',
-  isLoading: externalLoading = false,
+  isLoading = false,
 }) => {
   const { t } = useTranslation();
-  const api = useVegetationApi();
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [hovered, setHovered] = useState<TickData | null>(null);
 
-  // Internal fetch state (when entityId is provided and stats are not)
-  const [internalStats, setInternalStats] = useState<TickData[]>([]);
-  const [internalLoading, setInternalLoading] = useState(false);
-  const [internalError, setInternalError] = useState<string | null>(null);
+  const ticks = useMemo(
+    () => [...stats].sort((a, b) => a.sensing_date.localeCompare(b.sensing_date)),
+    [stats],
+  );
 
-  // Tooltip state
-  const [tooltipItem, setTooltipItem] = useState<TickData | null>(null);
-  const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null);
+  const { min, span, months } = useMemo(() => {
+    if (ticks.length === 0) return { min: 0, span: 1, months: [] as number[] };
+    const lo = toUtcMs(ticks[0].sensing_date);
+    const hi = toUtcMs(ticks[ticks.length - 1].sensing_date);
+    // Pad a single acquisition (or a same-day series) so it sits centred.
+    const pad = hi === lo ? 15 * DAY_MS : 0;
+    const start = lo - pad;
+    const end = hi + pad;
+    const ms: number[] = [];
+    const first = new Date(start);
+    let cursor = Date.UTC(first.getUTCFullYear(), first.getUTCMonth() + 1, 1);
+    while (cursor <= end) {
+      ms.push(cursor);
+      const c = new Date(cursor);
+      cursor = Date.UTC(c.getUTCFullYear(), c.getUTCMonth() + 1, 1);
+    }
+    return { min: start, span: Math.max(end - start, DAY_MS), months: ms };
+  }, [ticks]);
 
-  const containerRef = useRef<HTMLDivElement>(null);
+  const pct = useCallback((ms: number) => ((ms - min) / span) * 100, [min, span]);
 
-  // Decide which stats to use
-  const stats = useMemo(() => {
-    if (externalStats && externalStats.length > 0) return externalStats;
-    return internalStats;
-  }, [externalStats, internalStats]);
+  const selectedIdx = ticks.findIndex(tk => tk.sensing_date === selectedDate);
 
-  const isLoading = externalLoading || internalLoading;
-  const hasError = internalError && !externalLoading;
-
-  // Sort stats chronologically
-  const sortedStats = useMemo(() => {
-    return [...stats].sort((a, b) => tickDate(a).localeCompare(tickDate(b)));
-  }, [stats]);
-
-  // Fetch internally when entityId + indexType provided and no external stats
+  // Keep the selected acquisition visible when the strip scrolls.
   useEffect(() => {
-    if (externalStats && externalStats.length > 0) {
-      // External data provided — don't fetch
-      setInternalLoading(false);
-      setInternalError(null);
-      return;
-    }
+    const el = scrollRef.current;
+    if (!el || selectedIdx < 0 || el.scrollWidth <= el.clientWidth) return;
+    const x = (pct(toUtcMs(ticks[selectedIdx].sensing_date)) / 100) * (el.scrollWidth - 2 * EDGE_PAD_PX);
+    el.scrollTo({ left: Math.max(0, x - el.clientWidth / 2), behavior: 'smooth' });
+  }, [selectedIdx, ticks, pct]);
 
-    if (!entityId) {
-      setInternalStats([]);
-      return;
-    }
-
-    let cancelled = false;
-    setInternalLoading(true);
-    setInternalError(null);
-
-    api.getScenesAvailable(entityId, indexType)
-      .then(response => {
-        if (cancelled) return;
-        const timeline = response?.timeline || [];
-        const mapped: TickData[] = timeline.map((item: any) => ({
-          scene_id: item.scene_id || item.id,
-          date: item.date,
-          mean_value: item.mean_value != null ? Number(item.mean_value) : null,
-          cloud_coverage: item.local_cloud_pct != null ? Number(item.local_cloud_pct) : null,
-        }));
-        mapped.sort((a, b) => tickDate(a).localeCompare(tickDate(b)));
-        setInternalStats(mapped);
-      })
-      .catch(err => {
-        if (cancelled) return;
-        console.error('[SmartTimeline] fetch error:', err);
-        setInternalError(err instanceof Error ? err.message : t('timeline.errorLoadingData'));
-        setInternalStats([]);
-      })
-      .finally(() => {
-        if (!cancelled) setInternalLoading(false);
-      });
-
-    return () => { cancelled = true; };
-  }, [entityId, indexType, api, externalStats, t]);
-
-  // Click handler: hands the chosen scene to the parent. The map layer
-  // (VegetationLayer) reads the new selectedSceneId/raster_path from the
-  // shared vegetationContext and rebuilds tiles via /tiles/render directly,
-  // so no extra fetch is required here.
-  const handleTickClick = useCallback((tick: TickData) => {
-    if (!onDateSelect) return;
-    onDateSelect(tickDate(tick), tick.scene_id);
+  const select = useCallback((tk: TickData) => {
+    onDateSelect?.(tk.sensing_date, tk.scene_id ?? null);
   }, [onDateSelect]);
 
-  // Tooltip handlers
-  const handleMouseEnter = useCallback((tick: TickData, e: React.MouseEvent) => {
-    setTooltipItem(tick);
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    setTooltipPos({ x: rect.left + rect.width / 2, y: rect.top - 8 });
-  }, []);
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (ticks.length === 0) return;
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    e.preventDefault();
+    const from = selectedIdx < 0 ? ticks.length - 1 : selectedIdx;
+    const to = e.key === 'ArrowLeft' ? Math.max(0, from - 1) : Math.min(ticks.length - 1, from + 1);
+    if (to !== selectedIdx) select(ticks[to]);
+  }, [ticks, selectedIdx, select]);
 
-  const handleMouseLeave = useCallback(() => {
-    setTooltipItem(null);
-    setTooltipPos(null);
-  }, []);
-
-  // Loading state
-  if (isLoading && sortedStats.length === 0) {
+  if (ticks.length === 0) {
     return (
-      <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 p-6">
-        <div className="flex items-center justify-center h-20">
-          <div className="animate-pulse flex items-center gap-2 text-slate-500">
-            <Calendar className="w-5 h-5" />
-            <span>{t('timeline.loadingHistory')}</span>
-          </div>
-        </div>
+      <div className="flex items-center justify-center gap-nkz-inline py-nkz-inline text-nkz-sm text-nkz-text-muted">
+        {isLoading ? (
+          <span>{t('timeline.loadingHistory')}</span>
+        ) : (
+          <>
+            <CloudOff className="w-4 h-4" />
+            <span>{t('timeline.noDataAvailable')}</span>
+          </>
+        )}
       </div>
     );
   }
 
-  // Error state
-  if (hasError && sortedStats.length === 0) {
-    return (
-      <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 p-6">
-        <div className="flex items-center justify-center h-20 text-nkz-danger">
-          <AlertCircle className="w-5 h-5 mr-2" />
-          <span className="text-sm">{internalError}</span>
-        </div>
-      </div>
-    );
-  }
-
-  // Empty state
-  if (sortedStats.length === 0) {
-    return (
-      <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 p-6">
-        <div className="flex items-center justify-center h-20 text-slate-500">
-          <CloudOff className="w-5 h-5 mr-2" />
-          <span>{t('timeline.noDataAvailable')}</span>
-        </div>
-      </div>
-    );
-  }
+  const info = hovered ?? (selectedIdx >= 0 ? ticks[selectedIdx] : null);
 
   return (
-    <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 shadow-lg overflow-hidden">
-      {/* Header */}
-      <div className="px-4 py-2.5 border-b border-slate-100 dark:border-slate-700">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Calendar className="w-4 h-4 text-slate-500 dark:text-slate-300" />
-            <h3 className="text-sm font-semibold text-slate-700 dark:text-slate-100">
-              {t('timeline.evolution', { index: indexType })}
-            </h3>
-          </div>
-          <span className="text-xs text-slate-400 dark:text-slate-500">
-            {t('timelineWidget.scenesAvailable', { count: sortedStats.length })}
-          </span>
-        </div>
-      </div>
-
-      {/* Sparse timeline.
-          When >12 ticks fit in the container, shrink the gap. When >24,
-          flip to horizontal scroll so each tick keeps a usable >=20px
-          touch target on tablet (audit #17). Below 12 ticks we keep the
-          original justify-between layout.
-       */}
+    <div style={{ opacity: isLoading ? 0.6 : 1, transition: 'opacity 150ms' }}>
       <div
-        ref={containerRef}
-        className={`relative px-4 py-6 ${sortedStats.length > 24 ? 'overflow-x-auto' : ''}`}
+        ref={scrollRef}
+        tabIndex={0}
+        onKeyDown={handleKeyDown}
+        role="listbox"
+        aria-label={t('timeline.evolution', { index: indexType })}
+        className="focus:outline-none"
+        style={{ overflowX: 'auto', overflowY: 'hidden' }}
       >
-        {/* Baseline */}
-        <div className="absolute left-4 right-4 top-1/2 h-0.5 bg-slate-200 dark:bg-slate-700 -translate-y-1/2" />
-
-        {/* Tick marks */}
         <div
-          className={`flex items-center relative ${
-            sortedStats.length > 24
-              ? 'gap-3 min-w-max'
-              : sortedStats.length > 12
-                ? 'gap-1.5 justify-between'
-                : 'justify-between'
-          }`}
+          className="relative"
+          style={{
+            height: 44,
+            minWidth: ticks.length * MIN_PX_PER_TICK + 2 * EDGE_PAD_PX,
+            margin: `0 ${EDGE_PAD_PX}px`,
+          }}
         >
-          {sortedStats.map((tick) => {
-            const isSelected = tickDate(tick) === selectedDate;
-            const color = getTickColor(tick.mean_value);
+          {/* Axis */}
+          <div
+            className="absolute bg-nkz-border"
+            style={{ left: 0, right: 0, top: 14, height: 2, borderRadius: 1 }}
+          />
 
-            return (
-              <div
-                key={tick.scene_id}
-                className="relative flex flex-col items-center"
-                style={{ flex: '0 0 auto' }}
+          {/* Month gridlines + labels */}
+          {months.map(ms => (
+            <div key={ms} className="absolute" style={{ left: `${pct(ms)}%`, top: 8, bottom: 0 }}>
+              <div className="bg-nkz-border" style={{ width: 1, height: 14 }} />
+              <span
+                className="absolute text-nkz-text-muted whitespace-nowrap"
+                style={{ top: 18, left: 3, fontSize: 10 }}
               >
-                <button
-                  type="button"
-                  onClick={() => handleTickClick(tick)}
-                  onMouseEnter={(e) => handleMouseEnter(tick, e)}
-                  onMouseLeave={handleMouseLeave}
-                  className={`
-                    relative z-10 w-4 h-4 rounded-full transition-all cursor-pointer
-                    hover:scale-150 focus:outline-none focus:ring-2 focus:ring-nkz-accent-base
-                    ${isSelected ? 'ring-2 ring-white scale-150 shadow-md' : ''}
-                  `}
-                  style={{
-                    backgroundColor: color,
-                    boxShadow: isSelected ? `0 0 0 3px ${color}` : 'none',
-                  }}
-                  title={`${formatDateShort(tickDate(tick))}: ${tick.mean_value?.toFixed(3) ?? '-'}`}
-                />
+                {formatMonth(ms)}
+              </span>
+            </div>
+          ))}
 
-                {/* Date label below tick */}
-                <span
-                  className={`
-                    mt-2 text-[10px] whitespace-nowrap transition-colors
-                    ${isSelected ? 'text-slate-800 dark:text-slate-100 font-semibold' : 'text-slate-400 dark:text-slate-500'}
-                  `}
-                >
-                  {formatDateShort(tickDate(tick))}
-                </span>
-              </div>
+          {/* Acquisitions */}
+          {ticks.map((tk, i) => {
+            const isSelected = i === selectedIdx;
+            const color = getTickColor(tk.mean_value, indexType);
+            const size = isSelected ? 14 : 10;
+            return (
+              <button
+                key={tk.scene_id ?? tk.sensing_date}
+                type="button"
+                role="option"
+                aria-selected={isSelected}
+                onClick={() => select(tk)}
+                onMouseEnter={() => setHovered(tk)}
+                onMouseLeave={() => setHovered(null)}
+                title={`${formatDay(tk.sensing_date)} · ${indexType} ${tk.mean_value?.toFixed(3) ?? '–'}`}
+                className="absolute rounded-full cursor-pointer focus:outline-none"
+                style={{
+                  left: `${pct(toUtcMs(tk.sensing_date))}%`,
+                  top: 15 - size / 2,
+                  width: size,
+                  height: size,
+                  marginLeft: -size / 2,
+                  backgroundColor: color,
+                  boxShadow: isSelected ? `0 0 0 2px rgb(var(--nkz-color-surface-rgb, 255 255 255)), 0 0 0 4px ${color}` : 'none',
+                  transition: 'all 120ms ease-out',
+                  zIndex: isSelected ? 2 : 1,
+                }}
+              />
             );
           })}
         </div>
       </div>
 
-      {/* Tooltip */}
-      {tooltipItem && tooltipPos && (
-        <div
-          className="absolute z-50 bg-white dark:bg-slate-900 shadow-lg rounded-lg border border-slate-200 dark:border-slate-700 p-3 text-sm pointer-events-none"
-          style={{
-            left: Math.min(tooltipPos.x, (containerRef.current?.offsetWidth ?? 400) - 180),
-            top: tooltipPos.y - 10,
-            transform: 'translate(-50%, -100%)',
-            minWidth: 160,
-          }}
-        >
-          <p className="font-semibold text-slate-800 dark:text-slate-100 mb-1">
-            {formatDateFull(tickDate(tooltipItem)!)}
-          </p>
-          <div className="space-y-0.5 text-xs text-slate-600 dark:text-slate-300">
-            <p>
-              <span className="font-medium">{indexType}:</span>{' '}
-              {tooltipItem.mean_value != null ? tooltipItem.mean_value.toFixed(4) : '-'}
-            </p>
-            <p>
-              <span className="font-medium">{t('timeline.clouds')}:</span>{' '}
-              {tooltipItem.cloud_coverage != null ? `${tooltipItem.cloud_coverage.toFixed(1)}%` : '-'}
-            </p>
-            <p className="text-[10px] text-slate-400 dark:text-slate-500 truncate max-w-[200px]">
-              ID: {tooltipItem.scene_id}
-            </p>
-          </div>
-        </div>
-      )}
-
-      {/* Legend */}
-      <div className="px-4 py-2 border-t border-slate-100 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 flex items-center gap-4 text-[10px] text-slate-500 dark:text-slate-300">
-        <div className="flex items-center gap-1">
-          <span className="w-2.5 h-2.5 rounded-full bg-green-500" />
-          <span>{t('legend.high')} (&ge;0.6)</span>
-        </div>
-        <div className="flex items-center gap-1">
-          <span className="w-2.5 h-2.5 rounded-full bg-yellow-500" />
-          <span>{t('legend.moderate')} (0.3-0.6)</span>
-        </div>
-        <div className="flex items-center gap-1">
-          <span className="w-2.5 h-2.5 rounded-full bg-red-500" />
-          <span>{t('legend.low')} (&lt;0.3)</span>
-        </div>
+      {/* Readout of the hovered / selected acquisition — fixed height, no layout jump */}
+      <div
+        className="flex items-center justify-center gap-nkz-inline text-nkz-xs text-nkz-text-muted"
+        style={{ minHeight: 18 }}
+      >
+        {info && (
+          <>
+            <span className="text-nkz-text-primary">{formatDay(info.sensing_date)}</span>
+            <span>
+              {indexType} {info.mean_value != null ? info.mean_value.toFixed(3) : '–'}
+            </span>
+            {info.cloud_coverage != null && (
+              <span>
+                {t('timeline.clouds')} {Number(info.cloud_coverage).toFixed(0)}%
+              </span>
+            )}
+          </>
+        )}
       </div>
     </div>
   );

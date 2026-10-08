@@ -45,6 +45,10 @@ interface SharedState {
   activeRasterPath: string | null;
   indexResults: Record<string, IndexResult>;
   selectedSceneId: string | null;
+  /** Acquisition date (YYYY-MM-DD) picked on the timeline. Identifies
+   *  acquisitions without a scene (Copernicus); unlike selectedDate it is
+   *  never overwritten by the host viewer's clock. */
+  selectedSensingDate: string | null;
   selectedDate: Date | null;
   layerOpacity: number; // 0-100
   layerVisible: boolean;
@@ -74,6 +78,7 @@ function getStore(): VegetationStore {
         activeRasterPath: null,
         indexResults: {},
         selectedSceneId: null,
+        selectedSensingDate: null,
         selectedDate: null,
         layerOpacity: 75,
         // Visible by default: the host's Layers panel switches the whole
@@ -116,6 +121,7 @@ function getStoreSnapshot(): SharedState {
 interface VegetationContextType {
   selectedEntityId: string | null;
   selectedSceneId: string | null;
+  selectedSensingDate: string | null;
   selectedIndex: string | null;
   selectedDate: Date | null;
   dateRange: DateRange;
@@ -132,6 +138,7 @@ interface VegetationContextType {
   selectedSeasonId: string | null;
   setSelectedEntityId: (id: string | null) => void;
   setSelectedSceneId: (id: string | null) => void;
+  setSelectedSensingDate: (date: string | null) => void;
   setSelectedIndex: (index: string | null) => void;
   setSelectedDate: (date: Date | null) => void;
   setDateRange: (range: DateRange) => void;
@@ -180,6 +187,10 @@ export const VegetationProvider: React.FC<{ children: ReactNode }> = ({ children
     updateStore({ selectedSceneId: id });
   }, []);
 
+  const setSelectedSensingDate = useCallback((date: string | null) => {
+    updateStore({ selectedSensingDate: date });
+  }, []);
+
   const setSelectedDate = useCallback((date: Date | null) => {
     updateStore({ selectedDate: date });
   }, []);
@@ -224,7 +235,7 @@ export const VegetationProvider: React.FC<{ children: ReactNode }> = ({ children
 
       if (hostEntityId) {
         setSelectedEntityIdLocal(hostEntityId);
-        updateStore({ selectedSceneId: null });
+        updateStore({ selectedSceneId: null, selectedSensingDate: null });
         // Read the latest snapshot imperatively so this effect doesn't list
         // selectedIndex as a dep (which would re-run after our own write
         // and made the auditor flag a potential loop).
@@ -249,7 +260,7 @@ export const VegetationProvider: React.FC<{ children: ReactNode }> = ({ children
     const handleEntitySelected = (event: CustomEvent<{ entityId: string | null, type?: string, geometry?: any }>) => {
       if (event.detail?.entityId) {
         setSelectedEntityIdLocal(event.detail.entityId);
-        updateStore({ selectedSceneId: null });
+        updateStore({ selectedSceneId: null, selectedSensingDate: null });
         setSelectedGeometry(event.detail.geometry || null);
         if (!getStoreSnapshot().selectedIndex) {
           updateStore({ selectedIndex: 'NDVI' });
@@ -309,6 +320,7 @@ export const VegetationProvider: React.FC<{ children: ReactNode }> = ({ children
             activeJobId: null,
             activeRasterPath: null,
             selectedSceneId: null,
+            selectedSensingDate: null,
           });
         }
       })
@@ -333,6 +345,7 @@ export const VegetationProvider: React.FC<{ children: ReactNode }> = ({ children
       activeRasterPath: null,
       indexResults: {},
       selectedSceneId: null,
+      selectedSensingDate: null,
       selectedDate: null,
       layerOpacity: 75,
       layerVisible: false,
@@ -352,6 +365,7 @@ export const VegetationProvider: React.FC<{ children: ReactNode }> = ({ children
       value={{
         selectedEntityId,
         selectedSceneId: sharedState.selectedSceneId,
+        selectedSensingDate: sharedState.selectedSensingDate,
         selectedIndex: sharedState.selectedIndex,
         selectedDate: sharedState.selectedDate,
         dateRange,
@@ -368,6 +382,7 @@ export const VegetationProvider: React.FC<{ children: ReactNode }> = ({ children
         selectedSeasonId: sharedState.selectedSeasonId,
         setSelectedEntityId,
         setSelectedSceneId,
+        setSelectedSensingDate,
         setSelectedIndex,
         setSelectedDate,
         setDateRange,

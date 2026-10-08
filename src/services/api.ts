@@ -425,10 +425,11 @@ export class VegetationApiClient {
    */
   async getEntityResults(
     entityId: string,
-    options?: { sceneId?: string | null }
+    options?: { sceneId?: string | null; sensingDate?: string | null }
   ): Promise<{
     entity_id: string;
     scene_id?: string | null;
+    sensing_date?: string | null;
     indices: Record<string, EntityIndexResult>;
     active_jobs: number;
     has_results: boolean;
@@ -436,6 +437,8 @@ export class VegetationApiClient {
     const params = new URLSearchParams();
     if (options?.sceneId) {
       params.set('scene_id', options.sceneId);
+    } else if (options?.sensingDate) {
+      params.set('sensing_date', options.sensingDate);
     }
     const q = params.toString();
     const path = `/results/${encodeURIComponent(entityId)}${q ? `?${q}` : ''}`;

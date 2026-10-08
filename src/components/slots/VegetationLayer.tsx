@@ -22,9 +22,9 @@ export const VegetationLayer: React.FC = () => {
     selectedIndex, setSelectedIndex,
     activeJobId, setActiveJobId,
     activeRasterPath, setActiveRasterPath,
-    selectedEntityId, selectedSceneId,
+    selectedEntityId, selectedSceneId, selectedSensingDate,
     indexResults, setIndexResults,
-    selectedDate, setSelectedSceneId, setSelectedDate,
+    selectedDate, setSelectedSceneId, setSelectedSensingDate, setSelectedDate,
     layerOpacity,
     layerVisible,
     layerScope,
@@ -34,7 +34,9 @@ export const VegetationLayer: React.FC = () => {
   const layerRefs = useRef<any[]>([]);
   const dataSourceRef = useRef<any>(null);
 
-  // Resolve rasters per selected scene (DateSelector). If no scene yet, infer default from NDVI job metadata.
+  // Resolve rasters for the selected acquisition: a scene (local engine) or,
+  // for Copernicus acquisitions that have no scene, a sensing date. Without a
+  // selection, infer the default from the latest NDVI job metadata.
   useEffect(() => {
     if (!selectedEntityId) return;
     let cancelled = false;
@@ -42,28 +44,30 @@ export const VegetationLayer: React.FC = () => {
     (async () => {
       try {
         let sceneToUse = selectedSceneId;
+        let dateToUse = sceneToUse ? null : selectedSensingDate;
         let data = await api.getEntityResults(
           selectedEntityId,
-          sceneToUse ? { sceneId: sceneToUse } : undefined,
+          sceneToUse ? { sceneId: sceneToUse } : dateToUse ? { sensingDate: dateToUse } : undefined,
         );
         if (cancelled) return;
 
         let keys = Object.keys(data.indices || {});
 
-        // Fallback: a stale selectedSceneId from a previous session can
-        // scope the query to a scene that no longer matches anything,
-        // returning indices={}. Drop the scene filter and re-fetch the
-        // latest-per-index so the slot recovers without forcing the user
-        // to deselect/reselect the parcel.
-        if (sceneToUse && keys.length === 0) {
+        // Fallback: a stale selection (or a Copernicus raster that failed to
+        // materialize) can scope the query to nothing, returning indices={}.
+        // Drop the filter and re-fetch the latest-per-index so the slot
+        // recovers without forcing the user to deselect/reselect the parcel.
+        if ((sceneToUse || dateToUse) && keys.length === 0) {
           setSelectedSceneId(null);
+          setSelectedSensingDate(null);
           sceneToUse = null;
+          dateToUse = null;
           data = await api.getEntityResults(selectedEntityId);
           if (cancelled) return;
           keys = Object.keys(data.indices || {});
         }
 
-        if (!sceneToUse && keys.length > 0) {
+        if (!sceneToUse && !dateToUse && keys.length > 0) {
           const preferredKey = entityDataStatus?.available_indices?.[0] || 'NDVI';
           const pivotKey = keys.includes(preferredKey) ? preferredKey
             : keys.includes('NDVI') ? 'NDVI'
@@ -101,7 +105,7 @@ export const VegetationLayer: React.FC = () => {
     return () => {
       cancelled = true;
     };
-  }, [selectedEntityId, selectedSceneId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [selectedEntityId, selectedSceneId, selectedSensingDate]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Switch raster when user picks another index (same scene scope)
   useEffect(() => {

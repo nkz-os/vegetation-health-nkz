@@ -795,6 +795,11 @@ async def get_entity_results(
         None,
         description="If set, only jobs tied to this vegetation_scenes.id (UUID) are considered.",
     ),
+    sensing_date: Optional[date] = Query(
+        None,
+        description="If set, only jobs whose acquisition is this date (YYYY-MM-DD). "
+                    "Identifies Copernicus acquisitions, which have no scene_id.",
+    ),
     current_user: dict = Depends(require_auth),
     db: Session = Depends(get_db_with_tenant),
 ):
@@ -826,6 +831,10 @@ async def get_entity_results(
             or_(
                 VegetationJob.result["raster_path"].astext.isnot(None),
                 VegetationJob.result["raster_pending"].astext == "true",
+            ),
+            *(
+                [VegetationJob.result["sensing_date"].astext == sensing_date.isoformat()]
+                if sensing_date else []
             ),
         )
         .order_by(desc(VegetationJob.created_at))
@@ -892,6 +901,7 @@ async def get_entity_results(
     return {
         "entity_id": entity_id,
         "scene_id": scene_id,
+        "sensing_date": sensing_date.isoformat() if sensing_date else None,
         "indices": results,
         "active_jobs": active_jobs,
         "has_results": len(results) > 0,

@@ -4,19 +4,20 @@
  */
 
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
-import { Calendar, BarChart3 } from 'lucide-react';
+import { Calendar } from 'lucide-react';
 import { SlotShell } from '@nekazari/viewer-kit';
 import { Stack, Badge } from '@nekazari/ui-kit';
 import { useViewer, useTranslation } from '@nekazari/sdk';
 import { useVegetationContext } from '../../services/vegetationContext';
 import { useVegetationApi } from '../../services/api';
-import { SceneStats } from '../../types';
-import { SmartTimeline } from '../widgets/SmartTimeline';
+import { SmartTimeline, TickData } from '../widgets/SmartTimeline';
 import { IndexPillSelector, CustomIndexOption } from '../widgets/IndexPillSelector';
 
 interface TimelineWidgetProps {
   entityId?: string;
 }
+
+type TimelineTick = TickData & { raster_path: string | null };
 
 const vegetationAccent = { base: '#65A30D', soft: '#ECFCCB', strong: '#4D7C0F' };
 
@@ -25,23 +26,24 @@ export const TimelineWidget: React.FC<TimelineWidgetProps> = ({ entityId }) => {
   const { currentDate, setCurrentDate } = useViewer();
   const {
     selectedIndex,
-    selectedDate,
     selectedEntityId,
     selectedSeasonId,
+    selectedSensingDate,
     setSelectedIndex,
     setSelectedDate,
     setSelectedSceneId,
+    setSelectedSensingDate,
     setActiveRasterPath,
+    setLayerScope,
     dateRange,
     indexResults,
     entityDataStatus,
   } = useVegetationContext();
 
   const api = useVegetationApi();
-  const [stats, setStats] = useState<SceneStats[]>([]);
+  const [stats, setStats] = useState<TimelineTick[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [showChart, setShowChart] = useState(true);
 
   const effectiveEntityId = entityId || selectedEntityId;
 
@@ -55,13 +57,21 @@ export const TimelineWidget: React.FC<TimelineWidgetProps> = ({ entityId }) => {
       }));
   }, [indexResults]);
 
+  // Dim the index pills that have no data for this parcel. The custom formulas
+  // come from indexResults, so they count as available.
+  const availableIndices = useMemo(() => {
+    const base = entityDataStatus?.available_indices;
+    if (!base || base.length === 0) return undefined;
+    return [...base, ...customIndexOptions.map(o => o.key)];
+  }, [entityDataStatus?.available_indices, customIndexOptions]);
+
   // Load timeline from availability API (§12.8.1) — sparse ticks, mean_value for heatmap, local_cloud_pct for tooltips
   // Ref to track if we already auto-selected a date for this entity+index
   const autoSelectedRef = React.useRef<string | null>(null);
-  // Mirrors selectedDate so loadStats can read it without depending on it:
-  // adding it to the deps would refetch the whole timeline on every date click.
-  const selectedDateRef = React.useRef(selectedDate);
-  React.useEffect(() => { selectedDateRef.current = selectedDate; }, [selectedDate]);
+  // Mirrors the selected acquisition so loadStats can read it without depending
+  // on it: adding it to the deps would refetch the whole timeline on every click.
+  const selectedSensingDateRef = React.useRef(selectedSensingDate);
+  React.useEffect(() => { selectedSensingDateRef.current = selectedSensingDate; }, [selectedSensingDate]);
 
   const loadStats = useCallback(async () => {
     if (!effectiveEntityId) return;
@@ -90,16 +100,16 @@ export const TimelineWidget: React.FC<TimelineWidgetProps> = ({ entityId }) => {
         endStr
       );
       const timeline = response?.timeline || [];
-      const mapped: SceneStats[] = timeline.map((item: any) => ({
-        scene_id: item.scene_id || item.id,
-        sensing_date: item.date,
-        mean_value: item.mean_value ?? null,
-        min_value: null,
-        max_value: null,
-        std_dev: null,
-        cloud_coverage: item.local_cloud_pct != null ? Number(item.local_cloud_pct) : null,
-        raster_path: item.raster_path || null,
-      }));
+      // scene_id is null for Copernicus acquisitions: they are identified by date.
+      const mapped: TimelineTick[] = timeline
+        .filter((item: any) => item.date)
+        .map((item: any) => ({
+          scene_id: item.scene_id ?? null,
+          sensing_date: item.date,
+          mean_value: item.mean_value ?? null,
+          cloud_coverage: item.local_cloud_pct != null ? Number(item.local_cloud_pct) : null,
+          raster_path: item.raster_path || null,
+        }));
       // Ensure ascending chronological order (oldest first)
       mapped.sort((a, b) => a.sensing_date.localeCompare(b.sensing_date));
       setStats(mapped);
@@ -111,9 +121,7 @@ export const TimelineWidget: React.FC<TimelineWidgetProps> = ({ entityId }) => {
       // this index then rendered "no data for the selected range" on a date it
       // never had. Re-select whenever the current date is not one of ours.
       const autoKey = `${effectiveEntityId}:${selectedIndex}`;
-      const currentIso = selectedDateRef.current
-        ? new Date(selectedDateRef.current).toISOString().split('T')[0]
-        : null;
+      const currentIso = selectedSensingDateRef.current;
       const currentIsAvailable =
         currentIso != null && mapped.some((s) => s.sensing_date === currentIso);
 
@@ -122,6 +130,7 @@ export const TimelineWidget: React.FC<TimelineWidgetProps> = ({ entityId }) => {
         const mostRecent = mapped[mapped.length - 1];
         setSelectedDate(new Date(mostRecent.sensing_date));
         setSelectedSceneId(mostRecent.scene_id);
+        setSelectedSensingDate(mostRecent.sensing_date);
         if (mostRecent.raster_path) {
           setActiveRasterPath(mostRecent.raster_path);
         }
@@ -132,29 +141,31 @@ export const TimelineWidget: React.FC<TimelineWidgetProps> = ({ entityId }) => {
     } finally {
       setLoading(false);
     }
-  }, [effectiveEntityId, selectedIndex, selectedSeasonId, api, dateRange?.startDate, dateRange?.endDate, setSelectedDate, setSelectedSceneId, entityDataStatus?.active_crop_seasons, entityDataStatus?.date_range]);
+  }, [effectiveEntityId, selectedIndex, selectedSeasonId, api, dateRange?.startDate, dateRange?.endDate, setSelectedDate, setSelectedSceneId, setSelectedSensingDate, entityDataStatus?.active_crop_seasons, entityDataStatus?.date_range]);
 
   // Initial load
   useEffect(() => {
     loadStats();
   }, [loadStats]);
 
-  // Handle date selection from chart
-  const handleDateSelect = useCallback((dateStr: string, sceneId: string) => {
+  // Picking an acquisition on the timeline means "show this parcel on this
+  // date", so the map switches to the selected-parcel scope: in the all-parcels
+  // scope it shows each parcel's latest raster and would ignore the click.
+  const handleDateSelect = useCallback((dateStr: string, sceneId: string | null) => {
     setSelectedDate(new Date(dateStr));
     setSelectedSceneId(sceneId);
+    setSelectedSensingDate(dateStr);
+    setLayerScope('selected');
 
-    // Find raster_path for this scene and update it
-    const scene = stats.find(s => s.scene_id === sceneId);
-    if (scene?.raster_path) {
-      setActiveRasterPath(scene.raster_path);
+    const tick = stats.find(s => s.sensing_date === dateStr);
+    if (tick?.raster_path) {
+      setActiveRasterPath(tick.raster_path);
     }
 
-    // Update viewer's currentDate
     if (setCurrentDate) {
       setCurrentDate(new Date(dateStr));
     }
-  }, [setSelectedDate, setSelectedSceneId, setActiveRasterPath, setCurrentDate, stats]);
+  }, [setSelectedDate, setSelectedSceneId, setSelectedSensingDate, setLayerScope, setActiveRasterPath, setCurrentDate, stats]);
 
   // Sync with viewer's currentDate changes — use ref to avoid re-render loop
   const lastViewerDateRef = React.useRef<number>(0);
@@ -166,13 +177,13 @@ export const TimelineWidget: React.FC<TimelineWidgetProps> = ({ entityId }) => {
 
     const currentDateStr = currentDate.toISOString().split('T')[0];
     const closestScene = stats.find(s => s.sensing_date === currentDateStr);
-    const selectedDateStr = selectedDate ? selectedDate.toISOString().split('T')[0] : null;
 
-    if (closestScene && closestScene.sensing_date !== selectedDateStr) {
+    if (closestScene && closestScene.sensing_date !== selectedSensingDate) {
       setSelectedDate(new Date(closestScene.sensing_date));
       setSelectedSceneId(closestScene.scene_id);
+      setSelectedSensingDate(closestScene.sensing_date);
     }
-  }, [currentDate, stats, selectedDate, setSelectedDate, setSelectedSceneId]);
+  }, [currentDate, stats, selectedSensingDate, setSelectedDate, setSelectedSceneId, setSelectedSensingDate]);
 
   if (!effectiveEntityId) {
     return (
@@ -203,62 +214,43 @@ export const TimelineWidget: React.FC<TimelineWidgetProps> = ({ entityId }) => {
 
   return (
     <SlotShell moduleId="vegetation-prime" accent={vegetationAccent}>
-      <div className="space-y-nkz-inline">
-        {/* Compact index pill selector above the timeline */}
-        <IndexPillSelector
-          selectedIndex={selectedIndex || 'NDVI'}
-          onIndexChange={(idx: string) => setSelectedIndex(idx)}
-          customIndexOptions={customIndexOptions}
-          compact
-        />
-
-        <div className="flex items-center justify-between px-nkz-inline">
-          <div className="flex items-center gap-nkz-inline">
-            <button
-              onClick={() => setShowChart(!showChart)}
-              className={`flex items-center gap-nkz-tight px-nkz-inline py-nkz-tight rounded-nkz-md text-nkz-xs transition-colors ${
-                showChart
-                  ? 'bg-nkz-accent-base text-nkz-text-on-accent'
-                  : 'bg-nkz-surface-sunken text-nkz-text-secondary hover:bg-nkz-surface'
-              }`}
-            >
-              <BarChart3 className="w-3.5 h-3.5" />
-              {t('timelineWidget.chart')}
-            </button>
-          </div>
-
-          <div className="text-nkz-xs text-nkz-text-muted">
-            {t('timelineWidget.scenesAvailable', { count: stats.length })}
+      <div className="flex flex-col gap-nkz-tight">
+        <div className="flex flex-wrap items-center justify-between gap-nkz-inline">
+          <IndexPillSelector
+            selectedIndex={selectedIndex || 'NDVI'}
+            onIndexChange={(idx: string) => setSelectedIndex(idx)}
+            customIndexOptions={customIndexOptions}
+            availableIndices={availableIndices}
+            compact
+          />
+          <div className="flex items-center gap-nkz-inline text-nkz-xs text-nkz-text-muted">
+            {!(selectedIndex || 'NDVI').startsWith('SAR') && (
+              <>
+                <span className="flex items-center gap-nkz-tight">
+                  <span className="rounded-full inline-block" style={{ width: 8, height: 8, backgroundColor: '#ef4444' }} />
+                  {t('legend.low')}
+                </span>
+                <span className="flex items-center gap-nkz-tight">
+                  <span className="rounded-full inline-block" style={{ width: 8, height: 8, backgroundColor: '#eab308' }} />
+                  {t('legend.moderate')}
+                </span>
+                <span className="flex items-center gap-nkz-tight">
+                  <span className="rounded-full inline-block" style={{ width: 8, height: 8, backgroundColor: '#22c55e' }} />
+                  {t('legend.high')}
+                </span>
+              </>
+            )}
+            <span>{t('timelineWidget.scenesAvailable', { count: stats.length })}</span>
           </div>
         </div>
 
-        {showChart && (
-          <>
-            <SmartTimeline
-              stats={stats}
-              selectedDate={selectedDate ? selectedDate.toISOString().split('T')[0] : null}
-              onDateSelect={handleDateSelect}
-              indexType={selectedIndex || 'NDVI'}
-              isLoading={loading}
-            />
-
-            {/* Subtle compact legend bar below the timeline */}
-            <div className="flex items-center justify-center gap-nkz-inline mt-nkz-inline text-[10px] text-nkz-text-muted">
-              <span className="flex items-center gap-nkz-tight">
-                <span className="w-3 h-1.5 rounded-full bg-nkz-danger inline-block" />
-                {t('legend.low')}
-              </span>
-              <span className="flex items-center gap-nkz-tight">
-                <span className="w-3 h-1.5 rounded-full bg-nkz-warning inline-block" />
-                {t('legend.moderate')}
-              </span>
-              <span className="flex items-center gap-nkz-tight">
-                <span className="w-3 h-1.5 rounded-full bg-green-500 inline-block" />
-                {t('legend.high')}
-              </span>
-            </div>
-          </>
-        )}
+        <SmartTimeline
+          stats={stats}
+          selectedDate={selectedSensingDate}
+          onDateSelect={handleDateSelect}
+          indexType={selectedIndex || 'NDVI'}
+          isLoading={loading}
+        />
       </div>
     </SlotShell>
   );
