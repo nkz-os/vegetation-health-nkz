@@ -25,6 +25,19 @@ logger = logging.getLogger(__name__)
 WEATHER_MODULE_URL = os.getenv("WEATHER_MODULE_URL", "http://timeseries-reader-service:5000")
 ENTITY_MANAGER_URL = os.getenv("ENTITY_MANAGER_URL", "http://entity-manager-service:5000")
 
+DEFAULT_OPENMETEO_API_URL = "https://api.open-meteo.com/v1"
+DEFAULT_OPENMETEO_ARCHIVE_URL = "https://archive-api.open-meteo.com/v1"
+
+
+def _openmeteo_url(env_name: str, default: str) -> str:
+    """Base URL (ending /v1) from env, trailing slashes stripped; blank -> default."""
+    return (os.getenv(env_name) or "").strip().rstrip("/") or default
+
+
+def _openmeteo_models(env_name: str) -> str:
+    """Comma list of Open-Meteo models from env; empty -> '' (param not sent)."""
+    return ",".join(m.strip() for m in os.getenv(env_name, "").split(",") if m.strip())
+
 
 @dataclass
 class SoilSensorData:
@@ -168,11 +181,12 @@ class WeatherService:
     - Agricultural metrics (GDD, water balance, stress indicators)
     """
 
-    BASE_URL = "https://api.open-meteo.com/v1"
-    ARCHIVE_URL = "https://archive-api.open-meteo.com/v1"
-
     def __init__(self, timeout: float = 30.0):
         self.timeout = timeout
+        self.BASE_URL = _openmeteo_url("OPENMETEO_API_URL", DEFAULT_OPENMETEO_API_URL)
+        self.ARCHIVE_URL = _openmeteo_url("OPENMETEO_ARCHIVE_URL", DEFAULT_OPENMETEO_ARCHIVE_URL)
+        self.forecast_models = _openmeteo_models("OPENMETEO_MODELS")
+        self.archive_models = _openmeteo_models("OPENMETEO_ARCHIVE_MODELS")
         self._client = None
         self.weather_module_url = WEATHER_MODULE_URL
 
@@ -454,7 +468,9 @@ class WeatherService:
 
         # Use archive API for dates older than 7 days
         days_ago = (date.today() - end_date).days
-        base_url = self.ARCHIVE_URL if days_ago > 7 else self.BASE_URL
+        use_archive = days_ago > 7
+        base_url = self.ARCHIVE_URL if use_archive else self.BASE_URL
+        endpoint = "archive" if use_archive else "forecast"
 
         params = {
             "latitude": latitude,
@@ -475,15 +491,19 @@ class WeatherService:
         }
 
         # Add soil moisture if using forecast API (not available in archive)
-        if base_url == self.BASE_URL:
+        if not use_archive:
             params["daily"].extend([
                 "soil_moisture_0_to_10cm_mean",
                 "soil_moisture_10_to_40cm_mean"
             ])
 
+        models = self.archive_models if use_archive else self.forecast_models
+        if models:
+            params["models"] = models
+
         try:
             response = await client.get(
-                f"{base_url}/forecast",
+                f"{base_url}/{endpoint}",
                 params=params
             )
             response.raise_for_status()
