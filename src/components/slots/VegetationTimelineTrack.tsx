@@ -111,12 +111,22 @@ export const VegetationTimelineTrack: React.FC<TimelineTrackProps> = ({ entityId
   // Same for the visible window: the fetch must not re-run when it changes.
   const rangeRef = useRef(range);
   useEffect(() => { rangeRef.current = range; }, [range.start, range.end]);
+  // Cursor -> selection bookkeeping (see the cursor effect below). Declared here
+  // because the fetch effect resets the baseline.
+  const lastCursorRef = useRef<number | null>(null);
+  const baselineKeyRef = useRef<string | null>(null);
 
   // Load the acquisitions of this parcel and index. Keyed by the entityId prop
   // (the host's selection), not the context's selectedEntityId, which can lag.
   // The backend takes only index_type: the track filters by range on the client.
   useEffect(() => {
     let cancelled = false;
+
+    // Every load starts a new baseline: the first cursor value after it is never
+    // a user action. Without this, leaving a parcel (or index) with no ticks and
+    // coming back to a key that was already baselined skipped the re-baseline,
+    // and a cursor moved in between was taken for a click.
+    baselineKeyRef.current = null;
 
     // Ticks of another parcel or index must not linger while this one loads.
     setTicks((prev) => (prev.length > 0 ? [] : prev));
@@ -147,11 +157,10 @@ export const VegetationTimelineTrack: React.FC<TimelineTrackProps> = ({ entityId
         // dates: NDRE runs on the local engine and NDVI/EVI/SAVI/GNDVI on
         // Copernicus, so their timelines rarely overlap. Select the latest
         // acquisition only when the stored one is not one of this parcel and
-        // index's acquisitions. When it is (e.g. the panel was reopened), keep
-        // it: moving the selection would move the shared cursor.
+        // index's acquisitions.
         const currentIso = selectedSensingDateRef.current;
-        const currentIsAvailable =
-          currentIso != null && mapped.some((s) => s.sensing_date === currentIso);
+        const storedMatch =
+          currentIso != null ? mapped.find((s) => s.sensing_date === currentIso) : undefined;
 
         // Only acquisitions inside the visible window are candidates: the layer
         // control moves the shared cursor to the selected date, and a date off
@@ -159,7 +168,18 @@ export const VegetationTimelineTrack: React.FC<TimelineTrackProps> = ({ entityId
         // select nothing: the layer keeps its own latest and the cursor stays.
         const inWindow = mapped.filter((s) => isInRange(isoToUtcMs(s.sensing_date), rangeRef.current));
 
-        if (inWindow.length > 0 && !currentIsAvailable) {
+        if (storedMatch) {
+          // Keep the stored date (moving it would move the shared cursor), but
+          // take this index's scene and raster: the same date can exist under
+          // both engines (no scene for Copernicus, a UUID for the local one), and
+          // a scene left over from the previous index scopes the layer's query to
+          // the other engine, which then lacks this index. Same values on a
+          // remount for the same index, so nothing changes there.
+          setSelectedSceneId(storedMatch.scene_id);
+          if (storedMatch.raster_path) {
+            setActiveRasterPath(storedMatch.raster_path);
+          }
+        } else if (inWindow.length > 0) {
           const mostRecent = inWindow[inWindow.length - 1];
           setSelectedDate(new Date(mostRecent.sensing_date));
           setSelectedSceneId(mostRecent.scene_id);
@@ -212,8 +232,6 @@ export const VegetationTimelineTrack: React.FC<TimelineTrackProps> = ({ entityId
 
   // Cursor -> selection. Another widget (or the host axis) moved the cursor:
   // show the acquisition nearest to it, without writing the cursor back.
-  const lastCursorRef = useRef<number | null>(null);
-  const baselineKeyRef = useRef<string | null>(null);
   useEffect(() => {
     if (ticks.length === 0) return;
 
