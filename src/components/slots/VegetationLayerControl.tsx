@@ -27,6 +27,7 @@ const VegetationLayerControl: React.FC = () => {
     selectedDate,
     selectedEntityId,
     selectedSceneId,
+    selectedSensingDate,
     selectedSeasonId,
     indexResults,
     entityDataStatus,
@@ -71,13 +72,18 @@ const VegetationLayerControl: React.FC = () => {
   // Re-fetch results scoped to the user-selected scene
   useEffect(() => {
     if (!selectedEntityId || !selectedSceneId) return;
+    // A response for a scene that is no longer selected must not replace the
+    // results of the one that is.
+    let cancelled = false;
     api.getEntityResults(selectedEntityId, { sceneId: selectedSceneId })
       .then((data) => {
+        if (cancelled) return;
         if (data.indices && Object.keys(data.indices).length > 0) {
           setIndexResults(data.indices);
         }
       })
       .catch(() => { /* scene may lack results for some indices */ });
+    return () => { cancelled = true; };
   }, [selectedEntityId, selectedSceneId]);
 
   const cropSeasons = entityDataStatus?.active_crop_seasons || [];
@@ -88,6 +94,10 @@ const VegetationLayerControl: React.FC = () => {
       setSelectedSeasonId(cropSeasons[0].id);
     }
   }, [selectedEntityId, selectedSeasonId, cropSeasons, setSelectedSeasonId]);
+
+  // The acquisition the map shows (a UTC calendar day), not the timeline cursor, which
+  // `selectedDate` follows. Falls back to the shared date when no acquisition is selected.
+  const activeSceneDay = selectedSensingDate ?? (selectedDate ? selectedDate.toISOString().split('T')[0] : null);
 
   const displayName = entityName || (selectedEntityId ? selectedEntityId.split(':').pop() : '');
   // Use ?entityId=... to match the App.tsx URL-param parser; this lets the
@@ -232,11 +242,11 @@ const VegetationLayerControl: React.FC = () => {
         )}
 
         {/* Active scene context */}
-        {selectedDate && (
+        {activeSceneDay && (
           <div className="text-[11px] text-nkz-text-muted pt-nkz-stack border-t border-nkz-border">
             {t('layerControl.activeScene', 'Active scene')}:{' '}
             <span className="text-nkz-text-primary font-medium">
-              {selectedDate.toISOString().split('T')[0]}
+              {activeSceneDay}
             </span>
           </div>
         )}

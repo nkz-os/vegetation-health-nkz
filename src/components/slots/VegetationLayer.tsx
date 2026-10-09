@@ -285,14 +285,18 @@ export const VegetationLayer: React.FC = () => {
     }
   }, [activeRasterPath, activeJobId]);
 
-  // Date badge — render over the Cesium canvas via portal
+  // Date badge — render over the Cesium canvas via portal. It names the acquisition
+  // the raster belongs to, not the timeline cursor: `selectedDate` follows the
+  // cursor, which can sit up to two weeks away from the nearest acquisition.
+  // Acquisition days are UTC calendar days, so they are formatted in UTC.
   const hasLayer = !!(layerRefs.current.length || dataSourceRef.current);
   const dateLabel = useMemo(() => {
-    if (!selectedDate || !hasLayer) return null;
-    return selectedDate.toLocaleDateString(undefined, {
-      day: '2-digit', month: 'short', year: 'numeric',
+    const shown = selectedSensingDate ? new Date(selectedSensingDate) : selectedDate;
+    if (!shown || !hasLayer) return null;
+    return shown.toLocaleDateString(undefined, {
+      day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC',
     });
-  }, [selectedDate, hasLayer]);
+  }, [selectedSensingDate, selectedDate, hasLayer]);
 
   const cesiumContainer = typeof document !== 'undefined'
     ? document.querySelector('.cesium-viewer') || document.getElementById('cesiumContainer')

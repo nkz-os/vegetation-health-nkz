@@ -38,6 +38,12 @@ interface TimelineTick {
 
 /** An acquisition follows the cursor only when it lies within this distance. */
 const CURSOR_SNAP_MS = 15 * DAY_MS;
+/**
+ * Wait for the cursor (or a held key) to settle before showing an acquisition. Each selection makes the
+ * backend materialize that date's rasters (a Copernicus call per index plus conversion and upload), and
+ * dragging the axis crosses one acquisition after another. A click is never delayed.
+ */
+const SELECTION_DEBOUNCE_MS = 250;
 /** Two label lines (track name + date shown on the map) fit this height. */
 const TRACK_HEIGHT = 32;
 
@@ -115,6 +121,27 @@ export const VegetationTimelineTrack: React.FC<TimelineTrackProps> = ({ entityId
   // because the fetch effect resets the baseline.
   const lastCursorRef = useRef<number | null>(null);
   const baselineKeyRef = useRef<string | null>(null);
+  // The one pending debounced selection (from the cursor or from a key press) and, for key presses, the
+  // visible index it is heading to, so that presses made while it waits keep stepping from there.
+  const pendingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingKeyIdxRef = useRef<number | null>(null);
+  const cancelPending = useCallback(() => {
+    if (pendingTimerRef.current !== null) {
+      clearTimeout(pendingTimerRef.current);
+      pendingTimerRef.current = null;
+    }
+    pendingKeyIdxRef.current = null;
+  }, []);
+  const scheduleSelection = useCallback((run: () => void) => {
+    cancelPending();
+    pendingTimerRef.current = setTimeout(() => {
+      pendingTimerRef.current = null;
+      pendingKeyIdxRef.current = null;
+      run();
+    }, SELECTION_DEBOUNCE_MS);
+  }, [cancelPending]);
+  // Nothing may fire after the track is gone.
+  useEffect(() => cancelPending, [cancelPending]);
 
   // Load the acquisitions of this parcel and index. Keyed by the entityId prop
   // (the host's selection), not the context's selectedEntityId, which can lag.
@@ -127,6 +154,8 @@ export const VegetationTimelineTrack: React.FC<TimelineTrackProps> = ({ entityId
     // coming back to a key that was already baselined skipped the re-baseline,
     // and a cursor moved in between was taken for a click.
     baselineKeyRef.current = null;
+    // A selection waiting for the cursor to settle belongs to the previous parcel or index.
+    cancelPending();
 
     // Ticks of another parcel or index must not linger while this one loads.
     setTicks((prev) => (prev.length > 0 ? [] : prev));
@@ -198,7 +227,7 @@ export const VegetationTimelineTrack: React.FC<TimelineTrackProps> = ({ entityId
     })();
 
     return () => { cancelled = true; };
-  }, [entityId, index, reloadNonce, api, setSelectedDate, setSelectedSceneId, setSelectedSensingDate, setActiveRasterPath]);
+  }, [entityId, index, reloadNonce, api, setSelectedDate, setSelectedSceneId, setSelectedSensingDate, setActiveRasterPath, cancelPending]);
 
   // Acquisitions inside the visible window, oldest first.
   const visibleTicks = useMemo(
@@ -210,8 +239,12 @@ export const VegetationTimelineTrack: React.FC<TimelineTrackProps> = ({ entityId
   // parcel on this date", so the map switches to the selected-parcel scope: in
   // the all-parcels scope it shows each parcel's latest raster and would ignore
   // the pick.
-  const applyAcquisition = useCallback((tick: TimelineTick) => {
-    setSelectedDate(new Date(tick.sensing_date));
+  // `selectedDate` is the shared date the layer control writes to the host cursor.
+  // A selection that follows the cursor leaves it alone: the provider keeps it on
+  // the cursor, and setting it to the acquisition would make the layer control
+  // move the cursor onto the acquisition once the (debounced) selection lands.
+  const applyAcquisition = useCallback((tick: TimelineTick, followsCursor = false) => {
+    if (!followsCursor) setSelectedDate(new Date(tick.sensing_date));
     setSelectedSceneId(tick.scene_id);
     setSelectedSensingDate(tick.sensing_date);
     setLayerScope('selected');
@@ -229,6 +262,13 @@ export const VegetationTimelineTrack: React.FC<TimelineTrackProps> = ({ entityId
       setCurrentDate(new Date(tick.sensing_date));
     }
   }, [applyAcquisition, setCurrentDate]);
+
+  // What a debounced selection reads when it fires: the values of the latest render, not of the one that
+  // scheduled it.
+  const latestRef = useRef({ visibleTicks, selectedSensingDate, applyAcquisition, handleDateSelect });
+  useEffect(() => {
+    latestRef.current = { visibleTicks, selectedSensingDate, applyAcquisition, handleDateSelect };
+  });
 
   // Cursor -> selection. Another widget (or the host axis) moved the cursor:
   // show the acquisition nearest to it, without writing the cursor back.
@@ -248,14 +288,18 @@ export const VegetationTimelineTrack: React.FC<TimelineTrackProps> = ({ entityId
     if (cursor === lastCursorRef.current) return;
     lastCursorRef.current = cursor;
 
-    const times = visibleTicks.map((tk) => isoToUtcMs(tk.sensing_date));
-    const nearest = nearestTime(times, cursor, CURSOR_SNAP_MS);
-    if (nearest === null) return;
+    // Choosing the acquisition waits until the cursor stops moving: every cursor change restarts the wait.
+    scheduleSelection(() => {
+      const { visibleTicks: visible, selectedSensingDate: shown, applyAcquisition: apply } = latestRef.current;
+      const times = visible.map((tk) => isoToUtcMs(tk.sensing_date));
+      const nearest = nearestTime(times, cursor, CURSOR_SNAP_MS);
+      if (nearest === null) return;
 
-    const target = visibleTicks[times.indexOf(nearest)];
-    if (target.sensing_date === selectedSensingDate) return;
+      const target = visible[times.indexOf(nearest)];
+      if (target.sensing_date === shown) return;
 
-    applyAcquisition(target);
+      apply(target, true);
+    });
   }, [cursor, ticks]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const selectedIdx = visibleTicks.findIndex((tk) => tk.sensing_date === selectedSensingDate);
@@ -271,22 +315,37 @@ export const VegetationTimelineTrack: React.FC<TimelineTrackProps> = ({ entityId
     [visibleTicks, index, indexLabel, selectedSensingDate, i18n?.language],
   );
 
+  // A click is a decision, not a drag: it applies at once and supersedes any selection still waiting.
   const handleMarkerSelect = useCallback((id: string) => {
     const tick = visibleTicks.find((tk) => tickId(tk) === id);
-    if (tick) handleDateSelect(tick);
-  }, [visibleTicks, handleDateSelect]);
+    if (!tick) return;
+    cancelPending();
+    handleDateSelect(tick);
+  }, [visibleTicks, handleDateSelect, cancelPending]);
 
-  // Arrow keys jump to the previous/next acquisition.
+  // Arrow keys jump to the previous/next acquisition. Holding a key repeats quickly, so the selection is
+  // debounced like the cursor's: presses made while one waits keep stepping from where it is heading, and
+  // only the acquisition the user stops on is selected.
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
     if (visibleTicks.length === 0) return;
     e.preventDefault();
-    const from = selectedIdx < 0 ? visibleTicks.length - 1 : selectedIdx;
+    const pending = pendingKeyIdxRef.current;
+    const from = pending ?? (selectedIdx < 0 ? visibleTicks.length - 1 : selectedIdx);
     const to = e.key === 'ArrowLeft'
       ? Math.max(0, from - 1)
       : Math.min(visibleTicks.length - 1, from + 1);
-    if (to !== selectedIdx) handleDateSelect(visibleTicks[to]);
-  }, [visibleTicks, selectedIdx, handleDateSelect]);
+    if (to === selectedIdx) {
+      // Back on the acquisition already shown: whatever was waiting is moot.
+      if (pending !== null) cancelPending();
+      return;
+    }
+
+    // Every effective press restarts the wait, including one that only repeats the end of the axis.
+    const target = visibleTicks[to];
+    scheduleSelection(() => latestRef.current.handleDateSelect(target));
+    pendingKeyIdxRef.current = to; // after scheduleSelection, which clears it
+  }, [visibleTicks, selectedIdx, cancelPending, scheduleSelection]);
 
   const trackLabel = t('timeline.trackLabel', { index: indexLabel });
   const shownOnMap = selectedSensingDate ? formatDay(selectedSensingDate, i18n?.language) : null;
