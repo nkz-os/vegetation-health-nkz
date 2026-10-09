@@ -493,8 +493,10 @@ class WeatherService:
         # Add soil moisture if using forecast API (not available in archive)
         if not use_archive:
             params["daily"].extend([
-                "soil_moisture_0_to_10cm_mean",
-                "soil_moisture_10_to_40cm_mean"
+                # ECMWF IFS exposes 0-7/7-28 cm layers only; they fill the
+                # 0-10/10-40 cm slots, as the platform weather worker does.
+                "soil_moisture_0_to_7cm_mean",
+                "soil_moisture_7_to_28cm_mean"
             ])
 
         models = self.archive_models if use_archive else self.forecast_models
@@ -522,8 +524,8 @@ class WeatherService:
                     precipitation=daily.get("precipitation_sum", [None])[i] or 0,
                     precipitation_hours=daily.get("precipitation_hours", [None])[i] or 0,
                     evapotranspiration=daily.get("et0_fao_evapotranspiration", [None])[i] or 0,
-                    soil_moisture_0_10cm=daily.get("soil_moisture_0_to_10cm_mean", [None])[i] if i < len(daily.get("soil_moisture_0_to_10cm_mean", [])) else None,
-                    soil_moisture_10_40cm=daily.get("soil_moisture_10_to_40cm_mean", [None])[i] if i < len(daily.get("soil_moisture_10_to_40cm_mean", [])) else None,
+                    soil_moisture_0_10cm=daily.get("soil_moisture_0_to_7cm_mean", [None])[i] if i < len(daily.get("soil_moisture_0_to_7cm_mean", [])) else None,
+                    soil_moisture_10_40cm=daily.get("soil_moisture_7_to_28cm_mean", [None])[i] if i < len(daily.get("soil_moisture_7_to_28cm_mean", [])) else None,
                     wind_speed_max=daily.get("wind_speed_10m_max", [None])[i] or 0,
                     shortwave_radiation=daily.get("shortwave_radiation_sum", [None])[i] or 0
                 ))
