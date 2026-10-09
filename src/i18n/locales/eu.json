@@ -215,6 +215,7 @@
     "loadingHistory": "Historia kargatzen...",
     "noDataAvailable": "Ez dago daturik hautatutako aldirako",
     "evolution": "{{index}} Eboluzioa",
+    "trackLabel": "Landaredia · {{index}}",
     "improving": "Hobetzen",
     "declining": "Behera egiten",
     "stable": "Egonkorra",

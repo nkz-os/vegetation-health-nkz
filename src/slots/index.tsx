@@ -6,7 +6,7 @@
  */
 
 // Import UNWRAPPED components (Host's SlotRenderer will wrap with moduleProvider)
-import { TimelineWidget } from '../components/slots/TimelineWidget';
+import { VegetationTimelineTrack } from '../components/slots/VegetationTimelineTrack';
 import VegetationLayerControl from '../components/slots/VegetationLayerControl';
 import VegetationLayerToggle from '../components/slots/VegetationLayerToggle';
 import { VegetationLayer } from '../components/slots/VegetationLayer';
@@ -52,13 +52,14 @@ export const vegetationPrimeSlots: ModuleViewerSlots = {
       showWhen: { entityType: ['AgriParcel'] }
     }
   ],
-  'bottom-panel': [
+  'timeline-track': [
     {
-      id: 'vegetation-prime-timeline',
+      id: 'vegetation-prime-timeline-track',
       moduleId: MODULE_ID,
-      component: 'TimelineWidget',
+      component: 'VegetationTimelineTrack',
       priority: 10,
-      localComponent: TimelineWidget
+      localComponent: VegetationTimelineTrack,
+      showWhen: { entityType: ['AgriParcel', 'https://saref.etsi.org/saref4agri/AgriParcel'] }
     }
   ],
   'entity-tree': [],

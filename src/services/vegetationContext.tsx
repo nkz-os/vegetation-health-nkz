@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, ReactNode, useCallback, useEffect, useRef, useSyncExternalStore } from 'react';
+import React, { createContext, useContext, useState, ReactNode, useCallback, useEffect, useSyncExternalStore } from 'react';
 import { useViewerOptional } from '@nekazari/sdk';
 import type { EntityDataStatus } from '../types';
 import { useVegetationApi } from './api';
@@ -35,7 +35,7 @@ interface IndexResult {
 // =============================================================================
 // Global Shared Store — singleton across all VegetationProvider instances
 // =============================================================================
-// Each slot (map-layer, context-panel, bottom-panel, layer-toggle) gets its own
+// Each slot (map-layer, context-panel, timeline-track, layer-toggle) gets its own
 // VegetationProvider instance. This store synchronizes shared state between them.
 
 interface SharedState {
@@ -59,6 +59,11 @@ interface SharedState {
   /** Active crop season id chosen in the viewer slot or detail page; scopes
    *  the timeline / map to that season window when set. */
   selectedSeasonId: string | null;
+  /** Host entity whose arrival last reset the selection. Lives here, not in a
+   *  per-instance ref: the host remounts a provider each time a slot opens, and
+   *  a fresh instance must not mistake an already-synced entity for a new one
+   *  (that cleared the selected acquisition and moved the shared cursor). */
+  lastSyncedHostEntityId: string | null;
 }
 
 interface VegetationStore {
@@ -89,6 +94,7 @@ function getStore(): VegetationStore {
         entityDataStatusLoading: false,
         entityName: null,
         selectedSeasonId: null,
+        lastSyncedHostEntityId: null,
       },
       _listeners: new Set(),
       _version: 0,
@@ -223,28 +229,32 @@ export const VegetationProvider: React.FC<{ children: ReactNode }> = ({ children
   // Sync entity selection from host ViewerContext (unified viewer page)
   // ==========================================================================
   const hostViewer = useViewerOptional();
-  const prevHostEntityRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!hostViewer) return;
 
     const hostEntityId = hostViewer.selectedEntityId || null;
 
-    if (hostEntityId !== prevHostEntityRef.current) {
-      prevHostEntityRef.current = hostEntityId;
+    // Per-instance mirror of the host entity: every provider instance keeps its
+    // own local selectedEntityId, so each one sets it on mount.
+    if (hostEntityId) {
+      setSelectedEntityIdLocal(hostEntityId);
+    } else {
+      setSelectedEntityIdLocal(null);
+      setSelectedGeometry(null);
+    }
 
-      if (hostEntityId) {
-        setSelectedEntityIdLocal(hostEntityId);
-        updateStore({ selectedSceneId: null, selectedSensingDate: null });
-        // Read the latest snapshot imperatively so this effect doesn't list
-        // selectedIndex as a dep (which would re-run after our own write
-        // and made the auditor flag a potential loop).
-        if (!getStoreSnapshot().selectedIndex) {
-          updateStore({ selectedIndex: 'NDVI' });
-        }
-      } else {
-        setSelectedEntityIdLocal(null);
-        setSelectedGeometry(null);
+    // Shared selection reset: only when the host entity really changed since
+    // the last sync, whichever instance (or remount) notices it first. Read the
+    // snapshot imperatively so this effect doesn't list store fields as deps
+    // (which would re-run after our own write).
+    if (hostEntityId === getStoreSnapshot().lastSyncedHostEntityId) return;
+
+    updateStore({ lastSyncedHostEntityId: hostEntityId });
+    if (hostEntityId) {
+      updateStore({ selectedSceneId: null, selectedSensingDate: null });
+      if (!getStoreSnapshot().selectedIndex) {
+        updateStore({ selectedIndex: 'NDVI' });
       }
     }
   }, [hostViewer?.selectedEntityId]);

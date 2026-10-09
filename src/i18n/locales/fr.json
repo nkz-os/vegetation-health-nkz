@@ -215,6 +215,7 @@
     "loadingHistory": "Loading history...",
     "noDataAvailable": "No data available for the selected period",
     "evolution": "{{index}} Evolution",
+    "trackLabel": "Vegetation · {{index}}",
     "improving": "Improving",
     "declining": "Declining",
     "stable": "Stable",
