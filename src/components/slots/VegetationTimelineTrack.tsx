@@ -108,6 +108,9 @@ export const VegetationTimelineTrack: React.FC<TimelineTrackProps> = ({ entityId
   // on it: adding it to the deps would refetch the whole timeline on every click.
   const selectedSensingDateRef = useRef(selectedSensingDate);
   useEffect(() => { selectedSensingDateRef.current = selectedSensingDate; }, [selectedSensingDate]);
+  // Same for the visible window: the fetch must not re-run when it changes.
+  const rangeRef = useRef(range);
+  useEffect(() => { rangeRef.current = range; }, [range.start, range.end]);
 
   // Load the acquisitions of this parcel and index. Keyed by the entityId prop
   // (the host's selection), not the context's selectedEntityId, which can lag.
@@ -143,15 +146,21 @@ export const VegetationTimelineTrack: React.FC<TimelineTrackProps> = ({ entityId
         // The selected date is shared across indices, but each index has its own
         // dates: NDRE runs on the local engine and NDVI/EVI/SAVI/GNDVI on
         // Copernicus, so their timelines rarely overlap. Select the latest
-        // acquisition only when the stored one is not one of ours. When it is
-        // (same parcel and index, e.g. the panel was reopened), keep it: moving
-        // the selection would move the shared cursor.
+        // acquisition only when the stored one is not one of this parcel and
+        // index's acquisitions. When it is (e.g. the panel was reopened), keep
+        // it: moving the selection would move the shared cursor.
         const currentIso = selectedSensingDateRef.current;
         const currentIsAvailable =
           currentIso != null && mapped.some((s) => s.sensing_date === currentIso);
 
-        if (mapped.length > 0 && !currentIsAvailable) {
-          const mostRecent = mapped[mapped.length - 1];
+        // Only acquisitions inside the visible window are candidates: the layer
+        // control moves the shared cursor to the selected date, and a date off
+        // the axis would take the cursor out of view. With none in the window,
+        // select nothing: the layer keeps its own latest and the cursor stays.
+        const inWindow = mapped.filter((s) => isInRange(isoToUtcMs(s.sensing_date), rangeRef.current));
+
+        if (inWindow.length > 0 && !currentIsAvailable) {
+          const mostRecent = inWindow[inWindow.length - 1];
           setSelectedDate(new Date(mostRecent.sensing_date));
           setSelectedSceneId(mostRecent.scene_id);
           setSelectedSensingDate(mostRecent.sensing_date);

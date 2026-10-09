@@ -123,12 +123,6 @@ export interface VegetationLayerControlProps {
   onDateChange?: (date: string) => void;
 }
 
-export interface TimelineWidgetProps {
-  entityId?: string;
-  indexType?: VegetationIndexType;
-  onDateSelect?: (date: string) => void;
-}
-
 
 export interface SceneStats {
   scene_id: string;
