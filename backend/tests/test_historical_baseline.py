@@ -111,6 +111,16 @@ def test_ndre_mixes_20m_and_10m_bands(tmp_path):
     assert stats["mean"] == pytest.approx((0.5 - 0.3) / (0.5 + 0.3), abs=1e-3)
 
 
+def test_osavi_uses_its_soil_adjusted_formula(tmp_path):
+    bands = {
+        "B04": _write_band(tmp_path / "B04.tif", 0.1, 10),
+        "B08": _write_band(tmp_path / "B08.tif", 0.5, 10),
+    }
+    upsert = _run_window("OSAVI", bands)
+    assert upsert.call_args.kwargs["index_type"] == "OSAVI"
+    assert upsert.call_args.kwargs["statistics"]["mean"] == pytest.approx(0.4 / 0.76, abs=1e-4)
+
+
 def test_unsupported_index_is_rejected():
     from app.tasks import historical_baseline as hb
 

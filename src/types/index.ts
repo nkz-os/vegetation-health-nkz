@@ -2,7 +2,7 @@
  * TypeScript type definitions for Vegetation Prime module.
  */
 
-export type VegetationIndexType = 'NDVI' | 'EVI' | 'SAVI' | 'GNDVI' | 'NDRE' | 'NDMI' | 'CUSTOM' | 'VRA_ZONES' | 'SAR-VV' | 'SAR-VH';
+export type VegetationIndexType = 'NDVI' | 'EVI' | 'SAVI' | 'OSAVI' | 'GNDVI' | 'NDRE' | 'NDMI' | 'CUSTOM' | 'VRA_ZONES' | 'SAR-VV' | 'SAR-VH';
 
 export type JobType = 'download' | 'download_sar' | 'process' | 'calculate_index' | 'copernicus_analyze' | 'SENTINEL_INGEST' | 'ZONING';
 

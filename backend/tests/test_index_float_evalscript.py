@@ -15,10 +15,15 @@ def test_build_index_float_injects_index_and_has_required_fixes():
 
 
 def test_build_index_float_supports_all_five():
-    for idx in ("NDVI", "EVI", "SAVI", "GNDVI", "NDRE"):
+    for idx in ("NDVI", "EVI", "SAVI", "GNDVI", "NDRE", "OSAVI"):
         assert idx in build_index_float(idx)
 
 
 def test_build_index_float_rejects_unsupported():
     with pytest.raises(ValueError, match="NDMI"):
         build_index_float("NDMI")
+
+
+def test_osavi_float_case_uses_soil_adjustment():
+    from app.services.evalscripts import INDEX_FLOAT
+    assert 'case "OSAVI"' in INDEX_FLOAT and "0.16" in INDEX_FLOAT

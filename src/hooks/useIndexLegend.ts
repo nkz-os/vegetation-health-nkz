@@ -56,6 +56,7 @@ export function getIndexLegend(
     NDVI: 'Normalized Difference Vegetation Index - Measures vegetation health and density',
     EVI: 'Enhanced Vegetation Index - Reduces atmospheric and soil effects',
     SAVI: 'Soil-Adjusted Vegetation Index - Best for areas with exposed soil',
+    OSAVI: 'Optimized Soil-Adjusted Vegetation Index - Open canopies: orchards, olive groves, vineyards',
     GNDVI: 'Green Normalized Difference Vegetation Index - Sensitive to chlorophyll content',
     NDRE: 'Normalized Difference Red Edge - Sensitive to crop stress and nitrogen',
     NDMI: 'Normalized Difference Moisture Index - Measures vegetation water content',

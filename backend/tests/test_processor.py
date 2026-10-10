@@ -111,6 +111,14 @@ class TestVegetationIndexProcessor:
         expected = (0.4 / 1.1) * 1.5
         assert np.allclose(savi, expected, atol=1e-4)
 
+    def test_osavi_formula(self):
+        """OSAVI = (NIR-Red)/(NIR+Red+0.16) (Rondeaux et al. 1996)."""
+        nir = np.full((5, 5), 0.5, dtype=np.float32)
+        red = np.full((5, 5), 0.1, dtype=np.float32)
+        p = self._setup_processor({'B04': red, 'B08': nir})
+        osavi = p.calculate_osavi(apply_cloud_mask=False)
+        assert np.allclose(osavi, 0.4 / 0.76, atol=1e-4)
+
     def test_savi_bare_soil_l1(self):
         """SAVI with L=1 for very sparse vegetation."""
         nir = np.full((5, 5), 0.2, dtype=np.float32)

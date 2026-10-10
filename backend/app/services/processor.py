@@ -340,6 +340,30 @@ class VegetationIndexProcessor:
 
         return savi
     
+    def calculate_osavi(self, apply_cloud_mask: bool = True) -> np.ndarray:
+        """Calculate OSAVI (Optimized Soil-Adjusted Vegetation Index).
+
+        Formula: (NIR - Red) / (NIR + Red + 0.16)   (Rondeaux et al., 1996)
+        Lower soil-background sensitivity than NDVI for open canopies
+        (orchards, olive groves, vineyards). Range: -1 to 1
+        """
+        self.load_bands(['B04', 'B08'])
+
+        red = self.band_data['B04']
+        nir = self.band_data['B08']
+
+        cloud_mask = None
+        if apply_cloud_mask and 'SCL' in self.band_paths:
+            cloud_mask = self.create_cloud_mask(reference_shape=nir.shape)
+
+        denominator = nir + red + 0.16
+        osavi = np.where(denominator != 0, (nir - red) / denominator, 0)
+
+        if cloud_mask is not None:
+            osavi = self.apply_cloud_mask(osavi, cloud_mask)
+
+        return np.clip(osavi, -1, 1)
+
     def calculate_gndvi(self, apply_cloud_mask: bool = True) -> np.ndarray:
         """Calculate GNDVI (Green Normalized Difference Vegetation Index).
 

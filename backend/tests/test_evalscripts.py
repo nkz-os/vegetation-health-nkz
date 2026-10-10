@@ -10,6 +10,7 @@ class TestEvalscripts:
         assert "ndvi" in MULTI_INDEX
         assert "evi" in MULTI_INDEX
         assert "savi" in MULTI_INDEX
+        assert 'id: "osavi"' in MULTI_INDEX and "0.16" in MULTI_INDEX
         assert "isClear" in MULTI_INDEX
 
     def test_ndvi_color_loaded(self):

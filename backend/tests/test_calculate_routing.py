@@ -52,7 +52,7 @@ GEOM = {
 
 class TestRouteIndex:
     def test_eligible_indices_go_copernicus(self):
-        for idx in ("NDVI", "EVI", "SAVI", "GNDVI"):
+        for idx in ("NDVI", "EVI", "SAVI", "GNDVI", "OSAVI"):
             assert route_index(idx, has_custom_formula=False) == "copernicus"
 
     def test_ndre_routes_copernicus_like_the_rest(self):

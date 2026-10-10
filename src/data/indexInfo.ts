@@ -113,6 +113,24 @@ export const INDEX_INFO: Record<string, IndexInfo> = {
         limitations: 'Requires soil brightness factor (L). Less used than NDVI.',
         color: '#eab308'
     },
+    OSAVI: {
+        id: 'OSAVI',
+        name: 'OSAVI',
+        fullName: 'Optimized Soil Adjusted Vegetation Index',
+        description: 'SAVI variant with a fixed soil term (0.16) and no scaling. Suited to open canopies where soil is visible between plants: orchards, olive groves, vineyards.',
+        formula: '(NIR - RED) / (NIR + RED + 0.16)',
+        range: [-1, 1],
+        interpretation: {
+            veryLow: { range: '< 0', meaning: 'No vegetation' },
+            low: { range: '0 - 0.2', meaning: 'Very sparse cover' },
+            medium: { range: '0.2 - 0.4', meaning: 'Open canopy with soil visible' },
+            high: { range: '0.4 - 0.6', meaning: 'Good cover' },
+            veryHigh: { range: '> 0.6', meaning: 'Dense vegetation' }
+        },
+        bestFor: ['Woody crops', 'Olive groves and vineyards', 'Orchards', 'Partial cover areas'],
+        limitations: 'Fixed soil term; saturates in dense canopies like NDVI.',
+        color: '#a3e635'
+    },
     GNDVI: {
         id: 'GNDVI',
         name: 'GNDVI',

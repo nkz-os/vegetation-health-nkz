@@ -36,7 +36,7 @@ import { useVegetationContext } from '../services/vegetationContext';
 import type { ParcelOverview, ParcelSeasonCard, ParcelJobCard } from '../types';
 import { HistoricalChart } from './HistoricalChart';
 
-const STANDARD_INDICES = ['NDVI', 'EVI', 'SAVI', 'GNDVI', 'NDRE'] as const;
+const STANDARD_INDICES = ['NDVI', 'EVI', 'SAVI', 'OSAVI', 'GNDVI', 'NDRE'] as const;
 const ALL_PILLS = [...STANDARD_INDICES, 'SAR'] as const;
 
 const fmtDate = (iso: string | null) => {

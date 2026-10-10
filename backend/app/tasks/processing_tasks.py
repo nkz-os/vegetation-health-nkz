@@ -197,6 +197,42 @@ def _persist_results(
         logger.error("Failed to upsert EOProduct for %s/%s", job.entity_id, index_type)
 
 
+_LOCAL_BANDS = {
+    'NDVI': ['B04', 'B08'],
+    'EVI': ['B02', 'B04', 'B08'],
+    'SAVI': ['B04', 'B08'],
+    'OSAVI': ['B04', 'B08'],
+    'GNDVI': ['B03', 'B08'],
+    'NDRE': ['B8A', 'B08'],
+}
+
+_LOCAL_CALCULATORS = {
+    'NDVI': 'calculate_ndvi',
+    'EVI': 'calculate_evi',
+    'SAVI': 'calculate_savi',
+    'OSAVI': 'calculate_osavi',
+    'GNDVI': 'calculate_gndvi',
+    'NDRE': 'calculate_ndre',
+}
+
+
+def _local_index_bands(index_type: str, formula: Optional[str]) -> list:
+    """Bands the local engine loads for an index (custom: from its formula)."""
+    if index_type == 'CUSTOM':
+        return _extract_formula_bands(formula) or ['B04', 'B08']
+    return list(_LOCAL_BANDS.get(index_type, ['B04', 'B08']))
+
+
+def compute_local_index(processor, index_type: str, formula: Optional[str]):
+    """Index array for a scene; unknown indices are rejected, never computed as NDVI."""
+    if index_type == 'CUSTOM' and formula:
+        return processor.calculate_custom_index(formula)
+    name = _LOCAL_CALCULATORS.get(index_type)
+    if name is None:
+        raise ValueError(f"Unsupported index type: {index_type}")
+    return getattr(processor, name)()
+
+
 @celery_app.task(
     bind=True,
     name='vegetation.calculate_vegetation_index',
@@ -420,16 +456,7 @@ def calculate_vegetation_index(
                 logger.warning(f"Scene {scene.id} has no bands, skipping")
                 continue
 
-            required_bands = {
-                'NDVI': ['B04', 'B08'],
-                'EVI': ['B02', 'B04', 'B08'],
-                'SAVI': ['B04', 'B08'],
-                'GNDVI': ['B03', 'B08'],
-                'NDRE': ['B8A', 'B08'],
-            }.get(index_type, ['B04', 'B08'])
-            if index_type == 'CUSTOM':
-                required_bands = _extract_formula_bands(formula) or ['B04', 'B08']
-            required_bands = _order_bands_10m_first(required_bands)
+            required_bands = _order_bands_10m_first(_local_index_bands(index_type, formula))
 
             storage = create_storage_service(
                 storage_type=storage_type,
@@ -491,20 +518,7 @@ def calculate_vegetation_index(
             if reference_meta is None:
                 reference_meta = processor.band_meta
 
-            if index_type == 'NDVI':
-                index_array = processor.calculate_ndvi()
-            elif index_type == 'EVI':
-                index_array = processor.calculate_evi()
-            elif index_type == 'SAVI':
-                index_array = processor.calculate_savi()
-            elif index_type == 'GNDVI':
-                index_array = processor.calculate_gndvi()
-            elif index_type == 'NDRE':
-                index_array = processor.calculate_ndre()
-            elif index_type == 'CUSTOM' and formula:
-                index_array = processor.calculate_custom_index(formula)
-            else:
-                raise ValueError(f"Unsupported index type: {index_type}")
+            index_array = compute_local_index(processor, index_type, formula)
 
             index_arrays.append(index_array)
 

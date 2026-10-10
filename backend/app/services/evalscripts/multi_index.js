@@ -1,6 +1,6 @@
 //VERSION=3
 // Multi-index evalscript for Sentinel Hub Statistical API.
-// Computes NDVI, EVI, SAVI, GNDVI, NDRE in a single request.
+// Computes NDVI, EVI, SAVI, OSAVI, GNDVI, NDRE in a single request.
 // Returns one band per index for zonal statistics.
 
 function setup() {
@@ -19,6 +19,7 @@ function setup() {
       { id: "ndvi",  bands: 1, sampleType: "FLOAT32" },
       { id: "evi",   bands: 1, sampleType: "FLOAT32" },
       { id: "savi",  bands: 1, sampleType: "FLOAT32" },
+      { id: "osavi", bands: 1, sampleType: "FLOAT32" },
       { id: "gndvi", bands: 1, sampleType: "FLOAT32" },
       { id: "ndre",  bands: 1, sampleType: "FLOAT32" },
       // The Statistical API requires a dataMask output — it uses it to exclude
@@ -47,7 +48,7 @@ function evaluatePixel(samples) {
   if (!isClear(samples)) {
     // dataMask=0 → the Statistical API drops this pixel from the stats.
     return {
-      ndvi: [NaN], evi: [NaN], savi: [NaN], gndvi: [NaN], ndre: [NaN],
+      ndvi: [NaN], evi: [NaN], savi: [NaN], osavi: [NaN], gndvi: [NaN], ndre: [NaN],
       dataMask: [0],
     };
   }
@@ -65,6 +66,8 @@ function evaluatePixel(samples) {
     ? 2.5 * (b08 - b04) / (b08 + 6 * b04 - 7.5 * b02 + 1) : NaN;
   var savi = (b08 + b04 + L) !== 0
     ? (b08 - b04) / (b08 + b04 + L) * (1 + L) : NaN;
+  // OSAVI (Rondeaux et al. 1996): fixed soil term 0.16, no (1 + L) scaling
+  var osavi = (b08 + b04 + 0.16) !== 0 ? (b08 - b04) / (b08 + b04 + 0.16) : NaN;
   var gndvi = (b08 + b03) !== 0 ? (b08 - b03) / (b08 + b03) : NaN;
   var ndre  = (b8a + b05) !== 0 ? (b8a - b05) / (b8a + b05) : NaN;
 
@@ -72,6 +75,7 @@ function evaluatePixel(samples) {
     ndvi:  [ndvi],
     evi:   [evi],
     savi:  [savi],
+    osavi: [osavi],
     gndvi: [gndvi],
     ndre:  [ndre],
     dataMask: [1],

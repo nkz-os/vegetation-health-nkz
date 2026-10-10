@@ -20,6 +20,7 @@ BAND_MAP = {
     "GNDVI": ["B03", "B08"],
     "NDRE": ["B8A", "B08"],
     "SAVI": ["B04", "B08"],
+    "OSAVI": ["B04", "B08"],
     "EVI": ["B02", "B04", "B08"],
 }
 
@@ -30,6 +31,7 @@ _INDEX_CALCULATORS = {
     "GNDVI": "calculate_gndvi",
     "NDRE": "calculate_ndre",
     "SAVI": "calculate_savi",
+    "OSAVI": "calculate_osavi",
     "EVI": "calculate_evi",
 }
 

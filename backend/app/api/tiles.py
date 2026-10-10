@@ -25,6 +25,7 @@ INDEX_RENDER_CONFIG = {
     'NDVI': {'colormap_name': 'rdylgn', 'rescale': (-0.2, 0.9)},
     'EVI': {'colormap_name': 'rdylgn', 'rescale': (-0.2, 0.8)},
     'SAVI': {'colormap_name': 'rdylgn', 'rescale': (-0.2, 0.8)},
+    'OSAVI': {'colormap_name': 'rdylgn', 'rescale': (-0.2, 0.8)},
     'GNDVI': {'colormap_name': 'rdylgn', 'rescale': (-0.2, 0.8)},
     'NDRE': {'colormap_name': 'rdylgn', 'rescale': (-0.1, 0.6)},
     'NDWI': {'colormap_name': 'rdbu', 'rescale': (-1, 1)},

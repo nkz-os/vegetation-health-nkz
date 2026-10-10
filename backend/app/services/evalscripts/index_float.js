@@ -26,6 +26,7 @@ function computeIndex(s) {
     case "NDVI":  return (b08+b04)!==0 ? (b08-b04)/(b08+b04) : NaN;
     case "EVI":   return (b08+6*b04-7.5*b02+1)!==0 ? 2.5*(b08-b04)/(b08+6*b04-7.5*b02+1) : NaN;
     case "SAVI":  return (b08+b04+L)!==0 ? (b08-b04)/(b08+b04+L)*(1+L) : NaN;
+    case "OSAVI": return (b08+b04+0.16)!==0 ? (b08-b04)/(b08+b04+0.16) : NaN;
     case "GNDVI": return (b08+b03)!==0 ? (b08-b03)/(b08+b03) : NaN;
     case "NDRE":  return (b8a+b05)!==0 ? (b8a-b05)/(b8a+b05) : NaN;
     default:      return NaN;

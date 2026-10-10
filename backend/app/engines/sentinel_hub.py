@@ -26,6 +26,7 @@ _INDEX_OUTPUT_MAP = {
     "NDVI": "ndvi",
     "EVI": "evi",
     "SAVI": "savi",
+    "OSAVI": "osavi",
     "GNDVI": "gndvi",
     "NDRE": "ndre",
 }

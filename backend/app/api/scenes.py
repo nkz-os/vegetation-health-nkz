@@ -417,6 +417,23 @@ def _resolve_custom_formula_specs(
     ]
 
 
+_TREE_KEYWORDS = {"olea", "vitis", "prunus", "citrus", "malus", "pyrus", "juglans", "amygdalus"}
+
+
+def default_indices_for_species(crop_species: Optional[str]) -> list[str]:
+    """Indices computed when the caller does not choose them.
+
+    Tree crops get the soil-adjusted indices (open canopies): OSAVI, whose fAPAR
+    calibration carbon uses for woody crops, and SAVI.
+    """
+    if not crop_species:
+        return ["NDVI", "EVI", "SAVI", "GNDVI", "NDRE"]
+    species_lower = crop_species.lower()
+    if any(tree in species_lower for tree in _TREE_KEYWORDS):
+        return ["OSAVI", "SAVI", "NDMI", "NDVI"]
+    return ["NDVI", "NDRE", "GNDVI"]
+
+
 async def _get_crop_species_from_orion(tenant_id: str, entity_id: str) -> Optional[str]:
     """Read the current crop assigned to a parcel from AgriParcel.hasAgriCrop.
 
@@ -484,16 +501,7 @@ async def _dispatch_analyze_for_parcel(
     if not indices:
         # Try to read crop from Orion-LD for smart index defaults
         crop_species = await _get_crop_species_from_orion(tenant_id, entity_id)
-        if crop_species:
-            species_lower = crop_species.lower()
-            # Tree crops: use SAVI (minimizes soil background influence)
-            tree_keywords = {"olea", "vitis", "prunus", "citrus", "malus", "pyrus", "juglans", "amygdalus"}
-            if any(tree in species_lower for tree in tree_keywords):
-                indices_list = ["SAVI", "NDMI", "NDVI"]
-            else:
-                indices_list = ["NDVI", "NDRE", "GNDVI"]
-        else:
-            indices_list = ["NDVI", "EVI", "SAVI", "GNDVI", "NDRE"]
+        indices_list = default_indices_for_species(crop_species)
     else:
         indices_list = indices
 

@@ -17,7 +17,7 @@ Pure function, no I/O — safe to call on the request hot path.
 """
 
 # Indices Copernicus serves. NDRE is included at its native 20 m (see above).
-COPERNICUS_ELIGIBLE = {"NDVI", "EVI", "SAVI", "GNDVI", "NDRE"}
+COPERNICUS_ELIGIBLE = {"NDVI", "EVI", "SAVI", "OSAVI", "GNDVI", "NDRE"}
 
 # Indices forced onto the local engine. Empty by owner decision (2026-09-16).
 LOCAL_ONLY: set[str] = set()
