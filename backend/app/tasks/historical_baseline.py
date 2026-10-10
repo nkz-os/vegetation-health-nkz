@@ -43,7 +43,8 @@ def index_bands(index: str) -> list:
     silently computed as NDVI and stored under another index's name."""
     if index not in BAND_MAP:
         raise ValueError(f"Unsupported index for historical baseline: {index}")
-    return BAND_MAP[index]
+    # SCL: without it the processor cannot mask cloudy pixels inside the parcel.
+    return BAND_MAP[index] + ["SCL"]
 
 
 def _get_parcel_geometry(tenant_id: str, entity_id: str) -> tuple:

@@ -205,11 +205,11 @@ const AnalyzeInSeasonForm: React.FC<AnalyzeFormProps> = ({ entityId, seasonId, d
   const { t } = useTranslation();
   const api = useVegetationApi();
   const [open, setOpen] = useState(false);
-  const [selected, setSelected] = useState<string[]>(() =>
+  const cropDefaults = () =>
     (defaultIndices ?? NO_CROP_DEFAULT_INDICES).filter((idx) =>
       (STANDARD_INDICES as readonly string[]).includes(idx),
-    ),
-  );
+    );
+  const [selected, setSelected] = useState<string[]>(cropDefaults);
   const [threshold, setThreshold] = useState<number>(30);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -257,7 +257,7 @@ const AnalyzeInSeasonForm: React.FC<AnalyzeFormProps> = ({ entityId, seasonId, d
   if (!open) {
     return (
       <button
-        onClick={() => setOpen(true)}
+        onClick={() => { setSelected(cropDefaults()); setOpen(true); }}  // the crop may have changed since mount
         className="w-full mt-2 inline-flex items-center justify-center gap-2 text-xs font-medium px-3 py-2 rounded-lg border border-dashed border-emerald-300 text-emerald-700 hover:bg-emerald-50 transition-colors"
       >
         <Play className="w-3.5 h-3.5" />

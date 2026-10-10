@@ -40,12 +40,12 @@ def test_downloaded_bands_are_the_bands_each_formula_loads(table, calculators):
 
 def test_ndre_bands_are_red_edge_and_narrow_nir():
     assert set(_local_index_bands("NDRE", None)) == {"B05", "B8A"}
-    assert set(historical_baseline.index_bands("NDRE")) == {"B05", "B8A"}
+    assert set(historical_baseline.index_bands("NDRE")) == {"B05", "B8A", "SCL"}
 
 
 def test_local_and_historical_engines_compute_ndmi():
     assert set(_local_index_bands("NDMI", None)) == {"B8A", "B11"}
-    assert set(historical_baseline.index_bands("NDMI")) == {"B8A", "B11"}
+    assert set(historical_baseline.index_bands("NDMI")) == {"B8A", "B11", "SCL"}
 
     class P:
         def calculate_ndmi(self):
@@ -178,3 +178,26 @@ def test_overview_offers_the_crop_defaults(monkeypatch):
     assert "OSAVI" in olive and "NDMI" in olive
     assert "OSAVI" not in wheat
     assert none == scenes.default_indices_for_species(None)
+
+
+def test_local_engine_windows_the_cloud_mask():
+    from app.tasks.processing_tasks import _window_band_set
+    scene = {"B04": "b4", "B08": "b8", "SCL": "scl"}
+    assert "SCL" in _window_band_set(["B04", "B08"], scene, sen2res_enabled=False)
+    assert "SCL" in _window_band_set(["B05", "B8A"], {**scene, "B05": "b5", "B8A": "b8a"}, sen2res_enabled=True)
+
+
+def test_scene_index_is_brought_to_the_reference_grid():
+    from app.tasks.processing_tasks import _to_reference_grid
+    coarse = np.arange(4, dtype=np.float32).reshape(2, 2)
+    out = _to_reference_grid(coarse, (4, 4))
+    assert out.shape == (4, 4) and out[0, 0] == 0 and out[3, 3] == 3
+    same = np.ones((4, 4), dtype=np.float32)
+    assert _to_reference_grid(same, (4, 4)) is same
+
+
+def test_ndmi_loads_only_its_bands():
+    p = _recording_processor()
+    p.band_paths = {"B04": "x", "B08": "x", "B8A": "x", "B11": "x"}
+    p.calculate_ndmi(apply_cloud_mask=False)
+    assert set(p.loaded) == {"B8A", "B11"}

@@ -485,11 +485,11 @@
       "fullName": "Landaredi Indize Normalizatua",
       "description": "Landarediaren berdetasuna eta osasuna neurtzeko indizerik erabiliena. Argi gorri ikusgaia eta infragorri hurbila alderatzen ditu.",
       "interpretation": {
-        "veryLow": "Ura, elurra, hodeiak edo lurzoru biluzia",
-        "low": "Landaredi urria edo estresatua",
-        "medium": "Landaredi moderatua, belardiak edo zuhaixkak",
-        "high": "Landaredi trinko eta osasuntsua",
-        "veryHigh": "Oihan tropikal trinkoa edo biomasa handiko laboreak"
+        "veryLow": "Ura, hodeiak edo elurra",
+        "low": "Lurzoru biluzia, harkaitza edo hiriguneak",
+        "medium": "Landaredi urria edo estresatua",
+        "high": "Landaredi moderatua, hazten ari diren laboreak",
+        "veryHigh": "Landaredi trinko eta osasuntsua"
       },
       "bestFor": [
         "Laboreen jarraipen orokorra",
@@ -507,11 +507,11 @@
       "fullName": "Landaredi Indize Hobetua",
       "description": "Eragin atmosferiko eta lurzorukoa murrizteko optimizatua, banda urdina erabiliz zuzenketarako.",
       "interpretation": {
-        "veryLow": "Ura edo hiri-azpiegitura",
-        "low": "Landaredi oso urria edo lurzoru biluziak",
-        "medium": "Hasierako faseko laboreak edo larreak",
-        "high": "Landare-estaldura trinko eta aktiboa",
-        "veryHigh": "Baso trinkoak eta errendimendu handiko landaketak"
+        "veryLow": "Landaredirik ez",
+        "low": "Landaredi oso urria",
+        "medium": "Landaredi moderatua",
+        "high": "Landaredi trinkoa",
+        "veryHigh": "Landaredi oso trinkoa (basoak)"
       },
       "bestFor": [
         "Biomasa handiko eremuak (oihanak, landaketak)",
@@ -549,11 +549,11 @@
       "fullName": "Lurzorura Egokitutako Landaredi Indizea",
       "description": "Lurzoruaren distiraren eragina gutxitzen duen NDVIaren aldaera, labore gazteetarako aproposa.",
       "interpretation": {
-        "veryLow": "Lurzoru biluzia edo anizkarrak",
-        "low": "Ernetzen ari diren laboreak (< % 15eko estaldura)",
-        "medium": "Hasierako garapen begetatiboa (% 15-50eko estaldura)",
-        "high": "Landare-estaldura ertain-altua (% 50-80)",
-        "veryHigh": "Estaldura osoa eta trinkoa (> % 80)"
+        "veryLow": "Landaredirik ez",
+        "low": "Estaldura oso urria",
+        "medium": "Estaldura moderatua, lurzorua ageri",
+        "high": "Estaldura ona",
+        "veryHigh": "Landaredi trinkoa"
       },
       "bestFor": [
         "Hasierako faseetako laboreak",
@@ -571,11 +571,11 @@
       "fullName": "Diferentzia Normalizatuko Landaredi Indize Berdea",
       "description": "Banda gorriaren ordez berdea erabiltzen du, klorofilarekiko sentikortasun handiagoa emanez.",
       "interpretation": {
-        "veryLow": "Lurzoru biluzia edo ura",
-        "low": "Landaredi klorotikoa (nitrogeno-gabezia)",
-        "medium": "Klorofila-maila normala duten laboreak",
-        "high": "Klorofila-kontzentrazio handia, osasun ona",
-        "veryHigh": "Jarduera fotosintetiko maximoa"
+        "veryLow": "Landaredirik ez",
+        "low": "Klorofila gutxi",
+        "medium": "Klorofila moderatua",
+        "high": "Klorofila-eduki ona",
+        "veryHigh": "Klorofila handia, nitrogeno ona"
       },
       "bestFor": [
         "Klorofila-edukiaren ebaluazioa",
@@ -615,11 +615,11 @@
       "fullName": "Diferentzia Normalizatuko Hezetasun Indizea",
       "description": "Landarediaren ur-edukiaren aldaketak detektatzen ditu banda infragorriak erabiliz.",
       "interpretation": {
-        "veryLow": "Lehorte larria edo landaredi hila",
-        "low": "Ur-estres moderatua",
-        "medium": "Hezetasun-baldintza normalak",
-        "high": "Landarediaren hidratazio ona",
-        "veryHigh": "Ur-asetasuna, uholde posiblea"
+        "veryLow": "Hezetasun-defizit larria",
+        "low": "Ur-estresa duen landaredia",
+        "medium": "Hezetasun normala",
+        "high": "Hezetasun-eduki ona",
+        "veryHigh": "Hezetasun oso handia"
       },
       "bestFor": [
         "Laboreen ur-estresaren detekzioa",

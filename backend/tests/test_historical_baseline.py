@@ -60,7 +60,12 @@ def _copernicus(band_paths: dict) -> MagicMock:
 
 
 def _run_window(index: str, band_paths: dict) -> MagicMock:
+    from pathlib import Path
     from app.tasks import historical_baseline as hb
+
+    if "SCL" not in band_paths:  # a clear sky unless the test says otherwise
+        scl = Path(next(iter(band_paths.values()))).parent / "SCL.tif"
+        band_paths = {**band_paths, "SCL": _write_split_band(scl, 4, 4, 20, dn=False)}
 
     parcel = _parcel_4326()
     with patch.object(hb, "upsert_eo_index") as upsert:
@@ -160,3 +165,35 @@ def test_task_fails_when_every_window_fails():
         hb.build_historical_baseline.run(
             tenant_id="t1", entity_id="p1", years=1, index="NDVI", window_days=400,
         )
+
+
+def _write_split_band(path, left: float, right: float, pixel_m: float, dn: bool = True) -> str:
+    """Raster whose left half and right half carry different values (DN-encoded unless dn=False)."""
+    x, y = Transformer.from_crs("EPSG:4326", UTM_CRS, always_xy=True).transform(CENTER_LON, CENTER_LAT)
+    size = int(1000 / pixel_m)
+    data = np.empty((size, size), dtype=np.float32)
+    data[:, : size // 2] = left
+    data[:, size // 2:] = right
+    if dn:
+        data = 10000.0 * data + 1000.0
+    with rasterio.open(path, "w", driver="GTiff", height=size, width=size, count=1, dtype="float32",
+                       crs=UTM_CRS, transform=from_origin(x - 500, y + 500, pixel_m, pixel_m)) as dst:
+        dst.write(data, 1)
+    return str(path)
+
+
+def test_historical_download_includes_the_cloud_mask():
+    from app.tasks import historical_baseline as hb
+    for index in hb.BAND_MAP:
+        assert hb.index_bands(index) == hb.BAND_MAP[index] + ["SCL"]
+
+
+def test_cloudy_pixels_are_left_out_of_the_mean(tmp_path):
+    # Left half under cloud (SCL 9) with bright NIR, right half clear vegetation (SCL 4).
+    bands = {
+        "B04": _write_band(tmp_path / "B04.tif", 0.1, 10),
+        "B08": _write_split_band(tmp_path / "B08.tif", 0.15, 0.5, 10),
+        "SCL": _write_split_band(tmp_path / "SCL.tif", 9, 4, 20, dn=False),
+    }
+    stats = _run_window("NDVI", bands).call_args.kwargs["statistics"]
+    assert stats["mean"] == pytest.approx((0.5 - 0.1) / (0.5 + 0.1), abs=1e-3)

@@ -515,17 +515,10 @@ class VegetationIndexProcessor:
         nir = self.band_data['B8A']
         swir1 = self.band_data['B11']
 
-        # Both bands are 20m, but ensure same shape
+        # Both bands are 20 m (or both super-resolved to 10 m)
         if swir1.shape != nir.shape:
-            logger.warning(f"B8A and B11 shape mismatch: {nir.shape} vs {swir1.shape}")
-
-        # Get reference 10m band for cloud mask if available
-        reference_shape = nir.shape
-        if 'B08' in self.band_data:
-            reference_shape = self.band_data['B08'].shape
-        elif 'B04' in self.band_paths:
-            self.load_bands(['B04'])
-            reference_shape = self.band_data['B04'].shape
+            logger.info(f"Resampling B11 from {swir1.shape} to {nir.shape} for NDMI")
+            swir1 = self._resample_to_10m(swir1, nir)
 
         # Create cloud mask if requested
         cloud_mask = None

@@ -504,11 +504,11 @@
       "fullName": "Normalized Difference Vegetation Index",
       "description": "The most widely used index for measuring vegetation greenness and health. Compares reflected light in visible red and near-infrared.",
       "interpretation": {
-        "veryLow": "Water, snow, clouds, or bare soil",
-        "low": "Sparse or stressed vegetation",
-        "medium": "Moderate vegetation, grasslands, or shrubs",
-        "high": "Dense, healthy vegetation",
-        "veryHigh": "Dense tropical forest or high-biomass crops"
+        "veryLow": "Water, clouds or snow",
+        "low": "Bare soil, rock, or urban areas",
+        "medium": "Sparse or stressed vegetation",
+        "high": "Moderate vegetation, growing crops",
+        "veryHigh": "Dense, healthy vegetation"
       },
       "bestFor": [
         "General crop monitoring",
@@ -526,11 +526,11 @@
       "fullName": "Enhanced Vegetation Index",
       "description": "Optimized to reduce atmospheric and soil influence, using the blue band for correction.",
       "interpretation": {
-        "veryLow": "Water or urban infrastructure",
-        "low": "Very sparse vegetation or bare soils",
-        "medium": "Early-stage crops or pastures",
-        "high": "Dense, active vegetation cover",
-        "veryHigh": "Dense forests and high-yield plantations"
+        "veryLow": "No vegetation",
+        "low": "Very sparse vegetation",
+        "medium": "Moderate vegetation",
+        "high": "Dense vegetation",
+        "veryHigh": "Very dense vegetation (forests)"
       },
       "bestFor": [
         "High-biomass areas (rainforests, plantations)",
@@ -547,11 +547,11 @@
       "fullName": "Normalized Difference Moisture Index",
       "description": "Detects changes in vegetation water content using infrared bands.",
       "interpretation": {
-        "veryLow": "Severe drought or dead vegetation",
-        "low": "Moderate water stress",
-        "medium": "Normal moisture conditions",
-        "high": "Good vegetation hydration",
-        "veryHigh": "Water saturation, possible flooding"
+        "veryLow": "Severe moisture deficit",
+        "low": "Moisture-stressed vegetation",
+        "medium": "Normal moisture",
+        "high": "Good moisture content",
+        "veryHigh": "Very high moisture"
       },
       "bestFor": [
         "Crop water stress detection",
@@ -569,11 +569,11 @@
       "fullName": "Soil-Adjusted Vegetation Index",
       "description": "NDVI variant that minimizes soil brightness influence, ideal for young crops.",
       "interpretation": {
-        "veryLow": "Bare soil or stubble",
-        "low": "Germinating crops (< 15% cover)",
-        "medium": "Early vegetative development (15-50% cover)",
-        "high": "Medium-high vegetation cover (50-80%)",
-        "veryHigh": "Full, dense cover (> 80%)"
+        "veryLow": "No vegetation",
+        "low": "Very sparse cover",
+        "medium": "Moderate cover with soil visible",
+        "high": "Good cover",
+        "veryHigh": "Dense vegetation"
       },
       "bestFor": [
         "Early-stage crops",
@@ -591,11 +591,11 @@
       "fullName": "Green Normalized Difference Vegetation Index",
       "description": "Uses the green band instead of red, offering higher sensitivity to chlorophyll.",
       "interpretation": {
-        "veryLow": "Bare soil or water",
-        "low": "Chlorotic vegetation (nitrogen deficiency)",
-        "medium": "Crops with normal chlorophyll levels",
-        "high": "High chlorophyll concentration, good health",
-        "veryHigh": "Maximum photosynthetic activity"
+        "veryLow": "No vegetation",
+        "low": "Low chlorophyll",
+        "medium": "Moderate chlorophyll",
+        "high": "Good chlorophyll content",
+        "veryHigh": "High chlorophyll, good nitrogen"
       },
       "bestFor": [
         "Chlorophyll content assessment",

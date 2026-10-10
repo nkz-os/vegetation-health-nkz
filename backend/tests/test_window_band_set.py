@@ -20,7 +20,8 @@ _SCENE = {"B02": "p", "B03": "p", "B04": "p", "B08": "p", "B8A": "p", "SCL": "p"
 
 def test_ndvi_no_targets_no_extra_guides():
     # NDVI uses B04+B08 (both 10 m, no target band) → no guide expansion.
-    assert _window_band_set(["B04", "B08"], _SCENE, True) == ["B04", "B08"]
+    # SCL always comes along: it is the cloud mask.
+    assert _window_band_set(["B04", "B08"], _SCENE, True) == ["B04", "B08", "SCL"]
 
 
 def test_ndre_target_pulls_present_guides():
@@ -31,4 +32,4 @@ def test_ndre_target_pulls_present_guides():
 
 
 def test_disabled_never_expands():
-    assert _window_band_set(["B8A", "B08"], _SCENE, False) == ["B8A", "B08"]
+    assert _window_band_set(["B8A", "B08"], _SCENE, False) == ["B8A", "B08", "SCL"]

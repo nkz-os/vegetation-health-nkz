@@ -47,13 +47,15 @@ const CURSOR_SNAP_MS = 15 * DAY_MS;
 const SELECTION_DEBOUNCE_MS = 250;
 /** Tall enough to read the series; the two label lines (track name + date shown on the map) fit with room. */
 const TRACK_HEIGHT = 64;
-/** Indices drawn on a fixed 0-1 scale. Everything else (SAR backscatter in dB, custom formulas) has no fixed scale. */
-const FIXED_SCALE_INDICES: ReadonlySet<string> = new Set(['NDVI', 'EVI', 'SAVI', 'OSAVI', 'GNDVI', 'NDRE', 'NDMI']);
+/** Vigour indices drawn on a fixed 0-1 scale. Everything else (SAR backscatter, NDMI moisture, which is often
+ * negative, custom formulas) is autoscaled. */
+const FIXED_SCALE_INDICES: ReadonlySet<string> = new Set(['NDVI', 'EVI', 'SAVI', 'OSAVI', 'GNDVI', 'NDRE']);
 /** Autoscale margin kept above the maximum and below the minimum, as a fraction of the data span. */
 const AUTOSCALE_PAD = 0.1;
 
 function getTickColor(meanValue: number | null, indexType: string): string {
-  if (indexType.startsWith('SAR')) return '#818cf8'; // backscatter (dB): no vigour scale
+  if (indexType.startsWith('SAR')) return '#818cf8'; // backscatter: no vigour scale
+  if (indexType === 'NDMI') return '#06b6d4'; // moisture: its values are not vigour
   if (meanValue == null) return '#94a3b8';
   if (meanValue >= 0.6) return '#22c55e';
   if (meanValue >= 0.3) return '#eab308';

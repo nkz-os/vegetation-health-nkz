@@ -151,6 +151,9 @@ def _window_band_set(required_bands, scene_bands, sen2res_enabled):
     from app.services.superresolution import GUIDE_BANDS, TARGET_BANDS
 
     bands = list(required_bands)
+    # SCL: without it the processor cannot mask cloudy pixels inside the parcel.
+    if "SCL" in (scene_bands or {}) and "SCL" not in bands:
+        bands.append("SCL")
     needs_sr = sen2res_enabled and any(b in TARGET_BANDS for b in required_bands)
     if needs_sr:
         for g in GUIDE_BANDS:
@@ -225,6 +228,17 @@ def release_scene_idempotency(tenant_id: str, parcel_id: str, sensing_date_str: 
     so a scene skipped before calculation can be retried (e.g. with another cloud threshold)."""
     for index_type in _LOCAL_CALCULATORS:
         _release_idempotency(tenant_id, parcel_id, index_type, sensing_date_str)
+
+
+def _to_reference_grid(index_array, shape):
+    """Bring a scene's index onto the composite's grid. 20 m-only indices come out at
+    10 m when Sen2Res succeeds and at 20 m when it falls back, over the same window."""
+    if index_array.shape == tuple(shape):
+        return index_array
+    from scipy.ndimage import zoom
+    factors = (shape[0] / index_array.shape[0], shape[1] / index_array.shape[1])
+    out = zoom(index_array, factors, order=0, mode='nearest')  # nearest: no NaN smearing
+    return out[:shape[0], :shape[1]]
 
 
 def _local_index_bands(index_type: str, formula: Optional[str]) -> list:
@@ -531,6 +545,8 @@ def calculate_vegetation_index(
                 reference_meta = processor.band_meta
 
             index_array = compute_local_index(processor, index_type, formula)
+            if index_arrays:
+                index_array = _to_reference_grid(index_array, index_arrays[0].shape)
 
             index_arrays.append(index_array)
 

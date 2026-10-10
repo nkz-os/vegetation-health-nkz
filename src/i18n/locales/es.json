@@ -504,11 +504,11 @@
       "fullName": "Índice de Vegetación de Diferencia Normalizada",
       "description": "El índice más utilizado para medir el verdor y la salud de la vegetación. Compara la luz reflejada en el rojo visible y el infrarrojo cercano.",
       "interpretation": {
-        "veryLow": "Agua, nieve, nubes o suelo desnudo",
-        "low": "Vegetación escasa o estresada",
-        "medium": "Vegetación moderada, praderas o arbustos",
-        "high": "Vegetación densa y saludable",
-        "veryHigh": "Bosque tropical denso o cultivos de alta biomasa"
+        "veryLow": "Agua, nubes o nieve",
+        "low": "Suelo desnudo, roca o zonas urbanas",
+        "medium": "Vegetación escasa o estresada",
+        "high": "Vegetación moderada, cultivos en crecimiento",
+        "veryHigh": "Vegetación densa y sana"
       },
       "bestFor": [
         "Monitorización general de cultivos",
@@ -526,11 +526,11 @@
       "fullName": "Índice de Vegetación Mejorado",
       "description": "Optimizado para reducir la influencia atmosférica y del suelo, utilizando la banda azul para corrección.",
       "interpretation": {
-        "veryLow": "Agua o infraestructura urbana",
-        "low": "Vegetación muy escasa o suelos desnudos",
-        "medium": "Cultivos en fase temprana o pastizales",
-        "high": "Cobertura vegetal densa y activa",
-        "veryHigh": "Bosques densos y plantaciones de alto rendimiento"
+        "veryLow": "Sin vegetación",
+        "low": "Vegetación muy escasa",
+        "medium": "Vegetación moderada",
+        "high": "Vegetación densa",
+        "veryHigh": "Vegetación muy densa (bosques)"
       },
       "bestFor": [
         "Áreas con alta biomasa (selvas, plantaciones)",
@@ -547,11 +547,11 @@
       "fullName": "Índice de Humedad de Diferencia Normalizada",
       "description": "Detecta cambios en el contenido de agua de la vegetación usando bandas infrarrojas.",
       "interpretation": {
-        "veryLow": "Sequía severa o vegetación muerta",
-        "low": "Estrés hídrico moderado",
-        "medium": "Condiciones normales de humedad",
-        "high": "Buena hidratación de la vegetación",
-        "veryHigh": "Saturación de agua, posible inundación"
+        "veryLow": "Déficit de humedad severo",
+        "low": "Vegetación con estrés hídrico",
+        "medium": "Humedad normal",
+        "high": "Buen contenido de humedad",
+        "veryHigh": "Humedad muy alta"
       },
       "bestFor": [
         "Detección de estrés hídrico en cultivos",
@@ -569,11 +569,11 @@
       "fullName": "Índice de Vegetación Ajustado al Suelo",
       "description": "Variante del NDVI que minimiza la influencia del brillo del suelo, ideal para cultivos jóvenes.",
       "interpretation": {
-        "veryLow": "Suelo desnudo o rastrojos",
-        "low": "Cultivos en germinación (< 15% cobertura)",
-        "medium": "Desarrollo vegetativo temprano (15-50% cobertura)",
-        "high": "Cobertura vegetal media-alta (50-80%)",
-        "veryHigh": "Cobertura completa y densa (> 80%)"
+        "veryLow": "Sin vegetación",
+        "low": "Cobertura muy escasa",
+        "medium": "Cobertura moderada con suelo visible",
+        "high": "Buena cobertura",
+        "veryHigh": "Vegetación densa"
       },
       "bestFor": [
         "Cultivos en etapas tempranas",
@@ -591,11 +591,11 @@
       "fullName": "Índice de Vegetación de Diferencia Normalizada Verde",
       "description": "Usa la banda verde en lugar de la roja, ofreciendo mayor sensibilidad a la clorofila.",
       "interpretation": {
-        "veryLow": "Suelo desnudo o agua",
-        "low": "Vegetación clorótica (deficiencia de nitrógeno)",
-        "medium": "Cultivos con niveles normales de clorofila",
-        "high": "Alta concentración de clorofila, buena salud",
-        "veryHigh": "Máxima actividad fotosintética"
+        "veryLow": "Sin vegetación",
+        "low": "Clorofila baja",
+        "medium": "Clorofila moderada",
+        "high": "Buen contenido de clorofila",
+        "veryHigh": "Clorofila alta, buen nitrógeno"
       },
       "bestFor": [
         "Evaluación de contenido de clorofila",
