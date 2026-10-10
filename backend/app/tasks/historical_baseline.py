@@ -92,6 +92,7 @@ def _process_window(
     scene or no valid pixels. Raster processing errors propagate to the caller.
     """
     from app.services.processor import VegetationIndexProcessor
+    from app.services.radiometry import l2a_radiometry
 
     # Search for best scene in window
     scenes = copernicus_client.search_scenes(
@@ -124,7 +125,7 @@ def _process_window(
 
         # The processor crops to the parcel bbox and rasterizes the parcel in
         # the raster's CRS: Sentinel-2 bands are UTM, the parcel is EPSG:4326.
-        processor = VegetationIndexProcessor(band_paths, bbox=bbox)
+        processor = VegetationIndexProcessor(band_paths, bbox=bbox, radiometry=l2a_radiometry(best["id"]))
         index_array = getattr(processor, _INDEX_CALCULATORS[index])()
         geometry_mask = processor.create_geometry_mask(intersects)
         statistics = processor.calculate_statistics(index_array, mask=geometry_mask)

@@ -17,6 +17,7 @@ from rasterio.transform import from_origin
 UTM_CRS = "EPSG:32630"
 CENTER_LON, CENTER_LAT = -1.6, 42.8
 HALF_DEG = 0.0005  # ~40 m half-side parcel
+SCENE_ID = "S2A_MSIL2A_20260601T105621_N0511_R051_T30TWN_20260601T140000"
 
 
 def _parcel_4326() -> dict:
@@ -31,7 +32,11 @@ def _parcel_4326() -> dict:
 
 
 def _write_band(path, value: float, pixel_m: float) -> str:
-    """Write a constant UTM band of 1 km around the parcel centre."""
+    """Write a constant UTM band of 1 km around the parcel centre.
+
+    ``value`` is reflectance; the file holds it as L2A digital numbers
+    (processing baseline >= 04.00: 10000*rho + 1000), as Copernicus serves them.
+    """
     x, y = Transformer.from_crs("EPSG:4326", UTM_CRS, always_xy=True).transform(
         CENTER_LON, CENTER_LAT
     )
@@ -41,14 +46,14 @@ def _write_band(path, value: float, pixel_m: float) -> str:
         path, "w", driver="GTiff", height=size, width=size, count=1,
         dtype="float32", crs=UTM_CRS, transform=transform,
     ) as dst:
-        dst.write(np.full((size, size), value, dtype=np.float32), 1)
+        dst.write(np.full((size, size), 10000.0 * value + 1000.0, dtype=np.float32), 1)
     return str(path)
 
 
 def _copernicus(band_paths: dict) -> MagicMock:
     client = MagicMock()
     client.search_scenes.return_value = [
-        {"id": "S2A_TEST", "cloud_cover": 5, "sensing_date": "2026-06-01"}
+        {"id": SCENE_ID, "cloud_cover": 5, "sensing_date": "2026-06-01"}
     ]
     client.download_scene_bands.return_value = band_paths
     return client

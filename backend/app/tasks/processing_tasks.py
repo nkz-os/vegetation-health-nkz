@@ -17,6 +17,7 @@ import numpy as np
 from app.celery_app import celery_app
 from app.models import VegetationJob, VegetationScene
 from app.services.processor import VegetationIndexProcessor
+from app.services.radiometry import l2a_radiometry
 from app.services.storage import create_storage_service, generate_tenant_bucket_name
 from app.database import get_db_session
 from app.services.fiware_integration import upsert_eo_index
@@ -512,7 +513,8 @@ def calculate_vegetation_index(
                     "No parcel bounds — skipping window-crop, running full-tile calc"
                 )
 
-            processor = VegetationIndexProcessor(calc_band_paths, bbox=None)
+            processor = VegetationIndexProcessor(calc_band_paths, bbox=None,
+                                                 radiometry=l2a_radiometry(scene.scene_id))
             processor.load_bands(required_bands)
 
             if reference_meta is None:

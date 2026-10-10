@@ -29,3 +29,14 @@ def test_migration_allows_osavi_in_the_index_cache():
     from pathlib import Path
     sql = (Path(__file__).resolve().parents[1] / "migrations" / "014_add_osavi_index.sql").read_text()
     assert "vegetation_indices_cache_index_type_check" in sql and "'OSAVI'" in sql
+
+
+def test_tree_crops_recognised_by_eppo_code_and_common_name():
+    for species in ("OLVEU", "VITVI", "PRNDU", "CITSI", "olivo", "Olive", "viña", "almendro"):
+        assert "OSAVI" in default_indices_for_species(species), species
+    assert "OSAVI" not in default_indices_for_species("TRZAX")
+
+
+def test_tree_match_is_by_whole_word():
+    assert "OSAVI" not in default_indices_for_species("pearl millet")
+    assert "OSAVI" in default_indices_for_species("Citrus sinensis")

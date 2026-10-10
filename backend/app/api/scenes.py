@@ -12,6 +12,7 @@ from typing import Optional, Dict, Any, List
 from pydantic import BaseModel, Field
 import asyncio
 import logging
+import re
 import uuid as uuid_mod
 
 
@@ -417,7 +418,18 @@ def _resolve_custom_formula_specs(
     ]
 
 
-_TREE_KEYWORDS = {"olea", "vitis", "prunus", "citrus", "malus", "pyrus", "juglans", "amygdalus"}
+_TREE_KEYWORDS = {
+    # Latin genera
+    "olea", "vitis", "prunus", "citrus", "malus", "pyrus", "juglans", "amygdalus", "corylus", "ficus", "punica",
+    # EPPO codes used across the platform
+    "olveu", "oleeu", "vitvi", "prndu", "prnav", "prnpe", "prnar", "citsi", "citlo", "citre", "citrs", "mabsd",
+    "malpu", "pyuco", "iugre", "corav", "ficca",
+    # common names (es, ca, eu, fr, pt, en)
+    "olivo", "olivar", "olive", "olivier", "oliveira", "viña", "vid", "vinya", "mahats", "vigne", "vinha", "vine",
+    "almendro", "ametller", "almond", "amandier", "amendoeira", "naranjo", "limonero", "cítricos", "citricos", "agrumes",
+    "manzano", "pomera", "apple", "pommier", "macieira", "peral", "pear", "poirier", "nogal", "walnut", "noyer",
+    "avellano", "hazel", "noisetier", "cerezo", "cherry", "melocotonero", "peach",
+}
 
 
 def default_indices_for_species(crop_species: Optional[str]) -> list[str]:
@@ -428,8 +440,8 @@ def default_indices_for_species(crop_species: Optional[str]) -> list[str]:
     """
     if not crop_species:
         return ["NDVI", "EVI", "SAVI", "GNDVI", "NDRE"]
-    species_lower = crop_species.lower()
-    if any(tree in species_lower for tree in _TREE_KEYWORDS):
+    words = set(re.findall(r"[^\W\d_]+", crop_species.lower()))
+    if words & _TREE_KEYWORDS:
         return ["OSAVI", "SAVI", "NDMI", "NDVI"]
     return ["NDVI", "NDRE", "GNDVI"]
 

@@ -5,6 +5,9 @@ Vegetation index processor with support for multiple indices and custom formulas
 import logging
 from typing import Dict, Optional, Tuple, Any
 from pathlib import Path
+import re
+from typing import TYPE_CHECKING
+
 import numpy as np
 import rasterio
 from rasterio.warp import calculate_default_transform, reproject, Resampling
@@ -17,6 +20,12 @@ logger = logging.getLogger(__name__)
 # Buffer (meters) applied to parcel geometry so Sentinel-2 edge pixels that
 # partially overlap the boundary are included in mask and statistics.
 PARCEL_GEOMETRY_BUFFER_M = 10.0
+
+
+if TYPE_CHECKING:
+    from app.services.radiometry import L2ARadiometry
+
+_SPECTRAL_BAND = re.compile(r"^B(0[1-9]|1[0-2]|8A)$")
 
 
 class VegetationIndexProcessor:
@@ -58,7 +67,8 @@ class VegetationIndexProcessor:
     VALID_SCL_CLASSES = {4, 5, 6, 7}  # Vegetation, Bare soils, Water, Unclassified
     EXCLUDE_SCL_CLASSES = {0, 1, 3, 8, 9, 10, 11}  # No data, Saturated, Cloud shadows, Clouds, Cirrus, Snow
     
-    def __init__(self, band_paths: Dict[str, str], bbox: Optional[list] = None):
+    def __init__(self, band_paths: Dict[str, str], bbox: Optional[list] = None,
+                 radiometry: Optional["L2ARadiometry"] = None):
         """Initialize processor with band file paths.
 
         Args:
@@ -67,6 +77,8 @@ class VegetationIndexProcessor:
             bbox: Optional [minx, miny, maxx, maxy] in EPSG:4326 to crop bands
         """
         self.band_paths = band_paths
+        # L2A digital numbers -> reflectance; None only for inputs already in reflectance.
+        self.radiometry = radiometry
         self.band_data: Dict[str, np.ndarray] = {}
         self.band_meta: Optional[Dict] = None
         self.bbox = bbox
@@ -132,10 +144,21 @@ class VegetationIndexProcessor:
                     if self.band_meta is None:
                         self.band_meta = src.meta.copy()
 
-                self.band_data[band] = data
+                self.band_data[band] = self.to_reflectance(band, data, self.radiometry)
 
         logger.info(f"Loaded {len(bands)} bands: {bands}")
     
+    @staticmethod
+    def to_reflectance(band: str, data: np.ndarray, radiometry: Optional["L2ARadiometry"]) -> np.ndarray:
+        """Spectral bands: (DN + offset) / quantification, DN 0 = NO_DATA (NaN).
+
+        Categorical layers (SCL) and inputs without radiometry pass through untouched.
+        """
+        if radiometry is None or not _SPECTRAL_BAND.match(band):
+            return data
+        out = (data + radiometry.offset) / radiometry.quantification
+        return np.where(data == 0, np.nan, out).astype(np.float32)
+
     def _resample_to_10m(self, band_20m: np.ndarray, reference_10m: np.ndarray) -> np.ndarray:
         """Resample 20m band to 10m resolution using scipy zoom.
 
