@@ -132,6 +132,14 @@ async def _resolve_parcel_meta(entity_id: str, tenant_id: str) -> Dict[str, Any]
     return out
 
 
+async def default_indices_for_parcel(tenant_id: str, entity_id: str) -> List[str]:
+    """Indices an analysis computes when the user does not choose: the same rule
+    the analyze pipeline applies to the parcel's assigned crop."""
+    from app.api import scenes
+    species = await scenes._get_crop_species_from_orion(tenant_id, entity_id)
+    return scenes.default_indices_for_species(species)
+
+
 # ── Endpoint ────────────────────────────────────────────────────────────
 
 
@@ -264,6 +272,7 @@ async def get_parcel_overview(
         "available_indices": available_indices,
         "recent_skips": recent_skips,
         "active_jobs_count": active_jobs_count,
+        "default_indices": await default_indices_for_parcel(tenant_id, entity_id),
     }
 
 

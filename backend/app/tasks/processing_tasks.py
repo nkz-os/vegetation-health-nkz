@@ -139,7 +139,8 @@ def _order_bands_10m_first(required_bands):
 
     band_meta is taken from the first band; ensure it is a native-10 m band
     so the saved COG/mask grid matches the 10 m index array even when
-    Sen2Res is off or its windowed fallback triggers (e.g. NDRE's B8A/B08)."""
+    Sen2Res is off or its windowed fallback triggers. Indices made only of
+    20 m bands (NDRE, NDMI) stay on the 20 m grid."""
     return sorted(required_bands, key=lambda b: 0 if b in _NATIVE_10M else 1)
 
 
@@ -204,7 +205,8 @@ _LOCAL_BANDS = {
     'SAVI': ['B04', 'B08'],
     'OSAVI': ['B04', 'B08'],
     'GNDVI': ['B03', 'B08'],
-    'NDRE': ['B8A', 'B08'],
+    'NDRE': ['B05', 'B8A'],
+    'NDMI': ['B8A', 'B11'],
 }
 
 _LOCAL_CALCULATORS = {
@@ -214,7 +216,15 @@ _LOCAL_CALCULATORS = {
     'OSAVI': 'calculate_osavi',
     'GNDVI': 'calculate_gndvi',
     'NDRE': 'calculate_ndre',
+    'NDMI': 'calculate_ndmi',
 }
+
+
+def release_scene_idempotency(tenant_id: str, parcel_id: str, sensing_date_str: str) -> None:
+    """Release the calc slot of every index the local engine computes for a scene,
+    so a scene skipped before calculation can be retried (e.g. with another cloud threshold)."""
+    for index_type in _LOCAL_CALCULATORS:
+        _release_idempotency(tenant_id, parcel_id, index_type, sensing_date_str)
 
 
 def _local_index_bands(index_type: str, formula: Optional[str]) -> list:

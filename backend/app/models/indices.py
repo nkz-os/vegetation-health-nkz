@@ -49,7 +49,7 @@ class VegetationIndexCache(BaseModel, TenantMixin):
     
     __table_args__ = (
         CheckConstraint(
-            "index_type IN ('NDVI', 'EVI', 'SAVI', 'OSAVI', 'GNDVI', 'NDRE', 'CUSTOM')",
+            "index_type IN ('NDVI', 'EVI', 'SAVI', 'OSAVI', 'GNDVI', 'NDRE', 'NDMI', 'CUSTOM')",
             name='vegetation_indices_cache_index_type_check'
         ),
     )

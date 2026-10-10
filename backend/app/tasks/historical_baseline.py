@@ -18,7 +18,8 @@ logger = logging.getLogger(__name__)
 BAND_MAP = {
     "NDVI": ["B04", "B08"],
     "GNDVI": ["B03", "B08"],
-    "NDRE": ["B8A", "B08"],
+    "NDRE": ["B05", "B8A"],
+    "NDMI": ["B8A", "B11"],
     "SAVI": ["B04", "B08"],
     "OSAVI": ["B04", "B08"],
     "EVI": ["B02", "B04", "B08"],
@@ -33,6 +34,7 @@ _INDEX_CALCULATORS = {
     "SAVI": "calculate_savi",
     "OSAVI": "calculate_osavi",
     "EVI": "calculate_evi",
+    "NDMI": "calculate_ndmi",
 }
 
 

@@ -73,7 +73,7 @@ class TestRouteIndex:
 
     def test_unknown_index_defaults_local(self):
         assert route_index("VRA_ZONES", has_custom_formula=False) == "local"
-        assert route_index("NDMI", has_custom_formula=False) == "local"
+        assert route_index("NDSI", has_custom_formula=False) == "local"
 
 
 # ---------------------------------------------------------------------------

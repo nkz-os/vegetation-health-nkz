@@ -105,15 +105,27 @@ def test_gndvi_uses_green_band_not_ndvi(tmp_path):
     assert stats["mean"] == pytest.approx((0.6 - 0.2) / (0.6 + 0.2), abs=1e-4)
 
 
-def test_ndre_mixes_20m_and_10m_bands(tmp_path):
+def test_ndre_is_narrow_nir_against_red_edge_at_20m(tmp_path):
     bands = {
-        "B8A": _write_band(tmp_path / "B8A.tif", 0.3, 20),
-        "B08": _write_band(tmp_path / "B08.tif", 0.5, 10),
+        "B05": _write_band(tmp_path / "B05.tif", 0.08, 20),
+        "B8A": _write_band(tmp_path / "B8A.tif", 0.45, 20),
     }
     upsert = _run_window("NDRE", bands)
     stats = upsert.call_args.kwargs["statistics"]
     assert stats["pixel_count"] > 0
-    assert stats["mean"] == pytest.approx((0.5 - 0.3) / (0.5 + 0.3), abs=1e-3)
+    assert stats["mean"] == pytest.approx((0.45 - 0.08) / (0.45 + 0.08), abs=1e-3)
+
+
+def test_ndmi_is_narrow_nir_against_swir_at_20m(tmp_path):
+    bands = {
+        "B8A": _write_band(tmp_path / "B8A.tif", 0.40, 20),
+        "B11": _write_band(tmp_path / "B11.tif", 0.20, 20),
+    }
+    upsert = _run_window("NDMI", bands)
+    stats = upsert.call_args.kwargs["statistics"]
+    assert upsert.call_args.kwargs["index_type"] == "NDMI"
+    assert stats["pixel_count"] > 0
+    assert stats["mean"] == pytest.approx(0.2 / 0.6, abs=1e-3)
 
 
 def test_osavi_uses_its_soil_adjusted_formula(tmp_path):

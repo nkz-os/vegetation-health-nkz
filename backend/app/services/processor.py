@@ -420,21 +420,20 @@ class VegetationIndexProcessor:
     def calculate_ndre(self, apply_cloud_mask: bool = True) -> np.ndarray:
         """Calculate NDRE (Normalized Difference Red Edge).
 
-        Formula: (NIR - RedEdge) / (NIR + RedEdge)
-        Uses B8A (RedEdge4) as RedEdge band (20m -> resampled to 10m)
+        Formula: (B8A - B05) / (B8A + B05) — narrow NIR against red edge 1,
+        the same as the Copernicus engine. Both bands are native 20 m.
         Range: -1 to 1
 
         Args:
             apply_cloud_mask: If True, mask cloudy pixels using SCL band
         """
-        self.load_bands(['B8A', 'B08'])
+        self.load_bands(['B05', 'B8A'])
 
-        rededge = self.band_data['B8A']
-        nir = self.band_data['B08']
+        rededge = self.band_data['B05']
+        nir = self.band_data['B8A']
 
-        # Resample B8A (20m) to match B08 (10m) resolution
         if rededge.shape != nir.shape:
-            logger.info(f"Resampling B8A from {rededge.shape} to {nir.shape} for NDRE")
+            logger.info(f"Resampling B05 from {rededge.shape} to {nir.shape} for NDRE")
             rededge = self._resample_to_10m(rededge, nir)
 
         # Create cloud mask if requested

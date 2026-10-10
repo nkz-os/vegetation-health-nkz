@@ -206,10 +206,26 @@ class TestVegetationIndexProcessor:
     # ---- NDRE Tests ----
 
     def test_ndre_formula(self):
-        """NDRE = (NIR-RedEdge)/(NIR+RedEdge)"""
-        nir = np.full((5, 5), 0.5, dtype=np.float32)
-        rededge = np.full((5, 5), 0.1, dtype=np.float32)
-        p = self._setup_processor({'B8A': rededge, 'B08': nir})
+        """NDRE = (B8A - B05) / (B8A + B05): narrow NIR against red edge 1, as the Copernicus engine."""
+        nir_narrow = np.full((5, 5), 0.45, dtype=np.float32)
+        rededge = np.full((5, 5), 0.08, dtype=np.float32)
+        p = self._setup_processor({'B05': rededge, 'B8A': nir_narrow})
         ndre = p.calculate_ndre(apply_cloud_mask=False)
-        expected = 0.4 / 0.6
-        assert np.allclose(ndre, expected, atol=1e-4)
+        assert np.allclose(ndre, 0.37 / 0.53, atol=1e-4)
+
+    def test_ndre_does_not_compare_two_nir_bands(self):
+        """B08 and B8A are both NIR: an index of the two is ~0 on any canopy."""
+        p = self._setup_processor({
+            'B05': np.full((5, 5), 0.08, dtype=np.float32),
+            'B08': np.full((5, 5), 0.46, dtype=np.float32),
+            'B8A': np.full((5, 5), 0.45, dtype=np.float32),
+        })
+        assert float(np.nanmean(p.calculate_ndre(apply_cloud_mask=False))) > 0.6
+
+    def test_ndmi_formula(self):
+        """NDMI = (B8A - B11) / (B8A + B11), both bands native 20 m."""
+        p = self._setup_processor({
+            'B8A': np.full((5, 5), 0.40, dtype=np.float32),
+            'B11': np.full((5, 5), 0.20, dtype=np.float32),
+        })
+        assert np.allclose(p.calculate_ndmi(apply_cloud_mask=False), 0.2 / 0.6, atol=1e-4)

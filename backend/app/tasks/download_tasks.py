@@ -225,9 +225,8 @@ def download_sentinel2_scene(self, job_id: str, tenant_id: str, parameters: Dict
 
                         # Liberar idempotency lock para que el usuario pueda reintentar con otro threshold
                         try:
-                            from app.tasks.processing_tasks import _release_idempotency
-                            for idx in ["NDVI", "EVI", "SAVI", "GNDVI", "NDRE"]:
-                                _release_idempotency(tenant_id, parameters.get("entity_id"), idx, best_scene["sensing_date"])
+                            from app.tasks.processing_tasks import release_scene_idempotency
+                            release_scene_idempotency(tenant_id, parameters.get("entity_id"), best_scene["sensing_date"])
                         except Exception as e:
                             logger.debug("Idempotency release failed (non-fatal): %s", e)
 

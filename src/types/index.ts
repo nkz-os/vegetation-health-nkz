@@ -406,6 +406,8 @@ export interface ParcelOverview {
     message: string | null;
   }>;
   active_jobs_count: number;
+  // Indices an analysis computes for the parcel's assigned crop.
+  default_indices?: string[];
 }
 
 export interface EntityDataStatus {

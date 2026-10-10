@@ -108,7 +108,7 @@ export const HistoricalChart: React.FC<HistoricalChartProps> = ({ entityId }) =>
             onChange={(e) => setSelectedIndex(e.target.value)}
             className="text-xs px-2 py-1 border border-slate-300 rounded-lg bg-white"
           >
-            {['NDVI', 'GNDVI', 'NDRE', 'SAVI', 'OSAVI', 'EVI'].map(idx => (
+            {['NDVI', 'GNDVI', 'NDRE', 'SAVI', 'OSAVI', 'EVI', 'NDMI'].map(idx => (
               <option key={idx} value={idx}>{idx}</option>
             ))}
           </select>
@@ -144,7 +144,7 @@ export const HistoricalChart: React.FC<HistoricalChartProps> = ({ entityId }) =>
             onChange={(e) => setSelectedIndex(e.target.value)}
             className="text-xs px-2 py-1 border border-slate-300 rounded-lg bg-white"
           >
-            {['NDVI', 'GNDVI', 'NDRE', 'SAVI', 'OSAVI', 'EVI'].map(idx => (
+            {['NDVI', 'GNDVI', 'NDRE', 'SAVI', 'OSAVI', 'EVI', 'NDMI'].map(idx => (
               <option key={idx} value={idx}>{idx}</option>
             ))}
           </select>

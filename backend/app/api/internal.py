@@ -49,6 +49,7 @@ ATTRIBUTE_TO_INDEX: dict[str, str] = {
     "osaviMean": "OSAVI",
     "gndviMean": "GNDVI",
     "ndreMean": "NDRE",
+    "ndmiMean": "NDMI",
 }
 
 

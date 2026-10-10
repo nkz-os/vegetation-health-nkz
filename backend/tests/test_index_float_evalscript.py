@@ -20,8 +20,8 @@ def test_build_index_float_supports_all_five():
 
 
 def test_build_index_float_rejects_unsupported():
-    with pytest.raises(ValueError, match="NDMI"):
-        build_index_float("NDMI")
+    with pytest.raises(ValueError, match="NDSI"):
+        build_index_float("NDSI")
 
 
 def test_osavi_float_case_uses_soil_adjustment():

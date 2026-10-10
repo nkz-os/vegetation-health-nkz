@@ -21,7 +21,7 @@ router = APIRouter(prefix="/api/vegetation/parcels", tags=["history"])
 
 class BuildHistoryRequest(BaseModel):
     years: int = Field(5, ge=1, le=20)
-    index: str = Field("NDVI", pattern="^(NDVI|GNDVI|NDRE|SAVI|OSAVI|EVI)$")
+    index: str = Field("NDVI", pattern="^(NDVI|GNDVI|NDRE|SAVI|OSAVI|EVI|NDMI)$")
     window_days: int = Field(20, ge=5, le=90)
     cloud_threshold: float = Field(30.0, ge=0, le=100)
 

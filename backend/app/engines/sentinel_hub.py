@@ -17,7 +17,7 @@ from app.services.sentinel_hub_client import (
     SentinelHubTimeoutError,
     SentinelHubServerError,
 )
-from app.services.evalscripts import MULTI_INDEX, NDVI_COLOR
+from app.services.evalscripts import MOISTURE_INDEX, MULTI_INDEX, NDVI_COLOR
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,11 @@ _INDEX_OUTPUT_MAP = {
     "OSAVI": "osavi",
     "GNDVI": "gndvi",
     "NDRE": "ndre",
+    "NDMI": "ndmi",
 }
+
+# Indices served by the NDMI-only script; the rest come from MULTI_INDEX.
+_MOISTURE_INDICES = {"NDMI"}
 
 
 class SentinelHubEngine(BaseVegetationEngine):
@@ -62,8 +66,9 @@ class SentinelHubEngine(BaseVegetationEngine):
     ) -> list[IndexResult]:
         """Compute vegetation indices via Statistical API.
 
-        Uses the multi-index evalscript to compute all requested indices
-        in a single API call per 5-day aggregation window.
+        Uses the multi-index evalscript to compute the optical indices in a
+        single API call per 5-day aggregation window; NDMI comes from its own
+        script, requested only when asked for, so the others never pay for B11.
 
         `formula`/`formula_id` are accepted for interface parity but ignored:
         the selector only routes eligible, non-custom indices here.
@@ -72,12 +77,25 @@ class SentinelHubEngine(BaseVegetationEngine):
             "Computing indices for parcel=%s tenant=%s types=%s cloud_max=%s",
             parcel_id, tenant_id, index_types, cloud_cover_max,
         )
-        bands = ["B02", "B03", "B04", "B05", "B08", "B8A", "SCL"]
+        requested = {i.upper() for i in index_types}
+        requests = []
+        if requested - _MOISTURE_INDICES:
+            requests.append((MULTI_INDEX, ["B02", "B03", "B04", "B05", "B08", "B8A", "SCL"]))
+        if requested & _MOISTURE_INDICES:
+            requests.append((MOISTURE_INDEX, ["B8A", "B11", "SCL"]))
 
+        intervals = []
+        for evalscript, bands in requests:
+            raw = await self._statistical(parcel_geometry, evalscript, date_range, bands, cloud_cover_max)
+            intervals.extend(raw.get("data", []))
+
+        return self._parse_results(intervals, index_types)
+
+    async def _statistical(self, parcel_geometry, evalscript, date_range, bands, cloud_cover_max) -> dict:
         try:
-            raw = await self._client.statistical(
+            return await self._client.statistical(
                 geometry=parcel_geometry,
-                evalscript=MULTI_INDEX,
+                evalscript=evalscript,
                 date_range=date_range,
                 bands=bands,
                 cloud_cover_max=cloud_cover_max,
@@ -94,8 +112,9 @@ class SentinelHubEngine(BaseVegetationEngine):
             logger.error("Sentinel Hub Statistical API failed: %s", e)
             raise EngineDegradedException(str(e)) from e
 
+    def _parse_results(self, intervals: list, index_types: list[str]) -> list[IndexResult]:
         results: list[IndexResult] = []
-        for interval in raw.get("data", []):
+        for interval in intervals:
             outputs = interval.get("outputs", {})
             interval_from = interval.get("interval", {}).get("from", "")
             sensing_date = self._parse_interval_midpoint(interval_from)

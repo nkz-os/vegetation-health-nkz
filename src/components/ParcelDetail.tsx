@@ -36,7 +36,9 @@ import { useVegetationContext } from '../services/vegetationContext';
 import type { ParcelOverview, ParcelSeasonCard, ParcelJobCard } from '../types';
 import { HistoricalChart } from './HistoricalChart';
 
-const STANDARD_INDICES = ['NDVI', 'EVI', 'SAVI', 'OSAVI', 'GNDVI', 'NDRE'] as const;
+const STANDARD_INDICES = ['NDVI', 'EVI', 'SAVI', 'OSAVI', 'GNDVI', 'NDRE', 'NDMI'] as const;
+// What the backend computes for a parcel with no crop assigned (default_indices_for_species).
+const NO_CROP_DEFAULT_INDICES = ['NDVI', 'EVI', 'SAVI', 'GNDVI', 'NDRE'];
 const ALL_PILLS = [...STANDARD_INDICES, 'SAR'] as const;
 
 const fmtDate = (iso: string | null) => {
@@ -194,14 +196,20 @@ const JobRow: React.FC<JobRowProps> = ({ job, onDelete, bulkMode, isSelected, on
 interface AnalyzeFormProps {
   entityId: string;
   seasonId: string;
+  // Indices the backend picks for this parcel's crop; preselected in the form.
+  defaultIndices?: string[];
   onLaunched: () => void;
 }
 
-const AnalyzeInSeasonForm: React.FC<AnalyzeFormProps> = ({ entityId, seasonId, onLaunched }) => {
+const AnalyzeInSeasonForm: React.FC<AnalyzeFormProps> = ({ entityId, seasonId, defaultIndices, onLaunched }) => {
   const { t } = useTranslation();
   const api = useVegetationApi();
   const [open, setOpen] = useState(false);
-  const [selected, setSelected] = useState<string[]>([...STANDARD_INDICES]);
+  const [selected, setSelected] = useState<string[]>(() =>
+    (defaultIndices ?? NO_CROP_DEFAULT_INDICES).filter((idx) =>
+      (STANDARD_INDICES as readonly string[]).includes(idx),
+    ),
+  );
   const [threshold, setThreshold] = useState<number>(30);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -936,6 +944,7 @@ const AdvancedSection: React.FC<AdvancedSectionProps> = ({ entityId, defaultInde
 interface SeasonBlockProps {
   season: ParcelSeasonCard;
   entityId: string;
+  defaultIndices?: string[];
   onDelete: (jobId: string) => Promise<void>;
   onLaunched: () => void;
   onStopSeason?: (seasonId: string) => Promise<void>;
@@ -948,6 +957,7 @@ interface SeasonBlockProps {
 const SeasonBlock: React.FC<SeasonBlockProps> = ({
   season,
   entityId,
+  defaultIndices,
   onDelete,
   onLaunched,
   onStopSeason,
@@ -1084,6 +1094,7 @@ const SeasonBlock: React.FC<SeasonBlockProps> = ({
               <AnalyzeInSeasonForm
                 entityId={entityId}
                 seasonId={season.id}
+                defaultIndices={defaultIndices}
                 onLaunched={onLaunched}
               />
             </div>
@@ -1471,6 +1482,7 @@ export const ParcelDetail: React.FC = () => {
                 key={s.id}
                 season={s}
                 entityId={overview.parcel.entity_id}
+                defaultIndices={overview.default_indices}
                 onDelete={handleDeleteJob}
                 onLaunched={refetch}
                 onStopSeason={handleStopSeason}

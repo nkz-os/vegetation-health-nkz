@@ -1,7 +1,7 @@
 /**
  * Index Pill Selector — Compact vegetation index pills.
  *
- * Two groups: "Vegetación" (NDVI, EVI, SAVI, OSAVI, GNDVI, NDRE) and "Manejo" (VRA_ZONES).
+ * Two groups: "Vegetación" (NDVI, EVI, SAVI, OSAVI, GNDVI, NDRE, NDMI) and "Manejo" (VRA_ZONES).
  * Custom formulas rendered inline after standard indices.
  * Supports compact mode (flat row, no group labels) for bottom-panel slots.
  */
@@ -33,6 +33,7 @@ const INDEX_GROUPS: Array<{
       { value: 'OSAVI', shortLabel: 'OSAVI', color: '#a3e635' },
       { value: 'GNDVI', shortLabel: 'GNDVI', color: '#14b8a6' },
       { value: 'NDRE', shortLabel: 'NDRE', color: '#0891b2' },
+      { value: 'NDMI', shortLabel: 'NDMI', color: '#06b6d4' },
     ],
   },
   {
