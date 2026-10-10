@@ -30,6 +30,14 @@ export const IndexInfoModal: React.FC<IndexInfoModalProps> = ({
     if (!isOpen) return null;
 
     const info = getIndexInfo(indexType);
+    // Translated text per field, the English catalogue as fallback.
+    const k = info ? `indexInfo.${info.id.toLowerCase()}` : '';
+    const tr = (field: string, fallback: string) => t(`${k}.${field}`, { defaultValue: fallback }) as string;
+    const trList = (field: string, fallback: string[] | string): string[] => {
+        const v = t(`${k}.${field}`, { returnObjects: true, defaultValue: fallback }) as unknown;
+        if (Array.isArray(v)) return v.map(String);
+        return typeof v === 'string' && v !== `${k}.${field}` ? [v] : ([] as string[]).concat(fallback);
+    };
 
     if (!info) {
         return (
@@ -62,7 +70,7 @@ export const IndexInfoModal: React.FC<IndexInfoModalProps> = ({
                         </div>
                         <div>
                             <h2 className="text-xl font-bold text-slate-900">{info.name}</h2>
-                            <p className="text-sm text-slate-600">{info.fullName}</p>
+                            <p className="text-sm text-slate-600">{tr('fullName', info.fullName)}</p>
                         </div>
                     </div>
                     <button
@@ -77,7 +85,7 @@ export const IndexInfoModal: React.FC<IndexInfoModalProps> = ({
                 <div className="p-6 overflow-y-auto max-h-[calc(90vh-80px)] space-y-6">
                     {/* Description */}
                     <div>
-                        <p className="text-slate-700 leading-relaxed">{info.description}</p>
+                        <p className="text-slate-700 leading-relaxed">{tr('description', info.description)}</p>
                     </div>
 
                     {/* Formula */}
@@ -108,7 +116,7 @@ export const IndexInfoModal: React.FC<IndexInfoModalProps> = ({
                                         style={{ backgroundColor: VIGOUR_SCALE[key] ?? VIGOUR_SCALE.veryHigh }}
                                     />
                                     <span className="font-mono text-xs text-slate-600 w-24">{range}</span>
-                                    <span className="text-sm text-slate-700">{meaning}</span>
+                                    <span className="text-sm text-slate-700">{tr(`interpretation.${key}`, meaning)}</span>
                                 </div>
                             ))}
                         </div>
@@ -121,7 +129,7 @@ export const IndexInfoModal: React.FC<IndexInfoModalProps> = ({
                             <h3 className="font-semibold text-slate-800">{t('indexInfo.bestFor')}</h3>
                         </div>
                         <div className="flex flex-wrap gap-2">
-                            {info.bestFor.map((use, i) => (
+                            {trList('bestFor', info.bestFor).map((use, i) => (
                                 <span
                                     key={i}
                                     className="px-3 py-1.5 text-sm rounded-full border"
@@ -143,7 +151,7 @@ export const IndexInfoModal: React.FC<IndexInfoModalProps> = ({
                             <AlertTriangle className="w-4 h-4 text-amber-600 mt-0.5" />
                             <div>
                                 <h3 className="font-semibold text-amber-800 mb-1">{t('indexInfo.limitations')}</h3>
-                                <p className="text-sm text-amber-700">{info.limitations}</p>
+                                <p className="text-sm text-amber-700">{trList('limitations', info.limitations).join(' · ')}</p>
                             </div>
                         </div>
                     </div>

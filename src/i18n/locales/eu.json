@@ -471,7 +471,8 @@
     "ndreDesc": "Ertz Gorriaren Indize Normalizatua",
     "ndmiDesc": "Hezetasun Indize Normalizatua",
     "vraDesc": "Aplikazio Aldakorreko Zonak",
-    "customDesc": "Indize Pertsonalizatua"
+    "customDesc": "Indize Pertsonalizatua",
+    "osaviDesc": "Lurzorura Egokitutako Landaredi Indize Optimizatua - Estaldura irekiak: fruta-arbolak, olibadiak, mahastiak"
   },
   "indexInfo": {
     "unavailable": "Informazioa ez dago erabilgarri indize honetarako.",
@@ -482,11 +483,155 @@
     "limitations": "Mugak",
     "ndvi": {
       "fullName": "Landaredi Indize Normalizatua",
-      "description": "Landarediaren berdetasuna eta osasuna neurtzeko indizerik erabiliena. Argi gorri ikusgaia eta infragorri hurbila alderatzen ditu."
+      "description": "Landarediaren berdetasuna eta osasuna neurtzeko indizerik erabiliena. Argi gorri ikusgaia eta infragorri hurbila alderatzen ditu.",
+      "interpretation": {
+        "veryLow": "Ura, elurra, hodeiak edo lurzoru biluzia",
+        "low": "Landaredi urria edo estresatua",
+        "medium": "Landaredi moderatua, belardiak edo zuhaixkak",
+        "high": "Landaredi trinko eta osasuntsua",
+        "veryHigh": "Oihan tropikal trinkoa edo biomasa handiko laboreak"
+      },
+      "bestFor": [
+        "Laboreen jarraipen orokorra",
+        "Ur-estresaren detekzioa",
+        "Lurzoru-estalduraren sailkapena",
+        "Urtaroko aldaketen detekzioa"
+      ],
+      "limitations": [
+        "Landaredi trinkoan asetu egiten da (LAI > 3)",
+        "Eremu idorretan lurzoruaren distirak eragiten dio",
+        "Ez ditu ondo bereizten labore motak"
+      ]
     },
     "evi": {
       "fullName": "Landaredi Indize Hobetua",
-      "description": "Eragin atmosferiko eta lurzorukoa murrizteko optimizatua, banda urdina erabiliz zuzenketarako."
+      "description": "Eragin atmosferiko eta lurzorukoa murrizteko optimizatua, banda urdina erabiliz zuzenketarako.",
+      "interpretation": {
+        "veryLow": "Ura edo hiri-azpiegitura",
+        "low": "Landaredi oso urria edo lurzoru biluziak",
+        "medium": "Hasierako faseko laboreak edo larreak",
+        "high": "Landare-estaldura trinko eta aktiboa",
+        "veryHigh": "Baso trinkoak eta errendimendu handiko landaketak"
+      },
+      "bestFor": [
+        "Biomasa handiko eremuak (oihanak, landaketak)",
+        "Atmosferaren eragina duten eskualdeak (hezetasuna, aerosolak)",
+        "Lurzoruaren islapen handiko eremuen jarraipena"
+      ],
+      "limitations": [
+        "Zuzenketa atmosferiko zehatza behar du",
+        "Konputazionalki konplexuagoa",
+        "Sentikortasun txikiagoa landare-estaldura txikiko eremuetan"
+      ]
+    },
+    "osavi": {
+      "fullName": "Lurzorura Egokitutako Landaredi Indize Optimizatua",
+      "description": "SAVIaren aldaera bat, lurzoru-termino finkoarekin (0,16) eta eskala-faktorerik gabe. Landareen artean lurzorua ikusten den estaldura irekietarako egokia: fruta-arbolak, olibondoak, mahastiak.",
+      "interpretation": {
+        "veryLow": "Landaredirik ez",
+        "low": "Estaldura oso urria",
+        "medium": "Estaldura irekia, lurzorua ageri",
+        "high": "Estaldura ona",
+        "veryHigh": "Landaredi trinkoa"
+      },
+      "bestFor": [
+        "Zurezko laboreak",
+        "Olibadiak eta mahastiak",
+        "Fruta-arbolak",
+        "Estaldura partzialeko eremuak"
+      ],
+      "limitations": [
+        "Lurzoru-termino finkoa",
+        "Estaldura trinkoetan asetu egiten da, NDVIa bezala"
+      ]
+    },
+    "savi": {
+      "fullName": "Lurzorura Egokitutako Landaredi Indizea",
+      "description": "Lurzoruaren distiraren eragina gutxitzen duen NDVIaren aldaera, labore gazteetarako aproposa.",
+      "interpretation": {
+        "veryLow": "Lurzoru biluzia edo anizkarrak",
+        "low": "Ernetzen ari diren laboreak (< % 15eko estaldura)",
+        "medium": "Hasierako garapen begetatiboa (% 15-50eko estaldura)",
+        "high": "Landare-estaldura ertain-altua (% 50-80)",
+        "veryHigh": "Estaldura osoa eta trinkoa (> % 80)"
+      },
+      "bestFor": [
+        "Hasierako faseetako laboreak",
+        "Eremu idorrak eta erdi-idorrak",
+        "Landareen artean lurzorua ikusten den lekuak",
+        "Landaketa-marko zabaleko mahastiak eta olibadiak"
+      ],
+      "limitations": [
+        "L faktorea estalduraren arabera doitu behar da",
+        "Estaldura trinkoetan NDVIa baino sentikortasun txikiagoa",
+        "L=0,5 balioa konpromiso bat da"
+      ]
+    },
+    "gndvi": {
+      "fullName": "Diferentzia Normalizatuko Landaredi Indize Berdea",
+      "description": "Banda gorriaren ordez berdea erabiltzen du, klorofilarekiko sentikortasun handiagoa emanez.",
+      "interpretation": {
+        "veryLow": "Lurzoru biluzia edo ura",
+        "low": "Landaredi klorotikoa (nitrogeno-gabezia)",
+        "medium": "Klorofila-maila normala duten laboreak",
+        "high": "Klorofila-kontzentrazio handia, osasun ona",
+        "veryHigh": "Jarduera fotosintetiko maximoa"
+      },
+      "bestFor": [
+        "Klorofila-edukiaren ebaluazioa",
+        "Nitrogeno-gabeziaren detekzioa",
+        "Laboreen zahartzearen jarraipena",
+        "Landare-espezieen bereizketa"
+      ],
+      "limitations": [
+        "NDVIak baino tarte dinamiko txikiagoa",
+        "Argiztapen-baldintzekiko sentikorragoa",
+        "Banda berdeak (B03) seinale-zarata erlazio txikiagoa du"
+      ]
+    },
+    "ndre": {
+      "fullName": "Ertz Gorriko Diferentzia Normalizatuko Indizea",
+      "description": "Ertz gorriko banda (Red Edge) baliatzen du, landarediaren osasunaren aldaketa txikiekiko oso sentikorra.",
+      "interpretation": {
+        "veryLow": "Landaredi hila edo oso estresatua",
+        "low": "Elikadura-estresa edo hasierako klorosia",
+        "medium": "Elikadura egokia duten laboreak",
+        "high": "Eraginkortasun fotosintetiko handia",
+        "veryHigh": "Osasun eta klorofila-dentsitate ezin hobeak"
+      },
+      "bestFor": [
+        "Zehaztasuneko nekazaritza (N dosi aldakorra)",
+        "Laboreen estresaren detekzio goiztiarra",
+        "Labore-barietateen sailkapena",
+        "Hostoen zahartzearen jarraipena"
+      ],
+      "limitations": [
+        "Red Edge banda behar du (B05, B06, B07 edo B8A)",
+        "Erabilgarritasun txikiagoa Sentinel-2 ez diren sateliteetan",
+        "Kapelaren egiturak eragin diezaioke"
+      ]
+    },
+    "ndmi": {
+      "fullName": "Diferentzia Normalizatuko Hezetasun Indizea",
+      "description": "Landarediaren ur-edukiaren aldaketak detektatzen ditu banda infragorriak erabiliz.",
+      "interpretation": {
+        "veryLow": "Lehorte larria edo landaredi hila",
+        "low": "Ur-estres moderatua",
+        "medium": "Hezetasun-baldintza normalak",
+        "high": "Landarediaren hidratazio ona",
+        "veryHigh": "Ur-asetasuna, uholde posiblea"
+      },
+      "bestFor": [
+        "Laboreen ur-estresaren detekzioa",
+        "Lehorteen jarraipena",
+        "Sute-arriskuaren ebaluazioa",
+        "Ureztatzearen kudeaketa"
+      ],
+      "limitations": [
+        "Bereizmen espazial txikiagoa (20 m, SWIR banda)",
+        "Hodei eta itzal trinkoek eragiten diote",
+        "Ez du bereizten lurzoruko ura eta landarediko ura"
+      ]
     }
   },
   "parcelDetail": {

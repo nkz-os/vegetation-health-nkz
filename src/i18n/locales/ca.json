@@ -471,7 +471,8 @@
     "ndreDesc": "Normalized Difference Red Edge - Sensitive to crop stress and nitrogen",
     "ndmiDesc": "Normalized Difference Moisture Index - Measures vegetation water content",
     "vraDesc": "Variable Rate Application Zones - AI-clustered management zones",
-    "customDesc": "Custom Index - User-defined formula"
+    "customDesc": "Custom Index - User-defined formula",
+    "osaviDesc": "Índex de Vegetació Ajustat al Sòl Optimitzat - Cobertes obertes: fruiters, oliverars, vinyes"
   },
   "indexInfo": {
     "unavailable": "Information not available for this index.",
@@ -609,6 +610,27 @@
         "Requires Red Edge band (B05, B06, B7, or B8A)",
         "Lower availability on non-Sentinel-2 satellites",
         "Can be affected by canopy structure"
+      ]
+    },
+    "osavi": {
+      "fullName": "Índex de Vegetació Ajustat al Sòl Optimitzat",
+      "description": "Variant del SAVI amb un terme de sòl fix (0,16) i sense factor d'escala. Adequat per a cobertes obertes on es veu el sòl entre plantes: fruiters, oliverars, vinyes.",
+      "interpretation": {
+        "veryLow": "Sense vegetació",
+        "low": "Cobertura molt escassa",
+        "medium": "Coberta oberta amb sòl visible",
+        "high": "Bona cobertura",
+        "veryHigh": "Vegetació densa"
+      },
+      "bestFor": [
+        "Conreus llenyosos",
+        "Oliverars i vinyes",
+        "Fruiters",
+        "Zones de cobertura parcial"
+      ],
+      "limitations": [
+        "Terme de sòl fix",
+        "Se satura en cobertes denses, com l'NDVI"
       ]
     }
   },

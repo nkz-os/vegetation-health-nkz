@@ -490,7 +490,8 @@
     "ndreDesc": "Índice de Diferencia Normalizada de Borde Rojo - Sensible al estrés del cultivo y nitrógeno",
     "ndmiDesc": "Índice de Humedad de Diferencia Normalizada - Mide el contenido de agua en la vegetación",
     "vraDesc": "Zonas de Aplicación Variable - Zonas de manejo agrupadas por IA",
-    "customDesc": "Índice Personalizado - Fórmula definida por el usuario"
+    "customDesc": "Índice Personalizado - Fórmula definida por el usuario",
+    "osaviDesc": "Índice de Vegetación Ajustado al Suelo Optimizado - Cubiertas abiertas: frutales, olivares, viñedos"
   },
   "indexInfo": {
     "unavailable": "Información no disponible para este índice.",
@@ -628,6 +629,27 @@
         "Requiere banda Red Edge (B05, B06, B7 o B8A)",
         "Menor disponibilidad en satélites no-Sentinel-2",
         "Puede verse afectado por la estructura del dosel"
+      ]
+    },
+    "osavi": {
+      "fullName": "Índice de Vegetación Ajustado al Suelo Optimizado",
+      "description": "Variante del SAVI con un término de suelo fijo (0,16) y sin factor de escala. Adecuado para cubiertas abiertas en las que se ve el suelo entre plantas: frutales, olivares, viñedos.",
+      "interpretation": {
+        "veryLow": "Sin vegetación",
+        "low": "Cobertura muy escasa",
+        "medium": "Cubierta abierta con suelo visible",
+        "high": "Buena cobertura",
+        "veryHigh": "Vegetación densa"
+      },
+      "bestFor": [
+        "Cultivos leñosos",
+        "Olivares y viñedos",
+        "Frutales",
+        "Zonas de cobertura parcial"
+      ],
+      "limitations": [
+        "Término de suelo fijo",
+        "Se satura en cubiertas densas, como el NDVI"
       ]
     }
   },

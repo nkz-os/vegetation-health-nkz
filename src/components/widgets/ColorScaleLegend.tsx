@@ -5,8 +5,15 @@
 
 import React from 'react';
 import { X } from 'lucide-react';
+import { useTranslation } from '@nekazari/sdk';
 import { useIndexLegend } from '../../hooks/useIndexLegend';
 import type { VegetationIndexType } from '../../types';
+
+// Locale key (legend.*) of each index description.
+const LEGEND_DESC_KEY: Partial<Record<VegetationIndexType, string>> = {
+  NDVI: 'ndviDesc', EVI: 'eviDesc', SAVI: 'saviDesc', OSAVI: 'osaviDesc', GNDVI: 'gndviDesc',
+  NDRE: 'ndreDesc', NDMI: 'ndmiDesc', VRA_ZONES: 'vraDesc', CUSTOM: 'customDesc',
+};
 
 interface ColorScaleLegendProps {
   indexType: VegetationIndexType;
@@ -30,6 +37,7 @@ export const ColorScaleLegend: React.FC<ColorScaleLegendProps> = ({
   dataMax,
   onDynamicToggle,
 }) => {
+  const { t } = useTranslation();
   const { legend } = useIndexLegend(indexType, dynamic, dataMin, dataMax);
 
   const positionClasses = {
@@ -71,7 +79,9 @@ export const ColorScaleLegend: React.FC<ColorScaleLegendProps> = ({
             </label>
           )}
         </div>
-        <p className="text-xs text-gray-500">{legend.description}</p>
+        <p className="text-xs text-gray-500">
+          {t(`legend.${LEGEND_DESC_KEY[indexType] ?? ''}`, { defaultValue: legend.description })}
+        </p>
         {dynamic && dataMin !== undefined && dataMax !== undefined && (
           <p className="text-xs text-nkz-info mt-1">
             Rango dinámico: {dataMin.toFixed(3)} - {dataMax.toFixed(3)}

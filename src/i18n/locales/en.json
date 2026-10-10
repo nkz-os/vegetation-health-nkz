@@ -490,7 +490,8 @@
     "ndreDesc": "Normalized Difference Red Edge - Sensitive to crop stress and nitrogen",
     "ndmiDesc": "Normalized Difference Moisture Index - Measures vegetation water content",
     "vraDesc": "Variable Rate Application Zones - AI-clustered management zones",
-    "customDesc": "Custom Index - User-defined formula"
+    "customDesc": "Custom Index - User-defined formula",
+    "osaviDesc": "Optimized Soil-Adjusted Vegetation Index - Open canopies: orchards, olive groves, vineyards"
   },
   "indexInfo": {
     "unavailable": "Information not available for this index.",
@@ -628,6 +629,27 @@
         "Requires Red Edge band (B05, B06, B7, or B8A)",
         "Lower availability on non-Sentinel-2 satellites",
         "Can be affected by canopy structure"
+      ]
+    },
+    "osavi": {
+      "fullName": "Optimized Soil-Adjusted Vegetation Index",
+      "description": "SAVI variant with a fixed soil term (0.16) and no scaling. Suited to open canopies where soil is visible between plants: orchards, olive groves, vineyards.",
+      "interpretation": {
+        "veryLow": "No vegetation",
+        "low": "Very sparse cover",
+        "medium": "Open canopy with soil visible",
+        "high": "Good cover",
+        "veryHigh": "Dense vegetation"
+      },
+      "bestFor": [
+        "Woody crops",
+        "Olive groves and vineyards",
+        "Orchards",
+        "Partial cover areas"
+      ],
+      "limitations": [
+        "Fixed soil term",
+        "Saturates in dense canopies like NDVI"
       ]
     }
   },

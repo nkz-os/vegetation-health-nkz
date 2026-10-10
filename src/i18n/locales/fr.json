@@ -471,7 +471,8 @@
     "ndreDesc": "Normalized Difference Red Edge - Sensitive to crop stress and nitrogen",
     "ndmiDesc": "Normalized Difference Moisture Index - Measures vegetation water content",
     "vraDesc": "Variable Rate Application Zones - AI-clustered management zones",
-    "customDesc": "Custom Index - User-defined formula"
+    "customDesc": "Custom Index - User-defined formula",
+    "osaviDesc": "Indice de végétation ajusté au sol optimisé - Couverts ouverts : vergers, oliveraies, vignes"
   },
   "indexInfo": {
     "unavailable": "Information not available for this index.",
@@ -609,6 +610,27 @@
         "Requires Red Edge band (B05, B06, B7, or B8A)",
         "Lower availability on non-Sentinel-2 satellites",
         "Can be affected by canopy structure"
+      ]
+    },
+    "osavi": {
+      "fullName": "Indice de végétation ajusté au sol optimisé",
+      "description": "Variante du SAVI avec un terme de sol fixe (0,16) et sans facteur d'échelle. Adapté aux couverts ouverts où le sol est visible entre les plantes : vergers, oliveraies, vignes.",
+      "interpretation": {
+        "veryLow": "Pas de végétation",
+        "low": "Couverture très faible",
+        "medium": "Couvert ouvert, sol visible",
+        "high": "Bonne couverture",
+        "veryHigh": "Végétation dense"
+      },
+      "bestFor": [
+        "Cultures ligneuses",
+        "Oliveraies et vignes",
+        "Vergers",
+        "Zones à couverture partielle"
+      ],
+      "limitations": [
+        "Terme de sol fixe",
+        "Sature dans les couverts denses, comme le NDVI"
       ]
     }
   },
