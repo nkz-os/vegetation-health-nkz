@@ -8,6 +8,7 @@ so they appear automatically in the frontend's available_indices.
 
 import logging
 import os
+from pathlib import Path
 import tempfile
 import uuid
 from datetime import date, datetime, timezone
@@ -36,6 +37,7 @@ def _clip_sar_to_parcel(
     dst_path: str,
     parcel_geom,
     pad_deg: float = 0.005,
+    nodata: float = 0,
 ) -> None:
     """Warp a GCP-only SAR band to EPSG:4326, masked to the parcel polygon.
 
@@ -67,8 +69,8 @@ def _clip_sar_to_parcel(
             src_crs=gcps_crs,
             crs=dst_crs,
             resampling=Resampling.bilinear,
-            src_nodata=0,
-            nodata=0,
+            src_nodata=nodata,
+            nodata=nodata,
         ) as vrt:
             dst_transform, dst_width, dst_height = calculate_default_transform(
                 dst_crs, dst_crs, vrt.width, vrt.height,
@@ -82,7 +84,7 @@ def _clip_sar_to_parcel(
                 "dtype": src.dtypes[0],
                 "crs": dst_crs,
                 "transform": dst_transform,
-                "nodata": 0,
+                "nodata": nodata,
             }
             with rasterio.open(dst_path, "w+", **kwargs) as dst:
                 reproject(
@@ -90,10 +92,10 @@ def _clip_sar_to_parcel(
                     destination=rasterio.band(dst, 1),
                     src_transform=vrt.transform,
                     src_crs=dst_crs,
-                    src_nodata=0,
+                    src_nodata=nodata,
                     dst_transform=dst_transform,
                     dst_crs=dst_crs,
-                    dst_nodata=0,
+                    dst_nodata=nodata,
                     resampling=Resampling.bilinear,
                 )
                 # all_touched keeps edge pixels that partially overlap the
@@ -105,8 +107,61 @@ def _clip_sar_to_parcel(
                     all_touched=True,
                 )
                 band = dst.read(1)
-                band[outside] = 0
+                band[outside] = nodata
                 dst.write(band, 1)
+
+
+SAR_DB_NODATA = -9999.0  # 0 dB is a real backscatter value, so it cannot mark "no data"
+_WINDOW_PAD_PX = 20
+
+
+def _calibrated_parcel(band_path: str, calibration_path: str, parcel_geom, workdir: str):
+    """Calibrated parcel backscatter: (zonal stats in dB, georeferenced EPSG:4326 dB raster).
+
+    The GRD band's digital numbers become sigma nought with the product's calibration
+    LUT (``sar_calibration``), over the parcel's pixel window only. Statistics come from
+    the radar-geometry pixels inside the parcel (mean in linear power). The window is then
+    warped through its GCPs and masked to the parcel for the map layer and the SMI; pixels
+    without signal or outside the parcel are ``SAR_DB_NODATA``. Returns (stats, None) when
+    the parcel covers no pixel.
+    """
+    import rasterio
+    from rasterio.control import GroundControlPoint
+    from rasterio.features import rasterize
+    from rasterio.windows import Window
+
+    from app.services import sar_calibration
+
+    lut = sar_calibration.parse_calibration(Path(calibration_path).read_bytes())
+    with rasterio.open(band_path) as src:
+        grid_transform, grid_crs = _raster_grid(src)
+        mask = rasterize(
+            [(_geom_in_raster_crs(parcel_geom, grid_crs), 1)],
+            out_shape=(src.height, src.width), transform=grid_transform, fill=0, dtype="uint8",
+        )
+        rows, cols = np.nonzero(mask)
+        if rows.size == 0:
+            return sar_calibration.zonal_db(np.array([])), None
+        r0, r1 = max(int(rows.min()) - _WINDOW_PAD_PX, 0), min(int(rows.max()) + _WINDOW_PAD_PX, src.height - 1)
+        c0, c1 = max(int(cols.min()) - _WINDOW_PAD_PX, 0), min(int(cols.max()) + _WINDOW_PAD_PX, src.width - 1)
+        dn = src.read(1, window=Window(c0, r0, c1 - c0 + 1, r1 - r0 + 1)).astype(np.float64)
+        gcps, gcps_crs = src.gcps
+    rr, cc = np.mgrid[r0:r1 + 1, c0:c1 + 1]
+    db = sar_calibration.sigma0_db(dn.ravel(), rr.ravel(), cc.ravel(), lut).reshape(dn.shape)
+    stats = sar_calibration.zonal_db(db[mask[r0:r1 + 1, c0:c1 + 1] == 1])
+    if stats["pixel_count"] == 0:
+        return stats, None
+
+    stem = Path(band_path).stem
+    window_path = os.path.join(workdir, f"{stem}_db_window.tif")
+    shifted = [GroundControlPoint(row=g.row - r0, col=g.col - c0, x=g.x, y=g.y, z=g.z) for g in gcps]
+    with rasterio.open(window_path, "w", driver="GTiff", height=dn.shape[0], width=dn.shape[1],
+                       count=1, dtype="float32", nodata=SAR_DB_NODATA) as dst:
+        dst.write(np.where(np.isfinite(db), db, SAR_DB_NODATA).astype(np.float32), 1)
+        dst.gcps = (shifted, gcps_crs)
+    parcel_path = os.path.join(workdir, f"{stem}_db_parcel.tif")
+    _clip_sar_to_parcel(window_path, parcel_path, parcel_geom, nodata=SAR_DB_NODATA)
+    return stats, parcel_path
 
 
 def _upload_sar_cog(
@@ -274,8 +329,6 @@ def download_sentinel1_scene(
         tenant_id: Tenant identifier
         parameters: {scene_id, bounds, entity_id, sensing_date}
     """
-    import rasterio
-    from rasterio.features import rasterize
     from shapely.geometry import shape as shapely_shape
 
     db = next(get_db_session())
@@ -333,6 +386,10 @@ def download_sentinel1_scene(
 
             vv_path = band_paths.get("vv", "")
             vh_path = band_paths.get("vh", "")
+            calibration_paths = copernicus.download_s1_calibration(
+                scene_id, polarizations=["vv", "vh"], output_dir=tmpdir,
+            )
+            calibrated_paths: dict[str, str] = {}
 
             if not vv_path and not vh_path:
                 raise ValueError(f"No polarization bands downloaded for {scene_id}")
@@ -384,72 +441,62 @@ def download_sentinel1_scene(
                     continue
 
                 try:
-                    with rasterio.open(raster_path) as src:
-                        grid_transform, grid_crs = _raster_grid(src)
-                        mask = rasterize(
-                            [(_geom_in_raster_crs(geom, grid_crs), 1)],
-                            out_shape=(src.height, src.width),
-                            transform=grid_transform,
-                            fill=0,
-                            dtype="uint8",
-                        )
-                        data = src.read(1).astype(np.float32)
-                        nodata = src.nodata
-                        valid = (mask == 1) & (np.isfinite(data))
-                        if nodata is not None:
-                            valid = valid & (data != nodata)
+                    calibration_path = calibration_paths.get(pol.lower())
+                    if not calibration_path:
+                        # Uncalibrated digital numbers are not backscatter: never publish them as dB.
+                        raise ValueError(f"calibration annotation unavailable for {pol}")
+                    raw, parcel_raster = _calibrated_parcel(raster_path, calibration_path, geom, tmpdir)
+                    if raw["pixel_count"] == 0:
+                        logger.warning("No valid pixels for %s in %s", pol, entity_id)
+                        continue
+                    mean_val = raw["mean"]
+                    stats = {
+                        "mean": round(mean_val, 4),
+                        "min": round(raw["min"], 4),
+                        "max": round(raw["max"], 4),
+                        "pixel_count": raw["pixel_count"],
+                        "unit": "dB",
+                    }
+                    stats_by_pol[pol] = stats
+                    calibrated_paths[pol] = parcel_raster
 
-                        if not np.any(valid):
-                            logger.warning("No valid pixels for %s in %s", pol, entity_id)
-                            continue
+                    # ── Create calculate_index VegetationJob (visible in frontend) ──
+                    calc_job = VegetationJob(
+                        id=uuid.uuid4(),
+                        tenant_id=tenant_id,
+                        entity_id=entity_id,
+                        job_type="calculate_index",
+                        status="running",
+                        parameters={"scene_id": scene_id, "index_type": f"SAR-{pol}"},
+                        crop_season_id=_child_season_id,
+                    )
+                    db.add(calc_job)
+                    db.commit()
 
-                        mean_val = float(np.mean(data[valid]))
-                        stats = {
-                            "mean": round(mean_val, 4),
-                            "min": round(float(np.min(data[valid])), 4),
-                            "max": round(float(np.max(data[valid])), 4),
-                            "pixel_count": int(np.sum(valid)),
-                        }
-                        stats_by_pol[pol] = stats
+                    # Persist the band to MinIO as a COG before the local temp
+                    # dir is deleted, and store the object key as raster_path.
+                    s3_path = _upload_sar_cog(
+                        parcel_raster, tenant_id, entity_id, scene_id, pol, sensing_date_str,
+                    )
 
-                        # ── Create calculate_index VegetationJob (visible in frontend) ──
-                        calc_job = VegetationJob(
-                            id=uuid.uuid4(),
-                            tenant_id=tenant_id,
-                            entity_id=entity_id,
-                            job_type="calculate_index",
-                            status="running",
-                            parameters={"scene_id": scene_id, "index_type": f"SAR-{pol}"},
-                            crop_season_id=_child_season_id,
-                        )
-                        db.add(calc_job)
-                        db.commit()
+                    completed_result = {
+                        "index_type": f"SAR-{pol}",
+                        "index_key": f"SAR-{pol}",
+                        "statistics": stats,
+                        "scene_id": str(scene_record.id),
+                        "sensing_date": sensing_date_str,
+                        "source_image_count": 1,
+                        "is_composite": False,
+                    }
+                    if s3_path:
+                        completed_result["raster_path"] = s3_path
+                    calc_job.mark_completed(completed_result)
+                    db.commit()
 
-                        # Persist the band to MinIO as a COG before the local temp
-                        # dir is deleted, and store the object key as raster_path.
-                        s3_path = _upload_sar_cog(
-                            raster_path, tenant_id, entity_id, scene_id, pol, sensing_date_str,
-                            parcel_geom=geom,
-                        )
-
-                        completed_result = {
-                            "index_type": f"SAR-{pol}",
-                            "index_key": f"SAR-{pol}",
-                            "statistics": stats,
-                            "scene_id": str(scene_record.id),
-                            "sensing_date": sensing_date_str,
-                            "source_image_count": 1,
-                            "is_composite": False,
-                        }
-                        if s3_path:
-                            completed_result["raster_path"] = s3_path
-                        calc_job.mark_completed(completed_result)
-                        db.commit()
-
-                        logger.info(
-                            "SAR-%s complete: mean=%.4f pixels=%d for %s",
-                            pol, mean_val, stats["pixel_count"], entity_id,
-                        )
+                    logger.info(
+                        "SAR-%s complete: mean=%.4f pixels=%d for %s",
+                        pol, mean_val, stats["pixel_count"], entity_id,
+                    )
 
                 except Exception as e:
                     logger.error("SAR zonal stats failed for %s: %s", pol, e)
@@ -496,7 +543,7 @@ def download_sentinel1_scene(
                     from app.services.sar_smi_processor import compute_smi
                     from app.services.fiware_integration import upsert_eo_smi
                     smi_stats = compute_smi(
-                        vv_path=vv_path,
+                        vv_path=calibrated_paths["VV"],
                         geometry_geojson=parcel_geometry,
                         orbit_direction=parameters.get("orbit_direction", "ASCENDING"),
                         nominal_incidence_deg=parameters.get(

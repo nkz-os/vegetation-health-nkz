@@ -43,6 +43,7 @@ class TestS1DownloadTask:
             "vv": "/tmp/vv.tif",
             "vh": "/tmp/vh.tif",
         }
+        mock_client.download_s1_calibration.return_value = {"vv": "/tmp/vv.xml", "vh": "/tmp/vh.xml"}
         mock_client_cls.return_value = mock_client
 
         import numpy as np
@@ -70,8 +71,10 @@ class TestS1DownloadTask:
         ]
         mock_db.return_value = iter([mock_session])
 
+        calibrated = ({"mean": -8.0, "min": -12.0, "max": -5.0, "pixel_count": 4}, "/tmp/vv_db_parcel.tif")
         with patch.dict(sys.modules, {"rasterio": mock_rasterio, "rasterio.features": mock_rasterio.features}):
-            with patch("os.path.isfile", return_value=True):
+            with patch("os.path.isfile", return_value=True), \
+                    patch("app.tasks.sar_tasks._calibrated_parcel", return_value=calibrated):
                 with patch.object(download_sentinel1_scene, "update_state"):
                     with patch("app.tasks.sar_tasks.upsert_eo_product") as mock_eo:
                         mock_eo.return_value = "urn:ngsi-ld:EOProduct:test:parcel-1:GRD:2026-06-01"
@@ -87,8 +90,10 @@ class TestS1DownloadTask:
                             },
                         )
 
-        # Verify EOProduct was published
+        # Verify EOProduct was published, with the calibrated backscatter (dB), not raw DN
         mock_eo.assert_called_once()
+        assert mock_eo.call_args.kwargs["vv_mean"] == -8.0
+        assert mock_upload.call_args.args[0] == "/tmp/vv_db_parcel.tif"
 
         # Verify VegetationJob add calls: 2 calculate_index jobs + 1 scene + download job updates
         add_calls = [
@@ -165,6 +170,39 @@ class TestS1DownloadTask:
 
         # EOProduct NOT published (need both VV and VH)
         mock_eo.assert_not_called()
+
+
+class TestS1WithoutCalibration:
+    @patch("app.tasks.sar_tasks._upload_sar_cog")
+    @patch("app.tasks.sar_tasks.get_db_session")
+    @patch("app.tasks.sar_tasks.get_copernicus_credentials_with_fallback")
+    @patch("app.tasks.sar_tasks.CopernicusDataSpaceClient")
+    def test_uncalibrated_digital_numbers_are_never_published(self, mock_client_cls, mock_creds, mock_db, mock_upload):
+        from app.tasks.sar_tasks import download_sentinel1_scene
+
+        mock_creds.return_value = {"client_id": "id", "client_secret": "secret"}
+        mock_client = MagicMock()
+        mock_client.download_s1_bands.return_value = {"vv": "/tmp/vv.tif", "vh": "/tmp/vh.tif"}
+        mock_client.download_s1_calibration.return_value = {}  # annotation missing
+        mock_client_cls.return_value = mock_client
+        download_job = MagicMock()
+        download_job.id = uuid.uuid4()
+        mock_session = MagicMock()
+        mock_session.query.return_value.filter.return_value.first.side_effect = [download_job, None]
+        mock_db.return_value = iter([mock_session])
+        with patch("os.path.isfile", return_value=True), \
+                patch("app.tasks.sar_tasks._calibrated_parcel") as calibrate, \
+                patch.object(download_sentinel1_scene, "update_state"), \
+                patch("app.tasks.sar_tasks.upsert_eo_product") as mock_eo:
+            download_sentinel1_scene(
+                job_id=str(uuid.uuid4()), tenant_id="test-tenant",
+                parameters={"scene_id": "S1A_TEST", "entity_id": "urn:ngsi-ld:AgriParcel:parcel-1",
+                            "sensing_date": "2026-06-01",
+                            "bounds": {"type": "Polygon", "coordinates": [[[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]]]}},
+            )
+        calibrate.assert_not_called()
+        mock_eo.assert_not_called()
+        mock_upload.assert_not_called()
 
 
 class TestCopernicusS1Methods:
