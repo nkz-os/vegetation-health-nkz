@@ -51,9 +51,10 @@ class TestSarRenderConfig:
             assert render is not None, f"{idx} missing from INDEX_RENDER_CONFIG"
             assert render != DEFAULT_RENDER, f"{idx} falls back to DEFAULT_RENDER"
             assert render["colormap_name"] == "viridis"
+            # Stored values are calibrated sigma0 in dB (agricultural land ~ -25..0 dB),
+            # not raw digital numbers.
             lo, hi = render["rescale"]
-            assert lo == 0
-            assert hi > 0, f"{idx} rescale high bound must be positive"
+            assert -35 <= lo < hi <= 5, f"{idx} rescale {lo}..{hi} is not a dB range"
 
 
 class TestClipSarToParcel:

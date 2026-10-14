@@ -167,3 +167,24 @@ class TestDownloadS1Bands:
         assert "vv" in result
         assert "vh" not in result
         assert mock_s3.download_file.call_count == 1
+
+
+class TestDownloadS1Calibration:
+    """download_s1_calibration() — the product's calibration annotation per polarization."""
+
+    def test_downloads_the_calibration_annotation_assets(self):
+        client = CopernicusDataSpaceClient("id", "secret")
+        mock_s3 = MagicMock()
+        client._s3_client = mock_s3
+        with patch.object(client, "get_scene_item") as mock_item:
+            mock_item.return_value = {"id": "S1C_X", "assets": {
+                "vv": {"href": "s3://eodata/S1/x/measurement/vv.tiff"},
+                "schema-calibration-vv": {"href": "s3://eodata/S1/x/annotation/calibration/calibration-vv.xml"},
+                "schema-calibration-vh": {"href": "s3://eodata/S1/x/annotation/calibration/calibration-vh.xml"},
+            }}
+            with patch("pathlib.Path.mkdir"):
+                out = client.download_s1_calibration("S1C_X", polarizations=["vv", "vh"], output_dir="/tmp/c")
+        assert set(out) == {"vv", "vh"} and out["vv"].endswith("_vv_calibration.xml")
+        keys = [c.args[1] for c in mock_s3.download_file.call_args_list]
+        assert keys == ["S1/x/annotation/calibration/calibration-vv.xml",
+                        "S1/x/annotation/calibration/calibration-vh.xml"]

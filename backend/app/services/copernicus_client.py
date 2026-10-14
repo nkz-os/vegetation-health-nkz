@@ -396,3 +396,33 @@ class CopernicusDataSpaceClient:
                 logger.error("Failed to download S1 band %s: %s", pol, str(e))
 
         return band_paths
+
+    def download_s1_calibration(
+        self,
+        scene_id: str,
+        polarizations: list[str] | None = None,
+        output_dir: str = "",
+    ) -> dict[str, str]:
+        """Download each polarization's calibration annotation (``schema-calibration-<pol>``).
+
+        The XML carries the sigma-nought LUT needed to turn the GRD digital numbers into
+        backscatter (see ``sar_calibration``). Missing assets are omitted from the result.
+        """
+        polarizations = polarizations or ["vv", "vh"]
+        assets = self.get_scene_item(scene_id, collection="sentinel-1-grd").get("assets", {})
+        paths: dict[str, str] = {}
+        for pol in polarizations:
+            pol_lower = pol.lower()
+            asset = assets.get(f"schema-calibration-{pol_lower}")
+            if not asset:
+                logger.warning("Calibration annotation for %s not found in scene %s", pol, scene_id)
+                continue
+            s3_key = asset.get("href", "").replace("s3://eodata/", "").replace("/eodata/", "")
+            output_path = os.path.join(output_dir, f"{scene_id}_{pol_lower}_calibration.xml")
+            Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+            try:
+                self._get_s3_client().download_file("eodata", s3_key, output_path)
+                paths[pol_lower] = output_path
+            except Exception as e:
+                logger.error("Failed to download S1 calibration %s: %s", pol, str(e))
+        return paths
