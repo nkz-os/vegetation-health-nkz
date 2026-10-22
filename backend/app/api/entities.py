@@ -1,0 +1,340 @@
+# backend/app/api/entities.py
+from fastapi import APIRouter, HTTPException, Depends, Query, status
+from sqlalchemy.orm import Session
+from sqlalchemy import func, distinct, or_
+from uuid import UUID, uuid4
+import uuid as uuid_mod
+from datetime import datetime, date as date_type
+from typing import Dict, List, Optional
+import os
+import logging
+from app.database import get_db_with_tenant
+from app.middleware.auth import require_auth
+from app.models import VegetationScene, VegetationIndexCache, VegetationJob, VegetationCropSeason
+from nkz_platform_sdk import OrionClient
+
+router = APIRouter(prefix="/api/vegetation/entities", tags=["entities"])
+logger = logging.getLogger(__name__)
+
+
+async def _resolve_entity_name(entity_id: str, tenant_id: str) -> Optional[str]:
+    """Query Orion-LD for the entity's name attribute."""
+    try:
+        orion = OrionClient(tenant_id)
+        try:
+            data = await orion.get_entity(entity_id)
+        finally:
+            await orion.close()
+        name_attr = data.get("name", {})
+        if isinstance(name_attr, dict) and "value" in name_attr:
+            return name_attr["value"]
+        if isinstance(name_attr, str):
+            return name_attr
+    except Exception:
+        pass
+    return None
+
+@router.post("/roi", status_code=status.HTTP_201_CREATED)
+async def create_roi(request: dict, current_user: dict = Depends(require_auth)):
+    """Crea una Management Zone (ROI) en Orion-LD."""
+    try:
+        tenant_id = current_user['tenant_id']
+        orion = OrionClient(tenant_id)
+        try:
+            entity_id = f"urn:ngsi-ld:AgriParcel:{uuid4()}"
+            entity = {
+                "id": entity_id,
+                "type": "AgriParcel",
+                "name": {"type": "Property", "value": request.get("name")},
+                "location": {"type": "GeoProperty", "value": request.get("geometry")},
+                "category": {"type": "Property", "value": ["managementZone"]},
+                "dateCreated": {"type": "Property", "value": datetime.now().isoformat()}
+            }
+            
+            if request.get("parent_id"):
+                entity["hasParent"] = {"type": "Relationship", "object": request.get("parent_id")}
+                
+            await orion.create_entity(entity)
+            return {"id": entity_id, "message": "ROI created successfully"}
+        finally:
+            await orion.close()
+    except Exception as e:
+        logger.error(f"ROI creation failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/{entity_id}/data-status")
+async def get_entity_data_status(
+    entity_id: str,
+    current_user: dict = Depends(require_auth),
+    db: Session = Depends(get_db_with_tenant),
+):
+    """Discovery endpoint: returns all vegetation data available for an entity.
+
+    Single call replaces N parallel fetches for crop seasons, subscription status,
+    available indices, latest NDVI, scene count, and date range.
+    """
+    tenant_id = current_user["tenant_id"]
+
+    # Available indices and scene count are derived from vegetation_jobs.result
+    # rather than the (unwritten) vegetation_indices_cache table. The worker
+    # only persists results to Orion-LD per the FIWARE mandate; no direct
+    # writes to local SQL caches. Skipped calc_index rows (skipped=true,
+    # raster_path=null) are filtered out so disabled pills only stay
+    # disabled while there is genuinely no usable raster for that index.
+    index_rows = (
+        db.query(distinct(VegetationJob.result["index_type"].astext))
+        .filter(
+            VegetationJob.tenant_id == tenant_id,
+            VegetationJob.entity_id == entity_id,
+            VegetationJob.job_type == "calculate_index",
+            VegetationJob.status == "completed",
+            VegetationJob.deleted_at.is_(None),
+            VegetationJob.result["raster_path"].astext.isnot(None),
+        )
+        .all()
+    )
+    available_indices = [r[0] for r in index_rows if r[0]]
+
+    total_scenes = (
+        db.query(func.count(distinct(VegetationJob.result["scene_id"].astext)))
+        .filter(
+            VegetationJob.tenant_id == tenant_id,
+            VegetationJob.entity_id == entity_id,
+            VegetationJob.job_type == "calculate_index",
+            VegetationJob.status == "completed",
+            VegetationJob.deleted_at.is_(None),
+            VegetationJob.result["raster_path"].astext.isnot(None),
+        )
+        .scalar()
+    ) or 0
+
+    # Date range, latest NDVI, latest sensing date — derived from
+    # vegetation_jobs.result (not from the dead VegetationIndexCache).
+    date_range = None
+    latest_ndvi = None
+    latest_sensing_date = None
+
+    if total_scenes > 0:
+        non_skipped_filter = [
+            VegetationJob.tenant_id == tenant_id,
+            VegetationJob.entity_id == entity_id,
+            VegetationJob.job_type == "calculate_index",
+            VegetationJob.status == "completed",
+            VegetationJob.deleted_at.is_(None),
+            VegetationJob.result["raster_path"].astext.isnot(None),
+        ]
+        sensing_dates = (
+            db.query(distinct(VegetationJob.result["sensing_date"].astext))
+            .filter(*non_skipped_filter)
+            .all()
+        )
+        sensing_strs = sorted(d[0] for d in sensing_dates if d[0])
+        if sensing_strs:
+            date_range = {"first": sensing_strs[0], "last": sensing_strs[-1]}
+
+        latest_ndvi_job = (
+            db.query(VegetationJob)
+            .filter(
+                *non_skipped_filter,
+                VegetationJob.result["index_type"].astext == "NDVI",
+            )
+            .order_by(VegetationJob.result["sensing_date"].astext.desc())
+            .first()
+        )
+        if latest_ndvi_job and latest_ndvi_job.result:
+            stats = latest_ndvi_job.result.get("statistics") or {}
+            mean = stats.get("mean")
+            if mean is not None:
+                try:
+                    latest_ndvi = float(mean)
+                except (TypeError, ValueError):
+                    latest_ndvi = None
+            latest_sensing_date = latest_ndvi_job.result.get("sensing_date")
+
+    # Active crop seasons
+    crop_seasons = (
+        db.query(VegetationCropSeason)
+        .filter(
+            VegetationCropSeason.tenant_id == tenant_id,
+            VegetationCropSeason.entity_id == entity_id,
+            VegetationCropSeason.is_active == True,
+        )
+        .order_by(VegetationCropSeason.start_date.desc())
+        .all()
+    )
+    active_crop_seasons = [
+        {
+            "id": str(s.id),
+            "crop_type": s.label or s.start_date.isoformat() if s.start_date else "unknown",
+            "start_date": s.start_date.isoformat() if s.start_date else None,
+            "end_date": s.end_date.isoformat() if s.end_date else None,
+            "monitoring_enabled": s.monitoring_enabled,
+        }
+        for s in crop_seasons
+    ]
+
+    # Active jobs for this entity
+    active_jobs_count = (
+        db.query(func.count(VegetationJob.id))
+        .filter(
+            VegetationJob.tenant_id == tenant_id,
+            VegetationJob.entity_id == entity_id,
+            VegetationJob.status.in_(["pending", "running"]),
+        )
+        .scalar()
+    ) or 0
+
+    # Recent download jobs that completed but were skipped because of clouds.
+    # Surface this so the UI can tell the user why no layer is showing,
+    # instead of looking like the analysis silently failed.
+    recent_skips_q = (
+        db.query(VegetationJob)
+        .filter(
+            VegetationJob.tenant_id == tenant_id,
+            VegetationJob.entity_id == entity_id,
+            VegetationJob.job_type == "download",
+            VegetationJob.status == "completed",
+        )
+        .order_by(VegetationJob.completed_at.desc())
+        .limit(10)
+        .all()
+    )
+    recent_cloud_skips = [
+        {
+            "job_id": str(j.id),
+            "completed_at": j.completed_at.isoformat() if j.completed_at else None,
+            "scene_id": (j.result or {}).get("scene_id"),
+            "sensing_date": (j.result or {}).get("sensing_date"),
+            "local_cloud_pct": (j.result or {}).get("local_cloud_pct"),
+            "local_cloud_threshold": (j.result or {}).get("local_cloud_threshold"),
+            "message": (j.result or {}).get("message"),
+        }
+        for j in recent_skips_q
+        if (j.result or {}).get("skipped_due_to_clouds")
+    ]
+
+    # Resolve entity name from Orion-LD
+    name = await _resolve_entity_name(entity_id, tenant_id)
+
+    return {
+        "entity_id": entity_id,
+        "name": name,
+        "has_any_data": total_scenes > 0 or active_jobs_count > 0,
+        "available_indices": available_indices,
+        "total_scenes": total_scenes,
+        "date_range": date_range,
+        "latest_ndvi": latest_ndvi,
+        "latest_sensing_date": latest_sensing_date,
+        "active_crop_seasons": active_crop_seasons,
+        "active_jobs_count": active_jobs_count,
+        "recent_cloud_skips": recent_cloud_skips,
+    }
+
+
+def _timeline_key(result: dict) -> Optional[str]:
+    """Identity of one timeline point: the scene UUID when the job has one,
+    otherwise its sensing date. Copernicus (Sentinel Hub) jobs carry no
+    vegetation_scenes row, so the date is their only acquisition identity."""
+    return result.get("scene_id") or result.get("sensing_date")
+
+
+def build_timeline(jobs: List, cloud_by_scene: Dict[str, Optional[str]]) -> List[dict]:
+    """One point per acquisition, oldest first.
+
+    `jobs` must be ordered newest first, so the first job seen for an
+    acquisition is the one kept: a re-run of the same date supersedes older
+    ones. When the caller filtered by index the points are that index's;
+    otherwise they are deduplicated across indices.
+    """
+    points: Dict[str, dict] = {}
+    for job in jobs:
+        result = job.result or {}
+        key = _timeline_key(result)
+        if not key or not result.get("sensing_date"):
+            continue
+        if key in points:
+            continue
+        stats = result.get("statistics") or {}
+        try:
+            mean_f = float(stats["mean"]) if stats.get("mean") is not None else None
+        except (ValueError, TypeError):
+            mean_f = None
+        scene_uuid = result.get("scene_id")
+        cov = cloud_by_scene.get(scene_uuid) if scene_uuid else None
+        points[key] = {
+            "id": scene_uuid or result.get("sensing_date"),
+            "scene_id": scene_uuid,
+            "date": result.get("sensing_date"),
+            "mean_value": mean_f,
+            "local_cloud_pct": cov,
+            "cloud_pct": cov,
+            "raster_path": result.get("raster_path"),
+            "raster_pending": bool(result.get("raster_pending")) and not result.get("raster_path"),
+        }
+    return sorted(points.values(), key=lambda p: p["date"])
+
+
+@router.get("/{entity_id}/scenes/available")
+async def get_available_scenes(
+    entity_id: str,
+    index_type: Optional[str] = Query(None),
+    current_user: dict = Depends(require_auth),
+    db: Session = Depends(get_db_with_tenant)
+):
+    """Timeline metadata (dates with usable data) derived from
+    vegetation_jobs.result.
+
+    Includes Copernicus jobs whose raster is still pending: their statistics
+    are already computed and the raster is materialized on selection (see
+    GET /results/{entity_id}?sensing_date=). Those jobs have no scene_id, so
+    each point carries scene_id (nullable) plus its date as identity.
+    """
+    tenant_id = current_user["tenant_id"]
+
+    base_filters = [
+        VegetationJob.tenant_id == tenant_id,
+        VegetationJob.entity_id == entity_id,
+        VegetationJob.job_type == "calculate_index",
+        VegetationJob.status == "completed",
+        VegetationJob.deleted_at.is_(None),
+        or_(
+            VegetationJob.result["raster_path"].astext.isnot(None),
+            VegetationJob.result["raster_pending"].astext == "true",
+        ),
+    ]
+    if index_type:
+        base_filters.append(VegetationJob.result["index_type"].astext == index_type.upper())
+
+    jobs = (
+        db.query(VegetationJob)
+        .filter(*base_filters)
+        .order_by(VegetationJob.created_at.desc())
+        .limit(2000)
+        .all()
+    )
+
+    # Resolve cloud_coverage from VegetationScene in a single batch query
+    # so the timeline can colour-code overcast scenes without N round trips.
+    scene_uuid_strs = {
+        (j.result or {}).get("scene_id") for j in jobs if (j.result or {}).get("scene_id")
+    }
+    scene_uuids: List[uuid_mod.UUID] = []
+    for s in scene_uuid_strs:
+        try:
+            scene_uuids.append(uuid_mod.UUID(s))
+        except (ValueError, TypeError):
+            continue
+    cloud_by_scene: Dict[str, Optional[str]] = {}
+    if scene_uuids:
+        for sid, cov in (
+            db.query(VegetationScene.id, VegetationScene.cloud_coverage)
+            .filter(
+                VegetationScene.tenant_id == tenant_id,
+                VegetationScene.id.in_(scene_uuids),
+            )
+            .all()
+        ):
+            cloud_by_scene[str(sid)] = cov
+
+    timeline = build_timeline(jobs, cloud_by_scene)
+    return {"timeline": timeline, "count": len(timeline)}

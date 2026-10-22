@@ -1,0 +1,75 @@
+/**
+ * Slot Registration for Vegetation Prime Module
+ * Defines all slots that integrate with the Unified Viewer.
+ * 
+ * All widgets include explicit moduleId for proper host integration.
+ */
+
+// Import UNWRAPPED components (Host's SlotRenderer will wrap with moduleProvider)
+import { VegetationTimelineTrack } from '../components/slots/VegetationTimelineTrack';
+import VegetationLayerControl from '../components/slots/VegetationLayerControl';
+import VegetationLayerToggle from '../components/slots/VegetationLayerToggle';
+import { VegetationLayer } from '../components/slots/VegetationLayer';
+import { VegetationProvider } from '../services/vegetationContext';
+
+// Module identifier - used for all slot widgets
+const MODULE_ID = 'vegetation-prime';
+
+import type { SlotType, SlotWidgetDefinition, ModuleViewerSlots } from '@nekazari/sdk';
+export type { SlotType, SlotWidgetDefinition, ModuleViewerSlots };
+
+/**
+ * Vegetation Prime Slots Configuration
+ * All widgets explicitly declare moduleId for proper provider wrapping.
+ */
+export const vegetationPrimeSlots: ModuleViewerSlots = {
+  'map-layer': [
+    {
+      id: 'vegetation-prime-cesium-layer',
+      moduleId: MODULE_ID,
+      component: 'VegetationLayer',
+      priority: 10,
+      localComponent: VegetationLayer
+    }
+  ],
+  'layer-toggle': [
+    {
+      id: 'vegetation-prime-layer-toggle',
+      moduleId: MODULE_ID,
+      component: 'VegetationLayerToggle',
+      priority: 10,
+      localComponent: VegetationLayerToggle
+    }
+  ],
+  'context-panel': [
+    {
+      id: 'vegetation-prime-layer-control',
+      moduleId: MODULE_ID,
+      component: 'VegetationLayerControl',
+      priority: 10,
+      localComponent: VegetationLayerControl,
+      defaultProps: { visible: true },
+      showWhen: { entityType: ['AgriParcel'] }
+    }
+  ],
+  'timeline-track': [
+    {
+      id: 'vegetation-prime-timeline-track',
+      moduleId: MODULE_ID,
+      component: 'VegetationTimelineTrack',
+      priority: 10,
+      localComponent: VegetationTimelineTrack,
+      showWhen: { entityType: ['AgriParcel', 'https://saref.etsi.org/saref4agri/AgriParcel'] }
+    }
+  ],
+  'entity-tree': [],
+
+  // Host's SlotRenderer wraps all widgets with this provider
+  moduleProvider: VegetationProvider
+};
+
+/**
+ * Export as viewerSlots for host integration
+ */
+export const viewerSlots = vegetationPrimeSlots;
+export default vegetationPrimeSlots;

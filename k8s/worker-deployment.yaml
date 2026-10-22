@@ -1,0 +1,156 @@
+# =============================================================================
+# Vegetation Prime Celery Worker Deployment
+# =============================================================================
+# Celery worker for processing asynchronous vegetation analysis tasks
+# =============================================================================
+
+---
+# Deployment: Vegetation Prime Worker
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vegetation-prime-worker
+  namespace: nekazari
+  labels:
+    app: vegetation-prime-worker
+    component: worker
+    module: vegetation-prime
+    nkz-os.org/profile: addon
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vegetation-prime-worker
+  template:
+    metadata:
+      labels:
+        app: vegetation-prime-worker
+        component: worker
+        module: vegetation-prime
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      tolerations:
+        - key: "node.kubernetes.io/disk-pressure"
+          operator: "Exists"
+          effect: "NoSchedule"
+      containers:
+        - name: worker
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop: ["ALL"]
+          image: ghcr.io/nkz-os/vegetation-health-nkz/vegetation-prime-api:b4434f0398d41f3c0944ba270a34caf2593fee40
+          imagePullPolicy: Always
+          # concurrency=1: one task per pod avoids OOM with heavy Sentinel-2 scenes.
+          # Scale horizontally (increase replicas) for more throughput.
+          # --max-memory-per-child 2GB recycles workers before cgroup OOM.
+          # Sen2Res (super-resolution 20m→10m): code default off; enabled here
+          # via env SEN2RES_ENABLED=true (see env below). Requires 8Gi+ memory.
+          command:
+            [
+              "celery",
+              "-A",
+              "app.celery_app",
+              "worker",
+              "--loglevel=info",
+              "--concurrency=1",
+              "--max-memory-per-child",
+              "2000000",
+            ]
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: postgresql-secret
+                  key: postgres-url
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-secret
+                  key: password
+            - name: REQUIRE_HMAC_SIGNATURE
+              value: "true"
+            - name: HMAC_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: jwt-secret
+                  key: secret
+            - name: CELERY_BROKER_URL
+              value: "redis://:$(REDIS_PASSWORD)@redis-service:6379/0"
+            - name: CELERY_RESULT_BACKEND
+              value: "redis://:$(REDIS_PASSWORD)@redis-service:6379/0"
+            - name: REDIS_CACHE_URL
+              value: "redis://:$(REDIS_PASSWORD)@redis-service:6379/1"
+            - name: FIWARE_CONTEXT_BROKER_URL
+              value: "http://orion-ld-service:1026"
+            - name: VEGETATION_COG_BUCKET
+              value: "vegetation-prime-global"
+            - name: S3_BUCKET
+              value: "vegetation-prime-global"
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: minio-secret
+                  key: root-user
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: minio-secret
+                  key: root-password
+            - name: S3_ENDPOINT_URL
+              value: "http://minio-service:9000"
+            - name: COPERNICUS_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: vegetation-prime-secrets
+                  key: copernicus-client-id
+                  optional: true
+            - name: COPERNICUS_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: vegetation-prime-secrets
+                  key: copernicus-client-secret
+                  optional: true
+            - name: CDSE_S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: vegetation-prime-secrets
+                  key: cdse-s3-access-key
+                  optional: true
+            - name: CDSE_S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: vegetation-prime-secrets
+                  key: cdse-s3-secret-key
+                  optional: true
+            - name: PLATFORM_DATABASE_NAME
+              value: "nekazari"
+            - name: LOG_LEVEL
+              value: "INFO"
+            - name: SQL_ECHO
+              value: "false"
+            - name: LOCAL_CLOUD_THRESHOLD_PCT
+              value: "50"
+            # Sen2Res super-resolution ON (quality: red-edge/SWIR indices at 10m).
+            # Code default is 'false'; declared here so the setting is durable
+            # (a manual env override would be dropped on the next apply).
+            - name: SEN2RES_ENABLED
+              value: "true"
+          resources:
+            requests:
+              memory: "2Gi"
+              cpu: "500m"
+              ephemeral-storage: "4Gi"
+            limits:
+              memory: "8Gi"
+              cpu: "2"
+              # Guardrail: Sen2Res intermediates live in pod /tmp. If a runaway
+              # job exceeds this, the kubelet evicts THIS pod cleanly instead of
+              # filling the node disk (CrashLoop). One scene + Sen2Res fits well
+              # under 20Gi at concurrency=1.
+              ephemeral-storage: "20Gi"

@@ -1,0 +1,100 @@
+# =============================================================================
+# Egress NetworkPolicy for Vegetation Prime — Copernicus Data Space access
+# =============================================================================
+# Allows the API and worker pods to reach the Copernicus Data Space Ecosystem
+# endpoints (STAC API, identity provider, S3 data store).
+#
+# The namespace-level allow-same-namespace policy blocks all HTTPS egress by
+# default. This policy follows the same pattern used by weather, elevation,
+# soil, and bioorchestrator modules.
+# =============================================================================
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: vegetation-api-external-apis
+  namespace: nekazari
+  labels:
+    app: nekazari
+    app.kubernetes.io/part-of: vegetation-prime
+    policy-type: data-ingestion
+spec:
+  podSelector:
+    matchLabels:
+      app: vegetation-prime-api
+  policyTypes:
+    - Egress
+  egress:
+    # Allow DNS resolution (required to resolve Copernicus hostnames)
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+      to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+    # Allow HTTPS to Copernicus Data Space Ecosystem
+    # - stac.dataspace.copernicus.eu  (STAC search)
+    # - identity.dataspace.copernicus.eu (OAuth tokens)
+    # - eodata.dataspace.copernicus.eu (S3 data downloads)
+    # IP-based allowlist (same pattern as weather/elevation/soil modules)
+    - ports:
+        - port: 443
+          protocol: TCP
+      to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 169.254.0.0/16
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: vegetation-worker-external-apis
+  namespace: nekazari
+  labels:
+    app: nekazari
+    app.kubernetes.io/part-of: vegetation-prime
+    policy-type: data-ingestion
+spec:
+  podSelector:
+    matchLabels:
+      app: vegetation-prime-worker
+  policyTypes:
+    - Egress
+  egress:
+    # Allow DNS resolution
+    - ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+      to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+    # Allow HTTPS to Copernicus Data Space Ecosystem (S3 downloads + STAC)
+    - ports:
+        - port: 443
+          protocol: TCP
+      to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 169.254.0.0/16

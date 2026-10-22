@@ -1,0 +1,162 @@
+import React from 'react';
+import { X, Info, Beaker, Target, AlertTriangle, Leaf } from 'lucide-react';
+import { useTranslation } from '@nekazari/sdk';
+import { getIndexInfo } from '../../data/indexInfo';
+
+// Continuous vigour scale. Literal hex, not Tailwind classes: the host's build
+// never scans module sources, so only bg-red-500 and bg-green-500 happened to be
+// generated and the three middle steps rendered with no colour at all.
+const VIGOUR_SCALE: Record<string, string> = {
+    veryLow: '#ef4444',
+    low: '#fb923c',
+    medium: '#facc15',
+    high: '#84cc16',
+    veryHigh: '#22c55e',
+};
+
+
+interface IndexInfoModalProps {
+    indexType: string;
+    isOpen: boolean;
+    onClose: () => void;
+}
+
+export const IndexInfoModal: React.FC<IndexInfoModalProps> = ({
+    indexType,
+    isOpen,
+    onClose
+}) => {
+    const { t } = useTranslation();
+    if (!isOpen) return null;
+
+    const info = getIndexInfo(indexType);
+    // Translated text per field, the English catalogue as fallback.
+    const k = info ? `indexInfo.${info.id.toLowerCase()}` : '';
+    const tr = (field: string, fallback: string) => t(`${k}.${field}`, { defaultValue: fallback }) as string;
+    const trList = (field: string, fallback: string[] | string): string[] => {
+        const v = t(`${k}.${field}`, { returnObjects: true, defaultValue: fallback }) as unknown;
+        if (Array.isArray(v)) return v.map(String);
+        return typeof v === 'string' && v !== `${k}.${field}` ? [v] : ([] as string[]).concat(fallback);
+    };
+
+    if (!info) {
+        return (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
+                <div className="bg-white rounded-xl p-6 max-w-md">
+                    <p className="text-slate-600">{t('indexInfo.unavailable')}</p>
+                    <button onClick={onClose} className="mt-4 px-4 py-2 bg-slate-200 rounded-lg">{t('indexInfo.close')}</button>
+                </div>
+            </div>
+        );
+    }
+
+    return (
+        <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/70"
+            onClick={(e) => e.target === e.currentTarget && onClose()}
+        >
+            <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+                {/* Header */}
+                <div
+                    className="px-6 py-4 border-b border-slate-200 flex items-center justify-between"
+                    style={{ backgroundColor: `${info.color}15` }}
+                >
+                    <div className="flex items-center gap-3">
+                        <div
+                            className="p-2 rounded-lg"
+                            style={{ backgroundColor: `${info.color}25`, color: info.color }}
+                        >
+                            <Leaf className="w-6 h-6" />
+                        </div>
+                        <div>
+                            <h2 className="text-xl font-bold text-slate-900">{info.name}</h2>
+                            <p className="text-sm text-slate-600">{tr('fullName', info.fullName)}</p>
+                        </div>
+                    </div>
+                    <button
+                        onClick={onClose}
+                        className="p-2 hover:bg-slate-100 rounded-lg transition-colors"
+                    >
+                        <X className="w-5 h-5 text-slate-500" />
+                    </button>
+                </div>
+
+                {/* Content */}
+                <div className="p-6 overflow-y-auto max-h-[calc(90vh-80px)] space-y-6">
+                    {/* Description */}
+                    <div>
+                        <p className="text-slate-700 leading-relaxed">{tr('description', info.description)}</p>
+                    </div>
+
+                    {/* Formula */}
+                    <div className="bg-slate-50 rounded-lg p-4">
+                        <div className="flex items-center gap-2 mb-2">
+                            <Beaker className="w-4 h-4 text-slate-500" />
+                            <h3 className="font-semibold text-slate-800">{t('indexInfo.formula')}</h3>
+                        </div>
+                        <code className="text-sm font-mono bg-white px-3 py-2 rounded border border-slate-200 block">
+                            {info.formula}
+                        </code>
+                    </div>
+
+                    {/* Interpretation Scale */}
+                    <div>
+                        <div className="flex items-center gap-2 mb-3">
+                            <Info className="w-4 h-4 text-slate-500" />
+                            <h3 className="font-semibold text-slate-800">{t('indexInfo.interpretation')}</h3>
+                        </div>
+                        <div className="space-y-2">
+                            {Object.entries(info.interpretation).map(([key, { range, meaning }]) => (
+                                <div
+                                    key={key}
+                                    className="flex items-center gap-3 p-2 rounded-lg bg-slate-50"
+                                >
+                                    <div
+                                        className="w-3 h-3 rounded-full"
+                                        style={{ backgroundColor: VIGOUR_SCALE[key] ?? VIGOUR_SCALE.veryHigh }}
+                                    />
+                                    <span className="font-mono text-xs text-slate-600 w-24">{range}</span>
+                                    <span className="text-sm text-slate-700">{tr(`interpretation.${key}`, meaning)}</span>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* Best For */}
+                    <div>
+                        <div className="flex items-center gap-2 mb-3">
+                            <Target className="w-4 h-4 text-slate-500" />
+                            <h3 className="font-semibold text-slate-800">{t('indexInfo.bestFor')}</h3>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                            {trList('bestFor', info.bestFor).map((use, i) => (
+                                <span
+                                    key={i}
+                                    className="px-3 py-1.5 text-sm rounded-full border"
+                                    style={{
+                                        backgroundColor: `${info.color}10`,
+                                        borderColor: `${info.color}30`,
+                                        color: info.color
+                                    }}
+                                >
+                                    {use}
+                                </span>
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* Limitations */}
+                    <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+                        <div className="flex items-start gap-2">
+                            <AlertTriangle className="w-4 h-4 text-amber-600 mt-0.5" />
+                            <div>
+                                <h3 className="font-semibold text-amber-800 mb-1">{t('indexInfo.limitations')}</h3>
+                                <p className="text-sm text-amber-700">{trList('limitations', info.limitations).join(' · ')}</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+};

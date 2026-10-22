@@ -1,0 +1,245 @@
+"""SentinelHubEngine — primary engine using Sentinel Hub Statistical + Process APIs.
+
+Produces identical EOProduct outputs as LocalProcessingEngine but without
+downloading raw Sentinel-2 bands locally.
+"""
+
+import logging
+import math
+from datetime import date, datetime, timedelta
+
+from .base import BaseVegetationEngine, IndexResult, EngineHealth, EngineDegradedException
+from app.services.sentinel_hub_client import (
+    SentinelHubClient,
+    SentinelHubError,
+    SentinelHubAuthError,
+    SentinelHubRateLimitError,
+    SentinelHubTimeoutError,
+    SentinelHubServerError,
+)
+from app.services.evalscripts import MOISTURE_INDEX, MULTI_INDEX, NDVI_COLOR
+
+logger = logging.getLogger(__name__)
+
+# Map engine index_type → evalscript output band name
+_INDEX_OUTPUT_MAP = {
+    "NDVI": "ndvi",
+    "EVI": "evi",
+    "SAVI": "savi",
+    "OSAVI": "osavi",
+    "GNDVI": "gndvi",
+    "NDRE": "ndre",
+    "NDMI": "ndmi",
+}
+
+# Indices served by the NDMI-only script; the rest come from MULTI_INDEX.
+_MOISTURE_INDICES = {"NDMI"}
+
+
+class SentinelHubEngine(BaseVegetationEngine):
+    """Primary vegetation index engine — zero-download via Sentinel Hub API."""
+
+    def __init__(self, client_id: str = "", client_secret: str = ""):
+        self._client = SentinelHubClient(
+            client_id=client_id,
+            client_secret=client_secret,
+        )
+
+    @property
+    def engine_name(self) -> str:
+        return "sentinel_hub"
+
+    def set_credentials(self, client_id: str, client_secret: str) -> None:
+        """Update OAuth2 credentials (e.g., tenant BYOK switch)."""
+        self._client.set_credentials(client_id, client_secret)
+
+    async def compute_indices(
+        self,
+        tenant_id: str,
+        parcel_id: str,
+        parcel_geometry: dict,
+        date_range: tuple[date, date],
+        index_types: list[str],
+        cloud_cover_max: float = 50.0,
+        formula: str | None = None,
+        formula_id: str | None = None,
+    ) -> list[IndexResult]:
+        """Compute vegetation indices via Statistical API.
+
+        Uses the multi-index evalscript to compute the optical indices in a
+        single API call per 5-day aggregation window; NDMI comes from its own
+        script, requested only when asked for, so the others never pay for B11.
+
+        `formula`/`formula_id` are accepted for interface parity but ignored:
+        the selector only routes eligible, non-custom indices here.
+        """
+        logger.info(
+            "Computing indices for parcel=%s tenant=%s types=%s cloud_max=%s",
+            parcel_id, tenant_id, index_types, cloud_cover_max,
+        )
+        requested = {i.upper() for i in index_types}
+        requests = []
+        if requested - _MOISTURE_INDICES:
+            requests.append((MULTI_INDEX, ["B02", "B03", "B04", "B05", "B08", "B8A", "SCL"]))
+        if requested & _MOISTURE_INDICES:
+            requests.append((MOISTURE_INDEX, ["B8A", "B11", "SCL"]))
+
+        intervals = []
+        for evalscript, bands in requests:
+            raw = await self._statistical(parcel_geometry, evalscript, date_range, bands, cloud_cover_max)
+            intervals.extend(raw.get("data", []))
+
+        return self._parse_results(intervals, index_types)
+
+    async def _statistical(self, parcel_geometry, evalscript, date_range, bands, cloud_cover_max) -> dict:
+        try:
+            return await self._client.statistical(
+                geometry=parcel_geometry,
+                evalscript=evalscript,
+                date_range=date_range,
+                bands=bands,
+                cloud_cover_max=cloud_cover_max,
+            )
+        except SentinelHubAuthError as e:
+            raise EngineDegradedException(str(e), retry_after_seconds=3600) from e
+        except SentinelHubRateLimitError as e:
+            raise EngineDegradedException(str(e), retry_after_seconds=300) from e
+        except SentinelHubTimeoutError as e:
+            raise EngineDegradedException(str(e), retry_after_seconds=0) from e
+        except SentinelHubServerError as e:
+            raise EngineDegradedException(str(e), retry_after_seconds=0) from e
+        except SentinelHubError as e:
+            logger.error("Sentinel Hub Statistical API failed: %s", e)
+            raise EngineDegradedException(str(e)) from e
+
+    def _parse_results(self, intervals: list, index_types: list[str]) -> list[IndexResult]:
+        results: list[IndexResult] = []
+        for interval in intervals:
+            outputs = interval.get("outputs", {})
+            interval_from = interval.get("interval", {}).get("from", "")
+            sensing_date = self._parse_interval_midpoint(interval_from)
+
+            for idx_type in index_types:
+                output_key = _INDEX_OUTPUT_MAP.get(idx_type.upper())
+                if not output_key:
+                    logger.warning("Unknown index type %s — skipped", idx_type)
+                    continue
+
+                band_data = outputs.get(output_key, {}).get("bands", {}).get("B0", {})
+                stats = band_data.get("stats", {})
+                if not stats:
+                    continue
+
+                # SH semantics: sampleCount = total pixels in the region grid,
+                # noDataCount = those masked out (dataMask=0). Valid = the diff.
+                sample_count = int(stats.get("sampleCount", 0))
+                no_data = int(stats.get("noDataCount", 0))
+                valid = sample_count - no_data
+                if valid <= 0:
+                    # Fully masked interval (cloud / no coverage): SH returns the
+                    # string "NaN" for mean/min/max — skip, it is not an observation.
+                    continue
+
+                try:
+                    mean_v = float(stats.get("mean"))
+                except (TypeError, ValueError):
+                    continue
+                if mean_v != mean_v:  # NaN guard
+                    continue
+
+                results.append(IndexResult(
+                    index_type=idx_type.upper(),
+                    sensing_date=sensing_date,
+                    mean=mean_v,
+                    std=float(stats.get("stDev", 0)),
+                    min=float(stats.get("min", 0)),
+                    max=float(stats.get("max", 0)),
+                    p10=float(stats.get("percentiles", {}).get("10", 0)),
+                    p90=float(stats.get("percentiles", {}).get("90", 0)),
+                    valid_pixels=valid,
+                    total_pixels=sample_count,
+                    data_fidelity="sentinel_hub",
+                ))
+
+        return results
+
+    async def get_tile(
+        self,
+        tenant_id: str,
+        index_type: str,
+        z: int,
+        x: int,
+        y: int,
+        date_str: str | None = None,
+        color_ramp: str = "agronomic",
+    ) -> bytes:
+        """Render a visual tile via Process API.
+
+        Currently only NDVI color rendering is supported. Additional
+        index visualizations (EVI, SAVI color ramps) can be added as
+        separate evalscripts.
+        """
+        if index_type.upper() != "NDVI":
+            raise NotImplementedError(
+                f"Tile rendering only supports NDVI; got {index_type}"
+            )
+        if color_ramp != "agronomic":
+            raise NotImplementedError(
+                f"Only agronomic color ramp supported; got {color_ramp}"
+            )
+        bbox = _tile_to_bbox(x, y, z)
+
+        try:
+            return await self._client.process(
+                bbox=bbox,
+                evalscript=NDVI_COLOR,
+                width=256,
+                height=256,
+                date_str=date_str,
+            )
+        except SentinelHubAuthError as e:
+            raise EngineDegradedException(str(e), retry_after_seconds=3600) from e
+        except SentinelHubRateLimitError as e:
+            raise EngineDegradedException(str(e), retry_after_seconds=300) from e
+        except SentinelHubTimeoutError as e:
+            raise EngineDegradedException(str(e), retry_after_seconds=0) from e
+        except SentinelHubError as e:
+            logger.error("Sentinel Hub Process API failed for tile %d/%d/%d: %s", z, x, y, e)
+            raise EngineDegradedException(str(e)) from e
+
+    async def health_check(self) -> EngineHealth:
+        """Check engine health by attempting token refresh."""
+        try:
+            await self._client.get_token()
+            return EngineHealth(status="ok", reason=None)
+        except SentinelHubError as e:
+            return EngineHealth(status="unavailable", reason=str(e))
+
+    async def close(self) -> None:
+        """Clean up underlying httpx client connections."""
+        await self._client.close()
+
+    @staticmethod
+    def _parse_interval_midpoint(interval_from: str) -> date:
+        """Extract midpoint date from a 5-day aggregation interval.
+
+        interval_from = "2026-07-15T00:00:00Z" → date(2026, 7, 17)
+        """
+        try:
+            dt = datetime.fromisoformat(interval_from.replace("Z", "+00:00"))
+            return (dt + timedelta(days=2)).date()
+        except (ValueError, TypeError):
+            logger.warning(
+                "Could not parse interval_from='%s', using today", interval_from
+            )
+            return date.today()
+
+
+def _tile_to_bbox(x: int, y: int, z: int) -> list[float]:
+    """Convert TMS tile (x, y, z) to EPSG:4326 bbox [minLon, minLat, maxLon, maxLat]."""
+    n = 2.0 ** z
+    lon_min = x / n * 360.0 - 180.0
+    lon_max = (x + 1) / n * 360.0 - 180.0
+    lat_min = math.degrees(math.atan(math.sinh(math.pi * (1 - 2 * (y + 1) / n))))
+    lat_max = math.degrees(math.atan(math.sinh(math.pi * (1 - 2 * y / n))))
+    return [lon_min, lat_min, lon_max, lat_max]

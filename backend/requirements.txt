@@ -1,0 +1,73 @@
+# Vegetation Prime Backend Dependencies
+
+# FastAPI and web framework
+fastapi>=0.115.0
+uvicorn[standard]==0.24.0
+python-multipart==0.0.6
+pydantic==2.5.0
+pydantic-settings==2.1.0
+
+# Database
+sqlalchemy==2.0.23
+psycopg2-binary==2.9.9
+geoalchemy2==0.14.2
+alembic==1.12.1
+
+# Celery and task queue
+celery==5.3.4
+redis==5.0.1
+flower==2.0.1  # Celery monitoring
+
+# Note: redis is used for both Celery (db 0) and tile cache (db 1)
+
+# Platform SDK — FIWARE NGSI-LD client
+nkz-platform-sdk>=0.8.2
+
+# Geospatial processing
+numpy>=1.26.0
+shapely==2.0.2
+pyproj==3.6.1  # For accurate area calculations
+# Note: rasterio requires system libraries (installed in Dockerfile)
+# fiona and geopandas removed - not used in code, only rasterio is needed
+rasterio==1.3.9; sys_platform != "win32"
+
+# Sentinel-2 data access
+pystac-client==0.7.0
+sentinelsat==1.2.1
+
+# Image processing
+Pillow>=10.2.0,<11
+
+# Apache Arrow — required for DataHub timeseries adapter
+pyarrow==15.0.2
+
+# Storage (S3/MinIO)
+boto3==1.29.7
+botocore==1.32.7
+
+# Formula evaluation (safe)
+simpleeval==0.9.13
+
+# HTTP client
+httpx>=0.25.2
+requests>=2.32.0,<3
+
+# Encryption (Fernet) for BYOK credential storage
+cryptography>=41.0.0
+
+# Utilities
+python-dotenv==1.0.0
+python-dateutil==2.8.2
+
+# Logging
+structlog==23.2.0
+
+# Testing (optional)
+pytest==7.4.3
+pytest-asyncio==0.21.1
+pytest-cov==4.1.0
+rio-tiler>=6.0.0
+rio-cogeo>=5.0.0
+rasterstats==0.19.0
+scipy==1.11.4
+slowapi

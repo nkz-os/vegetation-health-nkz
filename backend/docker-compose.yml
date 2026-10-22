@@ -1,0 +1,118 @@
+version: '3.8'
+
+services:
+  # Redis for Celery and tile cache
+  redis:
+    image: redis:7-alpine
+    container_name: vegetation-prime-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - vegetation-network
+
+  # FastAPI backend
+  backend:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    container_name: vegetation-prime-api
+    ports:
+      - "8000:8000"
+    environment:
+      # Database (connect to host DB or uncomment postgres service below)
+      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@host.docker.internal:5432/nekazari}
+      
+      # Redis (for Celery and cache)
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      REDIS_CACHE_URL: redis://redis:6379/1
+      
+      # Authentication
+      JWT_ISSUER: ${JWT_ISSUER:-https://auth.nekazari.com/realms/nekazari}
+      JWKS_URL: ${JWKS_URL:-https://auth.nekazari.com/realms/nekazari/.well-known/jwks.json}
+      
+      # Storage (S3/MinIO)
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-}
+      S3_BUCKET: ${S3_BUCKET:-vegetation-prime}
+      
+      # Logging
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./app:/app/app
+      - ./migrations:/app/migrations
+    networks:
+      - vegetation-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Celery worker (same image as backend, different command)
+  worker:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    container_name: vegetation-prime-worker
+    command: celery -A app.celery_app worker --loglevel=info --concurrency=4
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@host.docker.internal:5432/nekazari}
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      REDIS_CACHE_URL: redis://redis:6379/1
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      S3_ENDPOINT_URL: ${S3_ENDPOINT_URL:-}
+      S3_BUCKET: ${S3_BUCKET:-vegetation-prime}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    depends_on:
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    volumes:
+      - ./app:/app/app
+      - ./migrations:/app/migrations
+    networks:
+      - vegetation-network
+
+  # Optional: PostgreSQL (uncomment if not using host DB)
+  # postgres:
+  #   image: postgis/postgis:15-3.4
+  #   container_name: vegetation-prime-db
+  #   environment:
+  #     POSTGRES_DB: nekazari
+  #     POSTGRES_USER: postgres
+  #     POSTGRES_PASSWORD: postgres
+  #   ports:
+  #     - "5432:5432"
+  #   volumes:
+  #     - postgres_data:/var/lib/postgresql/data
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "pg_isready -U postgres"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 5
+  #   networks:
+  #     - vegetation-network
+
+networks:
+  vegetation-network:
+    driver: bridge
+
+volumes:
+  redis_data:
+  # postgres_data:  # Uncomment if using local postgres
