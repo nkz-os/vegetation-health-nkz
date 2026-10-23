@@ -78,7 +78,7 @@ class TestCheckAndReserve:
             call.args[0] for call in conn.cursor.return_value.execute.call_args_list
         ]
         assert len(executed_sql) == 1
-        assert "tenants" in executed_sql[0]
+        assert "FROM module_tenant_plan" in executed_sql[0]
         conn.commit.assert_not_called()
 
     def test_limit_none_always_reserves(self, quota):

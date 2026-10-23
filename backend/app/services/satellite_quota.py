@@ -37,7 +37,7 @@ class SatelliteQuota:
         return date(today.year, today.month, 1)
 
     def _get_limit(self, tenant_id: str) -> int | None:
-        """Read the tenant's monthly cap from `tenants.max_satellite_computations`.
+        """Read the tenant's monthly cap from `module_tenant_plan.max_satellite_computations`.
 
         `None` = unlimited. Also `None` if the tenant row is missing (fail
         open — never block on an unresolvable tenant).
@@ -53,7 +53,7 @@ class SatelliteQuota:
             cur = conn.cursor()
             try:
                 cur.execute(
-                    "SELECT max_satellite_computations FROM tenants WHERE tenant_id = %s",
+                    "SELECT max_satellite_computations FROM module_tenant_plan WHERE tenant_id = %s",
                     (tenant_id,),
                 )
                 row = cur.fetchone()
