@@ -211,7 +211,46 @@ class SetupParcelRequest(BaseModel):
     parcel_id: str
     tenant_id: str
     parcel_name: str = ""
-    action: str = "activate"  # "activate" | "deactivate"
+    action: str = "activate"  # "activate" | "deactivate" | "teardown"
+
+
+async def _fetch_parcel_location(
+    parcel_id: str, tenant_id: str
+) -> tuple[dict | None, float | None, float | None]:
+    """Fetch AgriParcel geometry from Orion-LD, return (geojson, lat, lon)."""
+    try:
+        from nkz_platform_sdk import SyncOrionClient
+        orion = SyncOrionClient(tenant_id)
+        from app.services.fiware_integration import orion_get_entity
+        entity = orion_get_entity(orion, parcel_id)
+        if entity is None:
+            logger.warning("Parcel %s not found in Orion", parcel_id)
+            return None, None, None
+        location = entity.get("location")
+        if isinstance(location, dict):
+            location = location.get("value") or location
+        if not isinstance(location, dict) or "coordinates" not in location:
+            return None, None, None
+        from shapely.geometry import shape
+        geom = shape(location)
+        centroid = geom.centroid
+        return location, centroid.y, centroid.x
+    except Exception as exc:
+        logger.warning("Failed to resolve parcel location: %s", exc)
+        return None, None, None
+
+
+def _enqueue_lst(tenant_id: str, parcel_id: str, geometry: dict, lat: float, lon: float) -> None:
+    """Queue the Landsat and CLMS land surface temperature tasks for one parcel."""
+    from app.tasks.lst_tasks import process_parcel_lst_task, process_parcel_clms_lst_task
+    for task in (process_parcel_lst_task, process_parcel_clms_lst_task):
+        task.delay(
+            tenant_id=tenant_id,
+            parcel_id=parcel_id,
+            latitude=lat,
+            longitude=lon,
+            geometry_geojson=geometry,
+        )
 
 
 @router.post("/api/internal/setup-parcel", status_code=201)
@@ -219,16 +258,15 @@ async def setup_parcel(request: Request, body: SetupParcelRequest):
     """Internal endpoint called by entity-manager on parcel activation.
 
     Validates X-Internal-Service-Secret (defense-in-depth, primary auth is
-    api-gateway OIDC). Activation is a no-op: vegetation-health has no
-    notification-driven pipeline, and the previous EOProduct subscription
-    targeted /api/vegetation/webhooks/fiware — a route that was never
-    implemented — so it only delivered 404s to a nonexistent receiver.
+    api-gateway OIDC). Activation queues the first land surface temperature
+    for the parcel; the weekly beat keeps it fresh for monitored parcels.
+    Deactivation and teardown keep the parcel's data as is.
     """
     secret = request.headers.get("X-Internal-Service-Secret", "")
     if not INTERNAL_SECRET or not hmac.compare_digest(secret, INTERNAL_SECRET):
         logger.warning("Unauthorized internal setup-parcel call from %s", request.client)
         raise HTTPException(status_code=401, detail="Unauthorized")
-    if body.action not in ("activate", "deactivate"):
+    if body.action not in ("activate", "deactivate", "teardown"):
         raise HTTPException(status_code=400, detail="Invalid action")
 
     parcel_urn = body.parcel_id
@@ -238,5 +276,18 @@ async def setup_parcel(request: Request, body: SetupParcelRequest):
     if body.action == "deactivate":
         logger.info("Deactivated vegetation-health for parcel %s", parcel_urn)
         return {"message": "deactivated", "parcel_id": body.parcel_id}
+    if body.action == "teardown":
+        logger.info("Teardown of vegetation-health for parcel %s", parcel_urn)
+        return {"message": "torn_down", "parcel_id": body.parcel_id}
 
-    return {"message": "activated", "parcel_id": body.parcel_id}
+    geometry, lat, lon = await _fetch_parcel_location(parcel_urn, body.tenant_id)
+    lst_enqueued = False
+    if geometry and lat is not None and lon is not None:
+        try:
+            _enqueue_lst(body.tenant_id, parcel_urn, geometry, lat, lon)
+            lst_enqueued = True
+        except Exception as exc:
+            logger.warning("LST enqueue failed for %s: %s", parcel_urn, exc)
+    else:
+        logger.warning("No parcel geometry for %s: LST not queued", parcel_urn)
+    return {"message": "activated", "parcel_id": body.parcel_id, "lst_enqueued": lst_enqueued}
