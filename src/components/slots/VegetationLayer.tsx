@@ -14,6 +14,7 @@ import { createPortal } from 'react-dom';
 import { useViewerOptional } from '@nekazari/sdk';
 import { useVegetationContext } from '../../services/vegetationContext';
 import { useVegetationApi } from '../../services/api';
+import { API_ORIGIN } from '../../services/apiOrigin';
 
 export const VegetationLayer: React.FC = () => {
   const viewerCtx = useViewerOptional();
@@ -132,12 +133,17 @@ export const VegetationLayer: React.FC = () => {
 
     // VRA_ZONES branch — keep the existing behavior verbatim
     if (selectedIndex === 'VRA_ZONES' && selectedEntityId) {
-      const geoJsonUrl = `/api/vegetation/jobs/zoning/${encodeURIComponent(selectedEntityId)}/geojson`;
-      Cesium.GeoJsonDataSource.load(geoJsonUrl, {
-        stroke: Cesium.Color.BLACK,
-        fill: Cesium.Color.BLUE.withAlpha(0.5),
-        strokeWidth: 3,
-      })
+      const geoJsonUrl = `${API_ORIGIN}/api/vegetation/jobs/zoning/${encodeURIComponent(selectedEntityId)}/geojson`;
+      fetch(geoJsonUrl, { credentials: 'include' })
+        .then(r => {
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          return r.json();
+        })
+        .then((geojson: any) => Cesium.GeoJsonDataSource.load(geojson, {
+          stroke: Cesium.Color.BLACK,
+          fill: Cesium.Color.BLUE.withAlpha(0.5),
+          strokeWidth: 3,
+        }))
         .then((dataSource: any) => {
           if (viewer.isDestroyed()) return;
           const entities = dataSource.entities.values;
@@ -169,7 +175,7 @@ export const VegetationLayer: React.FC = () => {
     const index = selectedIndex ?? (layerScope === 'all' ? 'NDVI' : null);
     if (!layerVisible || !index) return;
 
-    const apiBase = window.location.origin;
+    const apiBase = API_ORIGIN;
 
     const addImagery = (
       rasterPath: string | null,
@@ -217,7 +223,7 @@ export const VegetationLayer: React.FC = () => {
       if (bounds && minzoom != null && maxzoom != null) {
         mountWithBounds(bounds, minzoom, maxzoom);
       } else {
-        fetch(boundsUrl)
+        fetch(boundsUrl, { credentials: 'include' })
           .then(r => r.ok ? r.json() : null)
           .then(data => {
             if (data?.bounds) mountWithBounds(data.bounds, data.minzoom ?? 10, data.maxzoom ?? 18);

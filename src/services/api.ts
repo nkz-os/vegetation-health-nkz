@@ -20,10 +20,11 @@ import {
   EntityIndexResult,
   CropSeason,
 } from '../types';
+import { API_ORIGIN } from './apiOrigin';
 
 /**
  * API Client for Vegetation Prime Backend.
- * Uses relative /api/vegetation; platform exposes this path on frontend host per EXTERNAL_MODULE_INSTALLATION.
+ * Calls go to the platform API origin: the session cookie only travels to the API host.
  */
 export class VegetationApiClient {
   private client: AxiosInstance;
@@ -32,7 +33,7 @@ export class VegetationApiClient {
 
   constructor(
     getTenantId: () => string | undefined,
-    baseUrl: string = '/api/vegetation'
+    baseUrl: string = `${API_ORIGIN}/api/vegetation`
   ) {
     this.getTenantId = getTenantId;
 
@@ -47,13 +48,11 @@ export class VegetationApiClient {
     // Separate client for Orion-LD queries (different base URL)
     // Must include @context Link header to avoid false-zero (Incident 2026-06-16)
     // The platform @context lives next to the API; VITE_CONTEXT_URL overrides it.
-    const apiOrigin: string =
-      ((window as any).__ENV__?.VITE_API_URL || (import.meta as any).env?.VITE_API_URL || '').replace(/\/$/, '');
     const contextUrl: string =
       (window as any).__ENV__?.VITE_CONTEXT_URL || (import.meta as any).env?.VITE_CONTEXT_URL ||
-      (apiOrigin ? `${apiOrigin}/ngsi-ld-context.json` : '');
+      (API_ORIGIN ? `${API_ORIGIN}/ngsi-ld-context.json` : '');
     this.orionClient = axios.create({
-      baseURL: '/',
+      baseURL: `${API_ORIGIN}/`,
       withCredentials: true,
       headers: {
         'Accept': 'application/json',
@@ -884,13 +883,11 @@ const getTenantId = (): string | undefined => {
   return undefined;
 };
 
-// IMPORTANT: Always use relative path. The frontend domain
-// has /api/vegetation routed to vegetation-prime-api via ingress.
-// Using the host's VITE_API_URL (the API host) would be cross-origin
-// and the httpOnly cookie won't be sent → 401 on every request.
+// The session cookie is host-only on the API host: a relative call on the
+// frontend host carries no credentials and the gateway answers 401.
 export function useVegetationApi(): VegetationApiClient {
   return useMemo(
-    () => new VegetationApiClient(getTenantId, '/api/vegetation'),
+    () => new VegetationApiClient(getTenantId, `${API_ORIGIN}/api/vegetation`),
     []
   );
 }
