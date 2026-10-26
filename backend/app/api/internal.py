@@ -19,7 +19,7 @@ import hmac
 import io
 import logging
 import os
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import List, Optional
 
 import pyarrow as pa
@@ -30,9 +30,9 @@ from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.database import get_db_with_tenant
+from app.database import SessionLocal, get_db_with_tenant
 from app.middleware.auth import require_auth, get_tenant_id
-from app.models import VegetationIndexCache, VegetationScene
+from app.models import VegetationIndexCache, VegetationScene, VegetationSubscription
 
 logger = logging.getLogger(__name__)
 
@@ -240,6 +240,69 @@ async def _fetch_parcel_location(
         return None, None, None
 
 
+# The beat's `process_subscriptions` is the only thing that downloads Sentinel-2
+# and searches Sentinel-1 for a parcel, and it works off `vegetation_subscriptions`.
+# Activating the module on a parcel must therefore own that row.
+SUBSCRIPTION_BACKFILL_DAYS = int(os.getenv("SUBSCRIPTION_BACKFILL_DAYS", "60"))
+SUBSCRIPTION_INDEX_TYPES = ("NDVI", "EVI", "SAVI", "NDRE", "GNDVI")
+
+
+def _subscription_wkt(geometry: dict) -> str:
+    from shapely.geometry import MultiPolygon, shape
+
+    geom = shape(geometry)
+    if geom.geom_type == "Polygon":
+        geom = MultiPolygon([geom])
+    return f"SRID=4326;{geom.wkt}"
+
+
+def _find_subscription(db: Session, tenant_id: str, parcel_urn: str) -> VegetationSubscription | None:
+    return (
+        db.query(VegetationSubscription)
+        .filter(VegetationSubscription.tenant_id == tenant_id, VegetationSubscription.entity_id == parcel_urn)
+        .first()
+    )
+
+
+def _ensure_subscription(db: Session, tenant_id: str, parcel_urn: str, geometry: dict) -> str:
+    """Create the parcel's monitoring subscription, or reactivate a paused one.
+
+    Idempotent: an active subscription is left untouched. Returns
+    ``created`` | ``reactivated`` | ``unchanged``.
+    """
+    sub = _find_subscription(db, tenant_id, parcel_urn)
+    if sub is None:
+        db.add(VegetationSubscription(
+            tenant_id=tenant_id,
+            entity_id=parcel_urn,
+            entity_type="AgriParcel",
+            geometry=_subscription_wkt(geometry),
+            start_date=date.today() - timedelta(days=SUBSCRIPTION_BACKFILL_DAYS),
+            index_types=list(SUBSCRIPTION_INDEX_TYPES),
+            frequency="weekly",
+            is_active=True,
+            status="created",
+        ))
+        db.commit()
+        return "created"
+    if sub.is_active:
+        return "unchanged"
+    sub.is_active = True
+    sub.next_run_at = None  # due on the next beat
+    db.commit()
+    return "reactivated"
+
+
+def _deactivate_subscription(db: Session, tenant_id: str, parcel_urn: str) -> bool:
+    """Pause the parcel's subscription; its scenes and indices stay. True when something changed."""
+    sub = _find_subscription(db, tenant_id, parcel_urn)
+    if sub is None or not sub.is_active:
+        return False
+    sub.is_active = False
+    db.commit()
+    return True
+
+
 def _enqueue_lst(tenant_id: str, parcel_id: str, geometry: dict, lat: float, lon: float) -> None:
     """Queue the Landsat and CLMS land surface temperature tasks for one parcel."""
     from app.tasks.lst_tasks import process_parcel_lst_task, process_parcel_clms_lst_task
@@ -258,9 +321,10 @@ async def setup_parcel(request: Request, body: SetupParcelRequest):
     """Internal endpoint called by entity-manager on parcel activation.
 
     Validates X-Internal-Service-Secret (defense-in-depth, primary auth is
-    api-gateway OIDC). Activation queues the first land surface temperature
-    for the parcel; the weekly beat keeps it fresh for monitored parcels.
-    Deactivation and teardown keep the parcel's data as is.
+    api-gateway OIDC). Activation creates (or reactivates) the parcel's
+    monitoring subscription, which is what the nightly beat processes for
+    Sentinel-2 and Sentinel-1, and queues the first land surface temperature.
+    Deactivation and teardown pause the subscription and keep the data as is.
     """
     secret = request.headers.get("X-Internal-Service-Secret", "")
     if not INTERNAL_SECRET or not hmac.compare_digest(secret, INTERNAL_SECRET):
@@ -273,21 +337,42 @@ async def setup_parcel(request: Request, body: SetupParcelRequest):
     if not parcel_urn.startswith("urn:ngsi-ld:AgriParcel:"):
         parcel_urn = f"urn:ngsi-ld:AgriParcel:{parcel_urn}"
 
-    if body.action == "deactivate":
-        logger.info("Deactivated vegetation-health for parcel %s", parcel_urn)
-        return {"message": "deactivated", "parcel_id": body.parcel_id}
-    if body.action == "teardown":
-        logger.info("Teardown of vegetation-health for parcel %s", parcel_urn)
-        return {"message": "torn_down", "parcel_id": body.parcel_id}
+    if body.action in ("deactivate", "teardown"):
+        paused = False
+        db = None
+        try:
+            db = SessionLocal()
+            paused = _deactivate_subscription(db, body.tenant_id, parcel_urn)
+        except Exception as exc:
+            logger.warning("Subscription pause failed for %s: %s", parcel_urn, exc)
+        finally:
+            if db is not None:
+                db.close()
+        message = "deactivated" if body.action == "deactivate" else "torn_down"
+        logger.info("%s vegetation-health for parcel %s (subscription paused=%s)", message, parcel_urn, paused)
+        return {"message": message, "parcel_id": body.parcel_id, "subscription_paused": paused}
 
     geometry, lat, lon = await _fetch_parcel_location(parcel_urn, body.tenant_id)
     lst_enqueued = False
+    subscription = "skipped"
     if geometry and lat is not None and lon is not None:
+        db = None
+        try:
+            db = SessionLocal()
+            subscription = _ensure_subscription(db, body.tenant_id, parcel_urn, geometry)
+        except Exception as exc:
+            subscription = "error"
+            logger.error("Subscription setup failed for %s: %s", parcel_urn, exc)
+        finally:
+            if db is not None:
+                db.close()
         try:
             _enqueue_lst(body.tenant_id, parcel_urn, geometry, lat, lon)
             lst_enqueued = True
         except Exception as exc:
             logger.warning("LST enqueue failed for %s: %s", parcel_urn, exc)
     else:
-        logger.warning("No parcel geometry for %s: LST not queued", parcel_urn)
-    return {"message": "activated", "parcel_id": body.parcel_id, "lst_enqueued": lst_enqueued}
+        logger.warning("No parcel geometry for %s: subscription and LST not set up", parcel_urn)
+    logger.info("Activated vegetation-health for parcel %s (subscription=%s)", parcel_urn, subscription)
+    return {"message": "activated", "parcel_id": body.parcel_id, "lst_enqueued": lst_enqueued,
+            "subscription": subscription}
