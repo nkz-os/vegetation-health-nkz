@@ -1,6 +1,6 @@
 """Tests for the parcel activation endpoint called by entity-manager."""
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
@@ -16,6 +16,7 @@ GEOMETRY = {"type": "Polygon", "coordinates": [[[-2.0, 42.0], [-2.0, 42.1], [-1.
 @pytest.fixture
 def client(monkeypatch):
     monkeypatch.setattr(internal, "INTERNAL_SECRET", "s3")
+    monkeypatch.setattr(internal, "SessionLocal", lambda: MagicMock())
     app = FastAPI()
     app.include_router(internal.router)
     with TestClient(app) as c:
