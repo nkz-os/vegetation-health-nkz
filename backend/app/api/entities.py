@@ -52,7 +52,8 @@ async def create_roi(request: dict, current_user: dict = Depends(require_auth)):
             }
             
             if request.get("parent_id"):
-                entity["hasParent"] = {"type": "Relationship", "object": request.get("parent_id")}
+                # A zone inside a parcel links to it like every subparcel.
+                entity["hasAgriParcel"] = {"type": "Relationship", "object": request.get("parent_id")}
                 
             await orion.create_entity(entity)
             return {"id": entity_id, "message": "ROI created successfully"}
