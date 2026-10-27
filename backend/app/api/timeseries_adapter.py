@@ -109,11 +109,12 @@ async def _history_from_telemetry_events(
             WHERE tenant_id = %s
               AND entity_type = 'EOProduct'
               AND entity_id LIKE %s
+              AND entity_id NOT LIKE %s
               AND observed_at >= %s
               AND observed_at < %s
             ORDER BY observed_at ASC
             """,
-            (tenant_id, eo_prefix + "%", start_dt, end_dt),
+            (tenant_id, eo_prefix + "%", f"urn:ngsi-ld:EOProduct:{tenant_id}:zone:%", start_dt, end_dt),
         )
         rows = cur.fetchall()
         cur.close()
@@ -129,6 +130,9 @@ async def _history_from_telemetry_events(
         payload = row.get("payload") or {}
         if isinstance(payload, str):
             payload = json_mod.loads(payload)
+
+        if "hasAgriParcelZone" in payload:
+            continue  # per-zone product, never part of the parcel series
 
         idx = payload.get(index_key) or {}
         mean_val = idx.get("value") if isinstance(idx, dict) else None
@@ -224,11 +228,12 @@ async def get_timeseries_data(
             WHERE tenant_id = %s
               AND entity_type = 'EOProduct'
               AND entity_id LIKE %s
+              AND entity_id NOT LIKE %s
               AND observed_at >= %s
               AND observed_at < %s
             ORDER BY observed_at ASC
             """,
-            (tenant_id, eo_prefix + "%", start_dt, end_dt),
+            (tenant_id, eo_prefix + "%", f"urn:ngsi-ld:EOProduct:{tenant_id}:zone:%", start_dt, end_dt),
         )
         rows = cur.fetchall()
         cur.close()
@@ -248,6 +253,9 @@ async def get_timeseries_data(
         payload = r.get("payload") or {}
         if isinstance(payload, str):
             payload = json_mod.loads(payload)
+
+        if "hasAgriParcelZone" in payload:
+            continue  # per-zone product, never part of the parcel series
 
         idx = payload.get(index_key) or {}
         value_numeric = idx.get("value") if isinstance(idx, dict) else None

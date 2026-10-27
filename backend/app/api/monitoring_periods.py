@@ -276,6 +276,8 @@ async def delete_monitoring_period(
                 from app.services.fiware_integration import _entity_id_for_acquisition, delete_eo_index
                 eo_id = _entity_id_for_acquisition(tenant_id, entity_id, sensing_str)
                 delete_eo_index(tenant_id, eo_id, job_index)
+                from app.services.zone_products import delete_zone_products
+                delete_zone_products(tenant_id, entity_id, sensing_str, job_index)
 
             # Delete raster from MinIO
             raster_url = (job.parameters or {}).get("raster_url", "")

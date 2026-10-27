@@ -340,11 +340,77 @@ def upsert_eo_product(
         return None
 
 
+def _zone_base_entity(entity_id: str, zone: Dict[str, Any], stats: Dict[str, Any]) -> Dict[str, Any]:
+    """Common attributes of a per-zone EOProduct: hasAgriParcelZone, never hasAgriParcel."""
+    entity: Dict[str, Any] = {
+        "id": entity_id,
+        "type": "EOProduct",
+        "hasAgriParcelZone": {"type": "Relationship", "object": zone["zone_urn"]},
+        "nkz:zoneId": {"type": "Property", "value": zone["zone_id"]},
+        "pixelCount": {"type": "Property", "value": int(stats.get("pixel_count", 0))},
+        "nkz:validPixelFraction": {"type": "Property", "value": round(float(stats.get("valid_fraction", 0.0)), 4)},
+        "source": {"type": "Property", "value": "vegetation_health"},
+    }
+    if zone.get("zone_version") is not None:
+        entity["nkz:zoneVersion"] = {"type": "Property", "value": zone["zone_version"]}
+    return entity
+
+
+def _publish_zone_entity(tenant_id: str, entity: dict, label: str):
+    try:
+        result = _upsert_eoproduct_entity(tenant_id, entity)
+        if result.get("upserted", 0) >= 1 and not result.get("errors"):
+            logger.info("Upserted %s %s", label, entity["id"])
+            return entity["id"]
+        logger.error("%s upsert %s failed: %s", label, entity["id"], result.get("errors"))
+    except Exception as exc:
+        logger.error("Error upserting %s %s: %s", label, entity["id"], exc, exc_info=True)
+    return None
+
+
+def upsert_eo_zone_index(tenant_id, parcel_short, zone, sensing_date, index_key, stats, cloud_cover=None):
+    """One EOProduct per (zone, sensingDate); merges one named index Property.
+
+    Statistics only: no raster/preview URLs. Carries hasAgriParcelZone and never
+    hasAgriParcel, so parcel-level queries are unaffected.
+    """
+    from app.services.zone_products import zone_eo_product_id
+
+    entity_id = zone_eo_product_id(tenant_id, parcel_short, zone["zone_id"], sensing_date)
+    observed_at = datetime(sensing_date.year, sensing_date.month, sensing_date.day,
+                           10, 50, 0, tzinfo=timezone.utc).isoformat().replace("+00:00", "Z")
+    entity = _zone_base_entity(entity_id, zone, stats)
+    entity["sensingDate"] = {"type": "Property", "value": sensing_date.isoformat()}
+    entity[index_key.lower()] = _index_attribute(index_key, stats, observed_at, None, None)
+    if cloud_cover is not None:
+        try:
+            entity["cloudCoverPercentage"] = {"type": "Property", "value": round(float(cloud_cover), 2)}
+        except (TypeError, ValueError):
+            pass
+    return _publish_zone_entity(tenant_id, entity, "zone EOProduct")
+
+
+def upsert_eo_zone_product(tenant_id, parcel_short, zone, acquisition_date, vv_db, vh_db, stats):
+    """Per-zone SAR backscatter EOProduct (productType GRD, statistics only)."""
+    from app.services.zone_products import zone_eo_product_id
+
+    entity_id = zone_eo_product_id(tenant_id, parcel_short, zone["zone_id"], acquisition_date, grd=True)
+    observed_at = acquisition_date.isoformat().replace("+00:00", "Z")
+    entity = _zone_base_entity(entity_id, zone, stats)
+    entity["productType"] = {"type": "Property", "value": "GRD"}
+    entity["processingLevel"] = {"type": "Property", "value": "L1"}
+    entity["backscatterVV"] = {"type": "Property", "value": round(float(vv_db), 4), "observedAt": observed_at}
+    entity["backscatterVH"] = {"type": "Property", "value": round(float(vh_db), 4), "observedAt": observed_at}
+    entity["acquisitionDate"] = {"type": "Property", "value": observed_at}
+    return _publish_zone_entity(tenant_id, entity, "zone SAR EOProduct")
+
+
 # Attributes that describe the acquisition itself rather than a vegetation index.
 # Anything else on an EOProduct is an index Property contributed by some job.
 _ACQUISITION_ATTRS = frozenset({
     "id", "type", "hasAgriParcel", "sensingDate", "pixelCount", "source",
     "cloudCoverPercentage", "sceneId", "@context", "createdAt", "modifiedAt",
+    "hasAgriParcelZone", "nkz:zoneId", "nkz:zoneVersion", "nkz:validPixelFraction",
 })
 
 
