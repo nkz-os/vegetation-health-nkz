@@ -410,6 +410,7 @@ def upsert_eo_zone_product(tenant_id, parcel_short, zone, acquisition_date, vv_d
 _ACQUISITION_ATTRS = frozenset({
     "id", "type", "hasAgriParcel", "sensingDate", "pixelCount", "source",
     "cloudCoverPercentage", "sceneId", "@context", "createdAt", "modifiedAt",
+    "hasAgriParcelZone", "nkz:zoneId", "nkz:zoneVersion", "nkz:validPixelFraction",
 })
 
 

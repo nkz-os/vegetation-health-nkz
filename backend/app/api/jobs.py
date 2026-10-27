@@ -277,6 +277,8 @@ async def bulk_delete_jobs(
                 try:
                     eo_id = _entity_id_for_acquisition(tenant_id, job.entity_id, sensing_str)
                     delete_eo_index(tenant_id, eo_id, job_index)
+                    from app.services.zone_products import delete_zone_products
+                    delete_zone_products(tenant_id, job.entity_id, sensing_str, job_index)
                 except Exception as e:
                     logger.warning("EOProduct cleanup failed for job %s: %s", job_id, e)
 

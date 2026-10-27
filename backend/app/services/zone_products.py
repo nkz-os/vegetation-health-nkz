@@ -5,12 +5,11 @@ Zone products carry ``hasAgriParcelZone`` and never ``hasAgriParcel``, so every
 existing parcel-level query keeps returning the same entities.
 """
 
-import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
 import numpy as np
-from nkz_platform_sdk import OrionClient
+from nkz_platform_sdk import SyncOrionClient
 
 logger = logging.getLogger(__name__)
 
@@ -42,10 +41,14 @@ def _first(entity: Dict[str, Any], keys) -> Any:
 
 
 def zone_eo_product_id(tenant: str, parcel_short: str, zone_id: str, sensing_date, grd: bool = False) -> str:
-    """urn:ngsi-ld:EOProduct:{tenant}:{parcel_short}:{zone_id}[:GRD]:{YYYY-MM-DD}"""
+    """urn:ngsi-ld:EOProduct:{tenant}:zone:{parcel_short}:{zone_id}[:GRD]:{YYYY-MM-DD}
+
+    The ``zone`` segment right after the tenant keeps zone products out of every
+    parcel-prefix query (``…:{tenant}:{parcel_short}:%``).
+    """
     date_str = sensing_date.strftime("%Y-%m-%d") if hasattr(sensing_date, "strftime") else str(sensing_date)[:10]
     mid = "GRD:" if grd else ""
-    return f"urn:ngsi-ld:EOProduct:{tenant}:{parcel_short}:{zone_id}:{mid}{date_str}"
+    return f"urn:ngsi-ld:EOProduct:{tenant}:zone:{parcel_short}:{zone_id}:{mid}{date_str}"
 
 
 def fetch_management_zones(tenant_id: str, parcel_urn: str) -> List[Dict[str, Any]]:
@@ -53,19 +56,14 @@ def fetch_management_zones(tenant_id: str, parcel_urn: str) -> List[Dict[str, An
 
     Fail-safe: any Orion error returns ``[]`` (zone products are additive).
     """
-    async def _go() -> List[Dict[str, Any]]:
-        orion = OrionClient(tenant_id)
-        try:
-            return await orion.query_entities(
-                type="AgriParcelZone",
-                q=f'hasAgriParcel=="{parcel_urn}"|refAgriParcel=="{parcel_urn}"',
-                limit=1000,
-            )
-        finally:
-            await orion.close()
-
     try:
-        entities = asyncio.run(_go())
+        # Sync client: callable from sync Celery tasks and async endpoints alike
+        # (no event loop bridge).
+        entities = SyncOrionClient(tenant_id).query_entities(
+            type="AgriParcelZone",
+            q=f'hasAgriParcel=="{parcel_urn}"|refAgriParcel=="{parcel_urn}"',
+            limit=1000,
+        )
     except Exception as exc:
         logger.warning("Zone lookup failed for %s: %s", parcel_urn, exc)
         return []
@@ -97,6 +95,8 @@ def zone_statistics(processor, index_array: np.ndarray, zone_geometry: dict) -> 
     None when fewer than MIN_ZONE_PIXELS valid pixels or valid pixels are under
     MIN_VALID_FRACTION of the zone's pixels (``valid_fraction``).
     """
+    # NOTE: create_geometry_mask buffers by PARCEL_GEOMETRY_BUFFER_M (10 m) with no
+    # opt-out, so zone counts are slightly inflated. Follow-up: buffer parameter.
     mask = processor.create_geometry_mask(zone_geometry)  # True = excluded
     if mask.shape != index_array.shape:
         rows = (np.arange(index_array.shape[0]) * mask.shape[0]) // index_array.shape[0]
@@ -140,3 +140,19 @@ def publish_zone_indices(tenant_id: str, parcel_urn: str, index_type: str, proce
         except Exception as exc:
             logger.warning("Zone %s product failed for %s: %s", zone["zone_id"], parcel_urn, exc)
     return published
+
+
+def delete_zone_products(tenant_id: str, parcel_urn: str, sensing_date, index_type: str) -> None:
+    """Remove ``index_type`` from the parcel's zone products of one date. Fail-safe, never raises."""
+    from app.services.fiware_integration import delete_eo_index
+
+    try:
+        parcel_short = parcel_urn.split(":")[-1][:10]
+        for zone in fetch_management_zones(tenant_id, parcel_urn):
+            try:
+                delete_eo_index(tenant_id, zone_eo_product_id(tenant_id, parcel_short, zone["zone_id"], sensing_date),
+                                index_type)
+            except Exception as exc:
+                logger.warning("Zone product cleanup failed for %s: %s", zone["zone_id"], exc)
+    except Exception as exc:
+        logger.warning("Zone product cleanup failed for %s: %s", parcel_urn, exc)

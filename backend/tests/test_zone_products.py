@@ -67,15 +67,15 @@ def _zone_entity(zid, ztype, parcel_attr="hasAgriParcel", parcel=PARCEL, type_ke
 
 class TestFetchManagementZones:
     def _fetch(self, entities):
-        fake_holder = {}
+        class _Sync:
+            def __init__(self, tenant_id):
+                self.fake = FakeAsyncOrion(tenant_id)
+                self.fake.entities.extend(entities)
 
-        class _Fake(FakeAsyncOrion):
-            def __init__(self, tenant_id, *a, **k):
-                super().__init__(tenant_id)
-                self.entities.extend(entities)
-                fake_holder["f"] = self
+            def query_entities(self, **kw):
+                return asyncio.run(self.fake.query_entities(**kw))
 
-        with patch.object(zp, "OrionClient", _Fake):
+        with patch.object(zp, "SyncOrionClient", _Sync):
             return zp.fetch_management_zones("acme", PARCEL)
 
     def test_management_only_all_spellings_and_legacy_relationship(self):
@@ -93,11 +93,14 @@ class TestFetchManagementZones:
         assert z1["geometry"]["type"] == "Polygon"
 
     def test_orion_failure_is_empty_list(self):
-        class _Boom(FakeAsyncOrion):
-            async def query_entities(self, *a, **k):
+        class _Boom:
+            def __init__(self, tenant_id):
+                pass
+
+            def query_entities(self, *a, **k):
                 raise RuntimeError("down")
 
-        with patch.object(zp, "OrionClient", _Boom):
+        with patch.object(zp, "SyncOrionClient", _Boom):
             assert zp.fetch_management_zones("acme", PARCEL) == []
 
 
@@ -111,7 +114,7 @@ class TestZoneUpserts:
         with patch.object(fi, "OrionClient", FakeAsyncOrion):
             eid = fi.upsert_eo_zone_index("acme", "p1", ZONE, date(2026, 6, 1), "ndvi", STATS, cloud_cover=3.0)
             body = FakeAsyncOrion.last_instance.entities[0]
-        assert eid == body["id"] == "urn:ngsi-ld:EOProduct:acme:p1:z1:2026-06-01"
+        assert eid == body["id"] == "urn:ngsi-ld:EOProduct:acme:zone:p1:z1:2026-06-01"
         assert "hasAgriParcel" not in body
         assert body["hasAgriParcelZone"] == {"type": "Relationship", "object": ZONE["zone_urn"]}
         assert body["nkz:zoneId"]["value"] == "z1"
@@ -128,7 +131,7 @@ class TestZoneUpserts:
         with patch.object(fi, "OrionClient", FakeAsyncOrion):
             eid = fi.upsert_eo_zone_product("acme", "p1", ZONE, acq, -12.5, -18.0, stats)
             body = FakeAsyncOrion.last_instance.entities[0]
-        assert eid == "urn:ngsi-ld:EOProduct:acme:p1:z1:GRD:2026-06-01"
+        assert eid == "urn:ngsi-ld:EOProduct:acme:zone:p1:z1:GRD:2026-06-01"
         assert "hasAgriParcel" not in body
         assert body["hasAgriParcelZone"]["object"] == ZONE["zone_urn"]
         assert body["productType"]["value"] == "GRD"
@@ -155,7 +158,58 @@ def test_parcel_query_returns_only_parcel_product():
     assert len(broker.entities) == 3
     found = asyncio.run(broker.query_entities(type="EOProduct", q=f'hasAgriParcel=="{PARCEL}"'))
     assert len(found) == 1
-    assert found[0]["id"].endswith(":p1:2026-06-01")
+    assert found[0]["id"] == "urn:ngsi-ld:EOProduct:acme:p1:2026-06-01"
+
+
+def test_fetch_works_inside_running_event_loop():
+    class _Sync:
+        def __init__(self, tenant_id):
+            pass
+
+        def query_entities(self, **kw):
+            return [_zone_entity("z1", "management")]
+
+    async def _go():
+        with patch.object(zp, "SyncOrionClient", _Sync):
+            return zp.fetch_management_zones("acme", PARCEL)
+
+    assert len(asyncio.run(_go())) == 1
+
+
+def test_delete_zone_products_targets_zone_ids():
+    deleted = []
+
+    class _Sync:
+        def __init__(self, tenant_id):
+            pass
+
+        def query_entities(self, **kw):
+            return [_zone_entity("z1", "management"), _zone_entity("z2", "management")]
+
+    with patch.object(zp, "SyncOrionClient", _Sync), \
+            patch.object(fi, "delete_eo_index", lambda t, eid, idx: deleted.append((eid, idx))):
+        zp.delete_zone_products("acme", PARCEL, "2026-06-01", "NDVI")
+    assert deleted == [("urn:ngsi-ld:EOProduct:acme:zone:p1:z1:2026-06-01", "NDVI"),
+                       ("urn:ngsi-ld:EOProduct:acme:zone:p1:z2:2026-06-01", "NDVI")]
+
+
+def test_parcel_series_excludes_zone_rows():
+    from unittest.mock import MagicMock
+    from app.api import timeseries_adapter as ts
+
+    when = datetime(2026, 6, 1, tzinfo=timezone.utc)
+    rows = [
+        {"observed_at": when, "payload": {"ndvi": {"value": 0.7}}},
+        {"observed_at": when, "payload": {"ndvi": {"value": 0.2},
+                                           "hasAgriParcelZone": {"type": "Relationship", "object": ZONE["zone_urn"]}}},
+    ]
+    cur = MagicMock(); cur.fetchall.return_value = rows
+    conn = MagicMock(); conn.cursor.return_value = cur
+    with patch("psycopg2.connect", return_value=conn):
+        pts = asyncio.run(ts._history_from_telemetry_events(
+            "acme", "urn:ngsi-ld:AgriParcel:acme:p1", "NDVI",
+            datetime(2026, 1, 1, tzinfo=timezone.utc), datetime(2027, 1, 1, tzinfo=timezone.utc)))
+    assert [p["mean"] for p in pts] == [0.7]
 
 
 def test_sar_zone_sigma0_from_calibrated_parcel_raster(tmp_path):
