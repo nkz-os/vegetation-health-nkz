@@ -164,6 +164,66 @@ def _calibrated_parcel(band_path: str, calibration_path: str, parcel_geom, workd
     return stats, parcel_path
 
 
+def _zone_sigma0_stats(parcel_raster_path: str, zone_geom) -> Optional[Dict[str, Any]]:
+    """sigma0 dB statistics of one zone, read from the already calibrated parcel raster.
+
+    Reuses the parcel's calibrated, georeferenced dB window (no per-zone
+    calibration or warp). None when the zone has fewer than MIN_ZONE_PIXELS
+    valid pixels or its valid fraction is under MIN_VALID_FRACTION.
+    """
+    import rasterio
+    from rasterio.features import geometry_mask
+
+    from app.services import sar_calibration
+    from app.services.zone_products import MIN_VALID_FRACTION, MIN_ZONE_PIXELS
+
+    with rasterio.open(parcel_raster_path) as src:
+        inside = ~geometry_mask([zone_geom.__geo_interface__], out_shape=(src.height, src.width),
+                                transform=src.transform, all_touched=True)
+        values = src.read(1)
+    zone_pixels = int(inside.sum())
+    if zone_pixels == 0:
+        return None
+    picked = values[inside]
+    stats = sar_calibration.zonal_db(picked[picked != SAR_DB_NODATA])
+    valid_fraction = stats["pixel_count"] / zone_pixels
+    if stats["pixel_count"] < MIN_ZONE_PIXELS or valid_fraction < MIN_VALID_FRACTION:
+        return None
+    return {**stats, "valid_fraction": valid_fraction}
+
+
+def _publish_zone_sar_products(tenant_id: str, entity_id: str, calibrated_paths: Dict[str, str],
+                               acq_date) -> int:
+    """Per-management-zone VV/VH EOProducts. Never raises; one zone failing skips only it.
+
+    sarMoisture / sarChangeFlag are NOT published per zone: the SMI needs the
+    VV raster and DEM, and the change flag needs per-zone history.
+    """
+    from shapely.geometry import shape as shapely_shape
+
+    from app.services.fiware_integration import upsert_eo_zone_product
+    from app.services.zone_products import fetch_management_zones
+
+    published = 0
+    parcel_short = entity_id.split(":")[-1][:10]
+    for zone in fetch_management_zones(tenant_id, entity_id):
+        try:
+            zone_geom = shapely_shape(zone["geometry"])
+            vv = _zone_sigma0_stats(calibrated_paths["VV"], zone_geom)
+            vh = _zone_sigma0_stats(calibrated_paths["VH"], zone_geom)
+            if vv is None or vh is None:
+                logger.info("SAR zone %s skipped (too few valid pixels)", zone["zone_id"])
+                continue
+            stats = {"pixel_count": min(vv["pixel_count"], vh["pixel_count"]),
+                     "valid_fraction": min(vv["valid_fraction"], vh["valid_fraction"])}
+            if upsert_eo_zone_product(tenant_id, parcel_short, zone, acq_date,
+                                      vv["mean"], vh["mean"], stats):
+                published += 1
+        except Exception as exc:
+            logger.warning("SAR zone %s product failed for %s: %s", zone["zone_id"], entity_id, exc)
+    return published
+
+
 def _upload_sar_cog(
     local_tiff: str,
     tenant_id: str,
@@ -537,6 +597,13 @@ def download_sentinel1_scene(
                     logger.info("Published EOProduct %s for %s", eid, entity_id)
                 else:
                     logger.warning("Failed to publish EOProduct for %s", entity_id)
+
+                # Per-zone products from the same calibrated rasters (additive).
+                try:
+                    if calibrated_paths.get("VV") and calibrated_paths.get("VH"):
+                        _publish_zone_sar_products(tenant_id, entity_id, calibrated_paths, acq_date)
+                except Exception as exc:
+                    logger.warning("SAR zone products skipped for %s: %s", entity_id, exc)
 
                 # ── SMI (Soil Moisture Index) from VV + DEM ──────────
                 try:

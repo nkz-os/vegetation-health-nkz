@@ -27,5 +27,26 @@ class FakeAsyncOrion:
         self.entities.extend(entities)
         return {"upserted": len(entities), "errors": [], "entity_ids": [e.get("id") for e in entities]}
 
+    async def query_entities(self, type: str = None, q: str = None, **kwargs: Any) -> List[Dict[str, Any]]:
+        """Minimal NGSI-LD q filter: `attr=="value"` clauses, `|` = OR, `;` = AND."""
+        def _has(entity: Dict[str, Any], attr: str, wanted: str) -> bool:
+            a = entity.get(attr)
+            if not isinstance(a, dict):
+                return a == wanted
+            return a.get("object", a.get("value")) == wanted
+
+        def _match(entity: Dict[str, Any]) -> bool:
+            if type and entity.get("type") != type:
+                return False
+            for and_clause in (q or "").split(";"):
+                if not and_clause:
+                    continue
+                ors = [c.split("==") for c in and_clause.split("|")]
+                if not any(_has(entity, k, v.strip('"')) for k, v in ors):
+                    return False
+            return True
+
+        return [e for e in self.entities if _match(e)]
+
     async def close(self) -> None:
         self.closed = True

@@ -647,6 +647,22 @@ def calculate_vegetation_index(
             primary_scene=primary_scene,
         )
 
+        # Per-management-zone products: additive, never affects the parcel result.
+        if index_type != 'CUSTOM' and job.entity_id and primary_scene.sensing_date:
+            try:
+                from app.services.zone_products import publish_zone_indices
+                publish_zone_indices(
+                    tenant_id=tenant_id,
+                    parcel_urn=job.entity_id,
+                    index_type=index_type,
+                    processor=processor,
+                    index_array=composite_array,
+                    sensing_date=primary_scene.sensing_date,
+                    cloud_cover=getattr(primary_scene, "cloud_coverage", None),
+                )
+            except Exception as zone_err:
+                logger.warning("Zone products skipped for %s: %s", job.entity_id, zone_err)
+
         # Mark job as completed
         job_result = {
             'index_type': index_type,
