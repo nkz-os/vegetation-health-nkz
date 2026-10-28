@@ -532,7 +532,12 @@ class FIWAREClient:
     def create_entity(self, entity: Dict[str, Any]) -> bool:
         try:
             url = f"{self.context_broker_url}/ngsi-ld/v1/entities"
-            response = self.session.post(url, json=entity, timeout=10)
+            # Body carries no @context: application/json + the session Link header
+            # (ld+json without a body @context is an Orion 400).
+            response = self.session.post(
+                url, json=entity, timeout=10,
+                headers={"Content-Type": "application/json"},
+            )
             if response.status_code in (201, 204):
                 logger.info("Created entity %s", entity.get('id'))
                 return True

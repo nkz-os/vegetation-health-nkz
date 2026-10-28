@@ -29,6 +29,7 @@ def _algo(existing_ids=(), delete_side_effect=None):
     algo = ZoningAlgorithm.__new__(ZoningAlgorithm)
     algo.tenant_id = "acme"
     algo.fiware = MagicMock()
+    algo.fiware.create_entity.return_value = True
     algo.fiware.list_entity_ids.return_value = list(existing_ids)
     if delete_side_effect is not None:
         algo.fiware.delete_entity.side_effect = delete_side_effect
@@ -36,13 +37,13 @@ def _algo(existing_ids=(), delete_side_effect=None):
 
 
 def _sent(algo):
-    return [c.args[0] for c in algo.fiware.update_entity.call_args_list]
+    return [c.args[0] for c in algo.fiware.create_entity.call_args_list]
 
 
 def test_entities_carry_mean_value_and_shared_run_id():
     algo = _algo()
     vectors = _vectors(3)
-    run_id = algo.publish_zones(PARCEL, vectors)
+    run_id = algo.publish_zones(PARCEL, vectors)["run_id"]
     sent = _sent(algo)
     assert len(sent) == 3
     for ent, vec in zip(sent, vectors):
@@ -53,7 +54,8 @@ def test_entities_carry_mean_value_and_shared_run_id():
 
 def test_run_id_differs_between_runs():
     algo = _algo()
-    assert algo.publish_zones(PARCEL, _vectors(2)) != algo.publish_zones(PARCEL, _vectors(2))
+    a = algo.publish_zones(PARCEL, _vectors(2))["run_id"]
+    assert a != algo.publish_zones(PARCEL, _vectors(2))["run_id"]
 
 
 def test_stale_zones_are_deleted_and_current_kept():
@@ -91,6 +93,78 @@ def test_list_failure_is_logged_and_does_not_fail(caplog):
     assert len(_sent(algo)) == 2
     algo.fiware.delete_entity.assert_not_called()
     assert any(r.levelno == logging.WARNING for r in caplog.records)
+
+
+def test_all_failed_reports_zero_and_deletes_nothing():
+    algo = _algo(existing_ids=[f"{PREFIX}{k}" for k in range(8)])
+    algo.fiware.create_entity.return_value = False
+    out = algo.publish_zones(PARCEL, _vectors(3))
+    assert out["published"] == 0 and out["failed"] == 3
+    algo.fiware.list_entity_ids.assert_not_called()
+    algo.fiware.delete_entity.assert_not_called()
+
+
+def test_create_exception_counts_as_failure():
+    algo = _algo()
+    algo.fiware.create_entity.side_effect = RuntimeError("down")
+    out = algo.publish_zones(PARCEL, _vectors(2))
+    assert out["published"] == 0 and out["failed"] == 2
+
+
+def test_partial_failure_is_counted_and_still_cleans():
+    algo = _algo(existing_ids=[f"{PREFIX}5"])
+    algo.fiware.create_entity.side_effect = [True, False, True]
+    out = algo.publish_zones(PARCEL, _vectors(3))
+    assert out["published"] == 2 and out["failed"] == 1
+    algo.fiware.delete_entity.assert_called_once_with(f"{PREFIX}5")
+
+
+def test_generate_zones_errors_when_nothing_published(monkeypatch):
+    import asyncio
+    import app.jobs.zoning_algorithm as za
+    algo = _algo()
+    algo.fiware.create_entity.return_value = False
+    monkeypatch.setattr(za, "get_db_session", lambda: iter([_FakeDb()]))
+    monkeypatch.setattr(za, "create_storage_service", lambda **k: MagicMock())
+    monkeypatch.setattr(za.rasterio, "open", lambda p: _FakeSrc(), raising=False)
+    monkeypatch.setattr(za.os.path, "exists", lambda p: False)
+    monkeypatch.setattr(algo, "cluster_raster", lambda d, n: (object(), object()))
+    monkeypatch.setattr(algo, "vectorize_zones", lambda *a: _vectors(2))
+    res = asyncio.run(algo.generate_zones(PARCEL, 2))
+    assert res["status"] == "error"
+
+
+class _FakeSrc:
+    transform = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def read(self, i):
+        return None
+
+
+class _FakeDb:
+    def query(self, *a):
+        return self
+
+    def filter(self, *a):
+        return self
+
+    def params(self, **k):
+        return self
+
+    def order_by(self, *a):
+        return self
+
+    def first(self):
+        return MagicMock(result={"raster_path": "x.tif"})
+
+    def close(self):
+        pass
 
 
 class _Resp:
@@ -137,3 +211,20 @@ def test_client_list_paginates_past_default_page():
     offsets = [call.kwargs["params"]["offset"] for call in c.session.get.call_args_list]
     assert offsets == [0, 100]
     assert c.session.get.call_args_list[0].kwargs["params"]["limit"] == 100
+
+
+def test_client_create_posts_json_without_ld_context():
+    c = _client()
+    c.session.post.return_value = _Resp(201)
+    assert c.create_entity({"id": f"{PREFIX}0", "type": "AgriManagementZone"}) is True
+    kw = c.session.post.call_args.kwargs
+    assert kw["headers"]["Content-Type"] == "application/json"
+    assert "@context" not in kw["json"]
+
+
+def test_client_create_409_falls_back_to_patch():
+    c = _client()
+    c.session.post.return_value = _Resp(409)
+    c.session.patch.return_value = _Resp(204)
+    assert c.create_entity({"id": f"{PREFIX}0", "type": "AgriManagementZone"}) is True
+    c.session.patch.assert_called_once()

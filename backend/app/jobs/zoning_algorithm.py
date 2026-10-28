@@ -128,15 +128,18 @@ class ZoningAlgorithm:
             })
         return features
 
-    def publish_zones(self, parcel_id: str, vectors: List[Dict[str, Any]]) -> str:
-        """Publish zone entities for one run, then delete stale zones of the parcel."""
+    def publish_zones(self, parcel_id: str, vectors: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Create/update zone entities for one run; if any succeeded, delete stale zones.
+
+        Returns {"run_id", "published", "failed"}.
+        """
         run_id = str(uuid.uuid4())
         short = parcel_id.split(':')[-1]
         published = set()
+        failed = 0
         for zone in vectors:
             props = zone['properties']
             zone_id = f"urn:ngsi-ld:AgriManagementZone:{short}:Z{props['zone_id']}"
-            published.add(zone_id)
             entity = {
                 "id": zone_id,
                 "type": "AgriManagementZone",
@@ -181,15 +184,24 @@ class ZoningAlgorithm:
                     "value": "NDVI"
                 }
             }
-            # Create or Update via FIWARE Client
+            # POST; the client falls back to PATCH on 409 (zone already exists)
             try:
-                self.fiware.update_entity(entity)
-                logger.info(f"Created/Updated Zone: {zone_id}")
+                ok = self.fiware.create_entity(entity)
             except Exception as e:
-                logger.warning(f"Failed to update zone {zone_id}: {e}")
+                logger.warning(f"Failed to publish zone {zone_id}: {e}")
+                ok = False
+            if ok:
+                published.add(zone_id)
+                logger.info(f"Created/Updated Zone: {zone_id}")
+            else:
+                failed += 1
+                logger.warning(f"Failed to publish zone {zone_id}")
 
-        self._delete_stale_zones(parcel_id, short, published)
-        return run_id
+        if published:
+            self._delete_stale_zones(parcel_id, short, published)
+        else:
+            logger.error(f"No zone published for {parcel_id}; stale zones kept")
+        return {"run_id": run_id, "published": len(published), "failed": failed}
 
     def _delete_stale_zones(self, parcel_id: str, short: str, published: set) -> None:
         """Remove zones of this parcel left over from a previous run with more zones."""
@@ -289,7 +301,9 @@ class ZoningAlgorithm:
             db.close()
 
         # 4. Upload to Orion — enriched with zoneClass and prescriptionRate
-        self.publish_zones(parcel_id, vectors)
+        outcome = self.publish_zones(parcel_id, vectors)
+        if outcome["published"] == 0:
+            return {"status": "error", "message": "Failed to publish any management zone to the context broker"}
 
         logger.info(f"Successfully generated {len(vectors)} zones for {parcel_id}")
 
@@ -301,7 +315,8 @@ class ZoningAlgorithm:
         return {
             "status": "success",
             "parcel_id": parcel_id,
-            "zones_created": len(vectors),
+            "zones_created": outcome["published"],
+            "zones_failed": outcome["failed"],
             "geojson": geojson,
             "webhook_metadata": {
                 "intelligence_module_compatible": True,
