@@ -3,6 +3,7 @@ import logging
 from unittest.mock import MagicMock
 
 import requests
+from rasterio.crs import CRS
 
 from app.jobs.zoning_algorithm import ZoningAlgorithm
 from app.services.fiware_integration import FIWAREClient
@@ -134,9 +135,23 @@ def test_generate_zones_errors_when_nothing_published(monkeypatch):
     assert res["status"] == "error"
 
 
-class _FakeSrc:
+class _NoCrsSrc:
     transform = None
     crs = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def read(self, i):
+        return None
+
+
+class _FakeSrc:
+    transform = None
+    crs = CRS.from_epsg(32630)
 
     def __enter__(self):
         return self
@@ -358,3 +373,27 @@ def test_stair_stepped_boundary_is_simplified(tmp_path):
          if x["properties"]["zone_id"] == 1][0]
     out = len(f["geometry"]["coordinates"][0])
     assert out < raw
+
+
+def test_raster_without_crs_is_refused_and_nothing_published(monkeypatch):
+    import asyncio
+    import app.jobs.zoning_algorithm as za
+    algo = _algo(existing_ids=[f"{PREFIX}5"])
+    monkeypatch.setattr(za, "get_db_session", lambda: iter([_FakeDb()]))
+    monkeypatch.setattr(za, "create_storage_service", lambda **k: MagicMock())
+    monkeypatch.setattr(za.rasterio, "open", lambda p: _NoCrsSrc(), raising=False)
+    monkeypatch.setattr(za.os.path, "exists", lambda p: False)
+    called = []
+    monkeypatch.setattr(algo, "cluster_raster", lambda d, n: called.append(1))
+    res = asyncio.run(algo.generate_zones(PARCEL, 2))
+    assert res == {"status": "error", "message": "raster has no CRS"}
+    assert not called
+    algo.fiware.create_entity.assert_not_called()
+    algo.fiware.delete_entity.assert_not_called()
+
+
+def test_vectorize_without_crs_raises():
+    import pytest
+    with pytest.raises(ValueError):
+        _algo_v().vectorize_zones(np.zeros((2, 2), int), from_origin(0, 0, 1, 1),
+                                  np.zeros((2, 2)), np.array([0.5]), None)

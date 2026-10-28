@@ -78,8 +78,7 @@ class ZoningAlgorithm:
         tolerance (in raster CRS units) before reprojecting to EPSG:4326.
         mean_value / area_ha describe the whole cluster.
 
-        crs: raster CRS (rasterio CRS or anything CRS.from_user_input accepts).
-        ASSUMPTION: crs=None means EPSG:4326.
+        crs: raster CRS (rasterio CRS or anything CRS.from_user_input accepts); required.
 
         zone_class is computed from the cluster centroid order:
           - Highest centroid -> "high", lowest -> "low", others -> "medium"
@@ -89,7 +88,9 @@ class ZoningAlgorithm:
         from rasterio.crs import CRS
         from rasterio.warp import transform_geom
 
-        src_crs = CRS.from_user_input(crs) if crs is not None else CRS.from_epsg(4326)
+        if crs is None:
+            raise ValueError("raster has no CRS")
+        src_crs = CRS.from_user_input(crs)
 
         label_img_int = label_img.astype(np.int32)
         mask = label_img_int != -1
@@ -306,6 +307,12 @@ class ZoningAlgorithm:
                 ndvi_data = src.read(1)
                 transform = src.transform
                 raster_crs = src.crs
+
+            if raster_crs is None:
+                logger.error("Raster for %s has no CRS; refusing to generate zones", parcel_id)
+                if os.path.exists(local_path):
+                    os.remove(local_path)
+                return {"status": "error", "message": "raster has no CRS"}
 
             # 2. Cluster
             labels, centroids = self.cluster_raster(ndvi_data, n_zones)
