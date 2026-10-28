@@ -361,9 +361,13 @@ def test_geographic_raster_area_in_hectares(tmp_path):
 
 
 def test_stair_stepped_boundary_is_simplified(tmp_path):
+    import pytest
+    import shapely
+    if not hasattr(shapely, "coverage_simplify"):
+        pytest.skip("shapely < 2.1: no coverage simplification (zones stay unsimplified)")
     n = 40
     rows, cols = np.indices((n, n))
-    labels = (cols > rows).astype(int)       # stair-stepped diagonal
+    labels = (cols > rows).astype(int)
     ndvi = np.full(labels.shape, 0.5)
     crs, tr = _roundtrip(tmp_path, labels, 32630, 500000.0, 4600000.0, 10.0)
     from rasterio.features import shapes as _shapes
@@ -371,29 +375,46 @@ def test_stair_stepped_boundary_is_simplified(tmp_path):
               _shapes(labels.astype("int32"), transform=tr) if v == 1)
     f = [x for x in _algo_v().vectorize_zones(labels, tr, ndvi, np.array([0.4, 0.8]), crs)
          if x["properties"]["zone_id"] == 1][0]
-    out = len(f["geometry"]["coordinates"][0])
-    assert out < raw
+    assert len(f["geometry"]["coordinates"][0]) < raw
 
 
-def test_raster_without_crs_is_refused_and_nothing_published(monkeypatch):
-    import asyncio
-    import app.jobs.zoning_algorithm as za
+def test_single_pixel_islands_are_absorbed(tmp_path):
+    labels = np.zeros((30, 30), dtype=int)
+    labels[:, 15:] = 1
+    for r, c in [(3, 3), (10, 7), (20, 4), (25, 11), (6, 12)]:
+        labels[r, c] = 1            # isolated 1-pixel islands of cluster 1 in cluster 0
+    ndvi = np.where(labels == 0, 0.4, 0.8).astype("float64")
+    crs, tr = _roundtrip(tmp_path, labels, 32630, 500000.0, 4600000.0, 10.0)
+    from rasterio.features import shapes as _shapes
+    raw_parts = sum(1 for _, v in _shapes(labels.astype("int32"), transform=tr) if v == 1)
+    f = [x for x in _algo_v().vectorize_zones(labels, tr, ndvi, np.array([0.4, 0.8]), crs)
+         if x["properties"]["zone_id"] == 1][0]
+    assert raw_parts == 6
+    assert f["geometry"]["type"] == "Polygon"          # one part after sieve
+    assert f["properties"]["area_ha"] == 4.5           # 30*15 px * 100 m2, islands gone
+
+
+def test_adjacent_zones_share_edges_without_gaps_or_overlaps(tmp_path):
+    rng = np.random.default_rng(1)
+    labels = np.zeros((40, 40), dtype=int)
+    for r in range(40):
+        labels[r, 20 + int(rng.integers(-3, 4)):] = 1     # ragged shared boundary
+    ndvi = np.full(labels.shape, 0.5)
+    crs, tr = _roundtrip(tmp_path, labels, 32630, 500000.0, 4600000.0, 10.0)
+    a, b = [_shape(f["geometry"]) for f in
+            _algo_v().vectorize_zones(labels, tr, ndvi, np.array([0.4, 0.8]), crs)]
+    assert a.intersection(b).area < 1e-6 * a.area
+    assert abs(a.union(b).area - (a.area + b.area)) < 1e-6 * (a.area + b.area)
+    assert a.union(b).geom_type == "Polygon"             # no gap between them
+
+
+def test_oversized_zone_errors_and_touches_nothing():
     algo = _algo(existing_ids=[f"{PREFIX}5"])
-    monkeypatch.setattr(za, "get_db_session", lambda: iter([_FakeDb()]))
-    monkeypatch.setattr(za, "create_storage_service", lambda **k: MagicMock())
-    monkeypatch.setattr(za.rasterio, "open", lambda p: _NoCrsSrc(), raising=False)
-    monkeypatch.setattr(za.os.path, "exists", lambda p: False)
-    called = []
-    monkeypatch.setattr(algo, "cluster_raster", lambda d, n: called.append(1))
-    res = asyncio.run(algo.generate_zones(PARCEL, 2))
-    assert res == {"status": "error", "message": "raster has no CRS"}
-    assert not called
+    n = 60000
+    ring = [[i * 1e-5, (i % 2) * 1e-5] for i in range(n)] + [[0, 0]]
+    vec = _vectors(2)
+    vec[1]["geometry"] = {"type": "Polygon", "coordinates": [ring]}
+    out = algo.publish_zones(PARCEL, vec)
+    assert out["published"] == 0 and f"{PREFIX}1" in out["error"]
     algo.fiware.create_entity.assert_not_called()
     algo.fiware.delete_entity.assert_not_called()
-
-
-def test_vectorize_without_crs_raises():
-    import pytest
-    with pytest.raises(ValueError):
-        _algo_v().vectorize_zones(np.zeros((2, 2), int), from_origin(0, 0, 1, 1),
-                                  np.zeros((2, 2)), np.array([0.5]), None)

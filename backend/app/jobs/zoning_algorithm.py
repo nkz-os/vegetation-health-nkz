@@ -5,12 +5,13 @@ Designed for N8N integration and Intelligence Module handoff.
 """
 
 import logging
+import json
 import math
 import os
 import uuid
 import numpy as np
 import rasterio
-from rasterio.features import shapes
+from rasterio.features import shapes, sieve
 from scipy.cluster.vq import kmeans2, whiten
 from typing import Optional, Dict, Any, List
 
@@ -23,6 +24,9 @@ from app.services.storage import create_storage_service, generate_tenant_bucket_
 from app.services.fiware_integration import FIWAREClient
 
 logger = logging.getLogger(__name__)
+
+MIN_PATCH_PIXELS = 10          # islands smaller than this are absorbed (sieve, 8-connected)
+MAX_ENTITY_BYTES = 900 * 1024  # Orion rejects bodies near 1 MB
 
 
 class ZoningAlgorithm:
@@ -67,6 +71,25 @@ class ZoningAlgorithm:
         
         return output_labels, centroids
 
+    @staticmethod
+    def _simplify_coverage(geoms: Dict[int, Any], tolerance: float) -> Dict[int, Any]:
+        """Simplify all zones together so shared edges stay shared.
+
+        Needs shapely >= 2.1 (coverage_simplify); on older shapely nothing is
+        simplified (per-zone simplification would open gaps/overlaps).
+        """
+        import shapely
+        if not hasattr(shapely, "coverage_simplify"):
+            return geoms
+        ids = list(geoms)
+        try:
+            out = shapely.coverage_simplify(np.array([geoms[i] for i in ids], dtype=object), tolerance)
+        except Exception as e:
+            logger.warning(f"Coverage simplification failed, keeping raw geometry: {e}")
+            return geoms
+        return {i: g for i, g in zip(ids, out) if not g.is_empty} | {
+            i: geoms[i] for i, g in zip(ids, out) if g.is_empty}
+
     def vectorize_zones(self, label_img: np.ndarray, transform, ndvi_data: np.ndarray,
                         centroids: np.ndarray, crs=None):
         """
@@ -75,7 +98,7 @@ class ZoningAlgorithm:
 
         All connected patches of a cluster are dissolved (unary_union), patches smaller
         than one pixel are dropped, and the geometry is simplified with half a pixel
-        tolerance (in raster CRS units) before reprojecting to EPSG:4326.
+        tolerance (in raster CRS units, coverage-wide) before reprojecting to EPSG:4326.
         mean_value / area_ha describe the whole cluster.
 
         crs: raster CRS (rasterio CRS or anything CRS.from_user_input accepts); required.
@@ -94,6 +117,8 @@ class ZoningAlgorithm:
 
         label_img_int = label_img.astype(np.int32)
         mask = label_img_int != -1
+        # Absorb salt-and-pepper islands into their neighbours (nodata stays untouched)
+        label_img_int = sieve(label_img_int, size=MIN_PATCH_PIXELS, mask=mask, connectivity=8)
 
         # Sort zone IDs by their centroid (ascending NDVI)
         centroid_vals = centroids.flatten()
@@ -124,16 +149,13 @@ class ZoningAlgorithm:
                 return px_area_crs * factor * factor
             return (px_w * 111320.0 * math.cos(math.radians(lat_deg))) * (px_h * 110574.0)
 
+        zone_ids = sorted(patches)
+        merged = {z: unary_union(patches[z]) for z in zone_ids}
+        merged = self._simplify_coverage(merged, tolerance)
+
         features = []
-        for zone_id in sorted(patches):
-            parts = [g for g in patches[zone_id] if g.area >= px_area_crs * 0.999]
-            if not parts:
-                parts = [max(patches[zone_id], key=lambda g: g.area)]
-            merged = unary_union(parts)
-            simple = merged.simplify(tolerance, preserve_topology=True)
-            if simple.is_empty:
-                simple = merged
-            wgs = transform_geom(src_crs, "EPSG:4326", mapping(simple), precision=7)
+        for zone_id in zone_ids:
+            wgs = transform_geom(src_crs, "EPSG:4326", mapping(merged[zone_id]), precision=7)
 
             zone_mask = label_img_int == zone_id
             zone_pixels = ndvi_data[zone_mask]
@@ -164,6 +186,7 @@ class ZoningAlgorithm:
         short = parcel_id.split(':')[-1]
         published = set()
         failed = 0
+        entities = []
         for zone in vectors:
             props = zone['properties']
             zone_id = f"urn:ngsi-ld:AgriManagementZone:{short}:Z{props['zone_id']}"
@@ -211,6 +234,17 @@ class ZoningAlgorithm:
                     "value": "NDVI"
                 }
             }
+            entities.append((zone_id, entity))
+
+        # Size guard: refuse the whole run before touching the broker
+        for zone_id, entity in entities:
+            size = len(json.dumps(entity).encode("utf-8"))
+            if size > MAX_ENTITY_BYTES:
+                msg = f"Zone {zone_id} is too large to publish ({size} bytes > {MAX_ENTITY_BYTES})"
+                logger.error(msg)
+                return {"run_id": run_id, "published": 0, "failed": 0, "error": msg}
+
+        for zone_id, entity in entities:
             # POST; the client falls back to PATCH on 409 (zone already exists)
             try:
                 ok = self.fiware.create_entity(entity)
@@ -336,6 +370,8 @@ class ZoningAlgorithm:
 
         # 4. Upload to Orion — enriched with zoneClass and prescriptionRate
         outcome = self.publish_zones(parcel_id, vectors)
+        if outcome.get("error"):
+            return {"status": "error", "message": outcome["error"]}
         if outcome["published"] == 0:
             return {"status": "error", "message": "Failed to publish any management zone to the context broker"}
 
