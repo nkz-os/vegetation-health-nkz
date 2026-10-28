@@ -5,6 +5,7 @@ Designed for N8N integration and Intelligence Module handoff.
 """
 
 import logging
+import math
 import os
 import uuid
 import numpy as np
@@ -66,17 +67,29 @@ class ZoningAlgorithm:
         
         return output_labels, centroids
 
-    def vectorize_zones(self, label_img: np.ndarray, transform, ndvi_data: np.ndarray, centroids: np.ndarray):
+    def vectorize_zones(self, label_img: np.ndarray, transform, ndvi_data: np.ndarray,
+                        centroids: np.ndarray, crs=None):
         """
-        Converts clustering result to GeoJSON polygons with enriched properties:
-        zone_id, cluster_id, zone_class, mean_value, area_ha.
+        Converts clustering result to ONE GeoJSON (Multi)Polygon feature per cluster,
+        in WGS84, with properties: zone_id, cluster_id, zone_class, mean_value, area_ha.
 
-        zone_class is computed from per-zone mean NDVI relative to centroid order:
-          - Highest centroid → "high"
-          - Middle centroid(s) → "medium"
-          - Lowest centroid → "low"
+        All connected patches of a cluster are dissolved (unary_union), patches smaller
+        than one pixel are dropped, and the geometry is simplified with half a pixel
+        tolerance (in raster CRS units) before reprojecting to EPSG:4326.
+        mean_value / area_ha describe the whole cluster.
+
+        crs: raster CRS (rasterio CRS or anything CRS.from_user_input accepts).
+        ASSUMPTION: crs=None means EPSG:4326.
+
+        zone_class is computed from the cluster centroid order:
+          - Highest centroid -> "high", lowest -> "low", others -> "medium"
         """
-        from shapely.geometry import shape as shapely_shape
+        from shapely.geometry import shape as shapely_shape, mapping
+        from shapely.ops import unary_union
+        from rasterio.crs import CRS
+        from rasterio.warp import transform_geom
+
+        src_crs = CRS.from_user_input(crs) if crs is not None else CRS.from_epsg(4326)
 
         label_img_int = label_img.astype(np.int32)
         mask = label_img_int != -1
@@ -96,35 +109,48 @@ class ZoningAlgorithm:
             else:
                 zone_class_map[int(zone_id)] = "medium"
 
-        def _compute_area_ha(geom: dict) -> float:
-            try:
-                s = shapely_shape(geom)
-                # Transform from degrees to meters approximation
-                return s.area * 111319.9 * 111319.9 * 0.0001  # rough m² → ha
-            except Exception:
-                return 0.0
+        px_w, px_h = abs(transform[0]), abs(transform[4])
+        px_area_crs = px_w * px_h
+        tolerance = 0.5 * min(px_w, px_h)
+
+        patches: Dict[int, list] = {}
+        for geom, v in shapes(label_img_int, mask=mask, transform=transform):
+            patches.setdefault(int(v), []).append(shapely_shape(geom))
+
+        def _pixel_area_m2(lat_deg: float) -> float:
+            if src_crs.is_projected:
+                factor = src_crs.linear_units_factor[1]
+                return px_area_crs * factor * factor
+            return (px_w * 111320.0 * math.cos(math.radians(lat_deg))) * (px_h * 110574.0)
 
         features = []
-        for i, (s, v) in enumerate(shapes(label_img_int, mask=mask, transform=transform)):
-            zone_id = int(v)
+        for zone_id in sorted(patches):
+            parts = [g for g in patches[zone_id] if g.area >= px_area_crs * 0.999]
+            if not parts:
+                parts = [max(patches[zone_id], key=lambda g: g.area)]
+            merged = unary_union(parts)
+            simple = merged.simplify(tolerance, preserve_topology=True)
+            if simple.is_empty:
+                simple = merged
+            wgs = transform_geom(src_crs, "EPSG:4326", mapping(simple), precision=7)
+
             zone_mask = label_img_int == zone_id
             zone_pixels = ndvi_data[zone_mask]
             mean_val = float(np.nanmean(zone_pixels)) if len(zone_pixels) > 0 else 0.0
-            pixel_area_ha = (abs(transform[0]) * abs(transform[4])) / 10000  # m²/px → ha
-            area_ha = float(np.count_nonzero(zone_mask)) * pixel_area_ha
-            zone_class = zone_class_map.get(zone_id, "medium")
+            lat = shapely_shape(wgs).centroid.y
+            area_ha = float(np.count_nonzero(zone_mask)) * _pixel_area_m2(lat) / 10000.0
             prescription_rate = 1.0 + (mean_val - 0.3) * 0.5  # simple linear mapping
 
             features.append({
                 'properties': {
                     'zone_id': zone_id,
                     'cluster_id': zone_id,
-                    'zone_class': zone_class,
+                    'zone_class': zone_class_map.get(zone_id, "medium"),
                     'mean_value': round(mean_val, 4),
                     'area_ha': round(area_ha, 2),
                     'prescription_rate': round(max(0.5, min(2.0, prescription_rate)), 2),
                 },
-                'geometry': s,
+                'geometry': wgs,
             })
         return features
 
@@ -279,6 +305,7 @@ class ZoningAlgorithm:
             with rasterio.open(local_path) as src:
                 ndvi_data = src.read(1)
                 transform = src.transform
+                raster_crs = src.crs
 
             # 2. Cluster
             labels, centroids = self.cluster_raster(ndvi_data, n_zones)
@@ -292,7 +319,7 @@ class ZoningAlgorithm:
                 return {"status": "error", "message": "Clustering failed"}
 
             # 3. Vectorize — pass NDVI data for per-zone statistics
-            vectors = self.vectorize_zones(labels, transform, ndvi_data, centroids)
+            vectors = self.vectorize_zones(labels, transform, ndvi_data, centroids, raster_crs)
 
             if not vectors:
                 logger.warning("No zones generated")

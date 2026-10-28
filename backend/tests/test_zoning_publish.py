@@ -136,6 +136,7 @@ def test_generate_zones_errors_when_nothing_published(monkeypatch):
 
 class _FakeSrc:
     transform = None
+    crs = None
 
     def __enter__(self):
         return self
@@ -281,3 +282,79 @@ def test_client_create_generic_exception_does_not_patch():
     c.session.post.side_effect = requests.ConnectionError("down")
     assert c.create_entity({"id": f"{PREFIX}0", "type": "AgriManagementZone"}) is False
     c.session.patch.assert_not_called()
+
+
+# ---- vectorize_zones: one entity per cluster, WGS84 ----------------------------
+
+import numpy as np
+import rasterio
+from rasterio.crs import CRS
+from rasterio.transform import from_origin
+from shapely.geometry import shape as _shape
+
+
+def _roundtrip(tmp_path, labels, epsg, x0, y0, px):
+    """Write a synthetic raster with rasterio and read crs/transform back."""
+    path = str(tmp_path / "r.tif")
+    with rasterio.open(path, "w", driver="GTiff", height=labels.shape[0],
+                       width=labels.shape[1], count=1, dtype="float32",
+                       crs=CRS.from_epsg(epsg), transform=from_origin(x0, y0, px, px)) as dst:
+        dst.write(np.zeros(labels.shape, dtype="float32"), 1)
+    with rasterio.open(path) as src:
+        return src.crs, src.transform
+
+
+def _algo_v():
+    return ZoningAlgorithm.__new__(ZoningAlgorithm)
+
+
+def test_split_cluster_gives_one_multipolygon_with_summed_area(tmp_path):
+    labels = np.zeros((10, 30), dtype=int)
+    labels[:, 12:18] = 1          # cluster 1 splits cluster 0 in two patches
+    ndvi = np.where(labels == 0, 0.4, 0.8).astype("float64")
+    crs, tr = _roundtrip(tmp_path, labels, 32630, 500000.0, 4600000.0, 10.0)
+    feats = _algo_v().vectorize_zones(labels, tr, ndvi, np.array([0.4, 0.8]), crs)
+    assert [f["properties"]["zone_id"] for f in feats] == [0, 1]
+    z0 = feats[0]
+    assert z0["geometry"]["type"] == "MultiPolygon"
+    assert len(z0["geometry"]["coordinates"]) == 2
+    # 10x24 px of 10 m = 2.4 ha (whole cluster, both patches)
+    assert z0["properties"]["area_ha"] == 2.4
+    assert z0["properties"]["mean_value"] == 0.4
+    assert feats[1]["geometry"]["type"] == "Polygon"
+
+
+def test_utm_raster_is_published_as_lon_lat(tmp_path):
+    labels = np.zeros((20, 20), dtype=int)
+    labels[:, 10:] = 1
+    ndvi = np.full(labels.shape, 0.5)
+    crs, tr = _roundtrip(tmp_path, labels, 32630, 500000.0, 4600000.0, 10.0)
+    feats = _algo_v().vectorize_zones(labels, tr, ndvi, np.array([0.4, 0.8]), crs)
+    for f in feats:
+        minx, miny, maxx, maxy = _shape(f["geometry"]).bounds
+        assert -3.01 < minx and maxx < -2.99
+        assert 41.54 < miny and maxy < 41.57
+
+
+def test_geographic_raster_area_in_hectares(tmp_path):
+    labels = np.zeros((10, 10), dtype=int)
+    ndvi = np.full(labels.shape, 0.5)
+    px = 0.0001  # ~ 8.3 m x 11 m at 41 N
+    crs, tr = _roundtrip(tmp_path, labels, 4326, -3.0, 41.5, px)
+    f = _algo_v().vectorize_zones(labels, tr, ndvi, np.array([0.5]), crs)[0]
+    assert 0.8 < f["properties"]["area_ha"] < 1.0   # 100 px * ~93 m2
+
+
+def test_stair_stepped_boundary_is_simplified(tmp_path):
+    n = 40
+    rows, cols = np.indices((n, n))
+    labels = (cols > rows).astype(int)       # stair-stepped diagonal
+    ndvi = np.full(labels.shape, 0.5)
+    crs, tr = _roundtrip(tmp_path, labels, 32630, 500000.0, 4600000.0, 10.0)
+    from rasterio.features import shapes as _shapes
+    raw = sum(len(g["coordinates"][0]) for g, v in
+              _shapes(labels.astype("int32"), transform=tr) if v == 1)
+    f = [x for x in _algo_v().vectorize_zones(labels, tr, ndvi, np.array([0.4, 0.8]), crs)
+         if x["properties"]["zone_id"] == 1][0]
+    out = len(f["geometry"]["coordinates"][0])
+    assert out < raw
