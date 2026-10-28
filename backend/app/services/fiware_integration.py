@@ -547,7 +547,7 @@ class FIWAREClient:
             return False
         except Exception as e:
             logger.error("Failed to create entity: %s", e)
-            return self.update_entity(entity)
+            return False
 
     def update_entity(self, entity: Dict[str, Any]) -> bool:
         try:
@@ -578,7 +578,10 @@ class FIWAREClient:
             if filters:
                 for key, value in filters.items():
                     params['q'] = f"{key}=={value}"
-            response = self.session.get(url, params=params, timeout=10)
+            response = self.session.get(
+                url, params=params, timeout=10,
+                headers={'Accept': 'application/json', 'Content-Type': None},
+            )
             response.raise_for_status()
             return response.json()
         except Exception as e:
@@ -596,9 +599,11 @@ class FIWAREClient:
         while True:
             response = self.session.get(
                 url,
-                params={'type': entity_type, 'q': q, 'attrs': 'id',
+                params={'type': entity_type, 'q': q,
                         'limit': page_size, 'offset': offset},
-                headers={'Accept': 'application/json'},
+                # None drops the session's ld+json Content-Type: with a Link
+                # header it makes Orion answer 400 on a GET.
+                headers={'Accept': 'application/json', 'Content-Type': None},
                 timeout=10,
             )
             response.raise_for_status()

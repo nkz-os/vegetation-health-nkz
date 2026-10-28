@@ -228,3 +228,43 @@ def test_client_create_409_falls_back_to_patch():
     c.session.patch.return_value = _Resp(204)
     assert c.create_entity({"id": f"{PREFIX}0", "type": "AgriManagementZone"}) is True
     c.session.patch.assert_called_once()
+
+
+def test_client_list_get_headers_and_params():
+    c = _client()
+    c.session.get.return_value = _Resp(200, [])
+    c.list_entity_ids("AgriManagementZone", f'hasAgriParcel=="{PARCEL}"')
+    kw = c.session.get.call_args.kwargs
+    assert "Content-Type" in kw["headers"] and kw["headers"]["Content-Type"] is None
+    assert "attrs" not in kw["params"]
+    assert kw["params"]["q"] == f'hasAgriParcel=="{PARCEL}"'
+
+
+def test_client_session_keeps_link_when_context_set(monkeypatch):
+    monkeypatch.setenv("CONTEXT_URL", "http://ctx.invalid/c.json")
+    c = FIWAREClient("http://orion.invalid", tenant_id="acme")
+    assert "Link" in c.session.headers
+
+
+def test_client_get_drops_content_type_on_real_request(monkeypatch):
+    monkeypatch.setenv("CONTEXT_URL", "http://ctx.invalid/c.json")
+    c = FIWAREClient("http://orion.invalid", tenant_id="acme")
+    req = requests.Request("GET", "http://orion.invalid/x",
+                           headers={"Content-Type": None, "Accept": "application/json"})
+    prepared = c.session.prepare_request(req)
+    assert "Content-Type" not in prepared.headers
+    assert "Link" in prepared.headers
+
+
+def test_client_query_entities_get_has_no_content_type():
+    c = _client()
+    c.session.get.return_value = _Resp(200, [])
+    c.query_entities("AgriManagementZone", {"a": "b"})
+    assert c.session.get.call_args.kwargs["headers"]["Content-Type"] is None
+
+
+def test_client_create_generic_exception_does_not_patch():
+    c = _client()
+    c.session.post.side_effect = requests.ConnectionError("down")
+    assert c.create_entity({"id": f"{PREFIX}0", "type": "AgriManagementZone"}) is False
+    c.session.patch.assert_not_called()
