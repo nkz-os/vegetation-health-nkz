@@ -542,12 +542,36 @@ class FIWAREClient:
                 logger.info("Created entity %s", entity.get('id'))
                 return True
             if response.status_code == 409:
-                return self.update_entity(entity)
+                return self._append_attrs(entity)
             logger.error("Failed to create entity: %s - %s", response.status_code, response.text)
             return False
         except Exception as e:
             logger.error("Failed to create entity: %s", e)
             return False
+
+    def _append_attrs(self, entity: Dict[str, Any]) -> bool:
+        """POST /attrs: adds missing attributes and overwrites existing ones.
+
+        Unlike PATCH /attrs it can introduce attributes the entity lacks.
+        204 = done; 207 = partial (logged, False).
+        """
+        entity_id = entity.get('id')
+        url = f"{self.context_broker_url}/ngsi-ld/v1/entities/{entity_id}/attrs"
+        attrs = {k: v for k, v in entity.items() if k not in ('id', 'type', '@context')}
+        try:
+            response = self.session.post(
+                url, json=attrs, timeout=10,
+                headers={"Content-Type": "application/json"},
+            )
+        except Exception as e:
+            logger.error("Failed to append attrs to %s: %s", entity_id, e)
+            return False
+        if response.status_code == 204:
+            logger.info("Appended attrs to entity %s", entity_id)
+            return True
+        logger.error("Failed to append attrs to %s: %s - %s",
+                     entity_id, response.status_code, response.text)
+        return False
 
     def update_entity(self, entity: Dict[str, Any]) -> bool:
         try:

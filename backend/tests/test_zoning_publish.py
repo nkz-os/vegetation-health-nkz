@@ -170,6 +170,7 @@ class _FakeDb:
 class _Resp:
     def __init__(self, status, body=None):
         self.status_code, self._body = status, body
+        self.text = ""
 
     def json(self):
         return self._body
@@ -222,12 +223,24 @@ def test_client_create_posts_json_without_ld_context():
     assert "@context" not in kw["json"]
 
 
-def test_client_create_409_falls_back_to_patch():
+def test_client_create_409_appends_attrs_via_post():
     c = _client()
-    c.session.post.return_value = _Resp(409)
-    c.session.patch.return_value = _Resp(204)
-    assert c.create_entity({"id": f"{PREFIX}0", "type": "AgriManagementZone"}) is True
-    c.session.patch.assert_called_once()
+    c.session.post.side_effect = [_Resp(409), _Resp(204)]
+    ent = {"id": f"{PREFIX}0", "type": "AgriManagementZone",
+           "meanValue": {"type": "Property", "value": 0.5}}
+    assert c.create_entity(ent) is True
+    first, second = c.session.post.call_args_list
+    assert second.args[0].endswith(f"/ngsi-ld/v1/entities/{PREFIX}0/attrs")
+    assert second.kwargs["json"] == {"meanValue": {"type": "Property", "value": 0.5}}
+    assert second.kwargs["headers"]["Content-Type"] == "application/json"
+    c.session.patch.assert_not_called()
+
+
+def test_client_create_409_then_207_is_false():
+    c = _client()
+    c.session.post.side_effect = [_Resp(409), _Resp(207)]
+    assert c.create_entity({"id": f"{PREFIX}0", "type": "T", "a": {"type": "Property", "value": 1}}) is False
+
 
 
 def test_client_list_get_headers_and_params():
