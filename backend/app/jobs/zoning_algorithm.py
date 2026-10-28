@@ -5,10 +5,13 @@ Designed for N8N integration and Intelligence Module handoff.
 """
 
 import logging
+import json
+import math
 import os
+import uuid
 import numpy as np
 import rasterio
-from rasterio.features import shapes
+from rasterio.features import shapes, sieve
 from scipy.cluster.vq import kmeans2, whiten
 from typing import Optional, Dict, Any, List
 
@@ -21,6 +24,9 @@ from app.services.storage import create_storage_service, generate_tenant_bucket_
 from app.services.fiware_integration import FIWAREClient
 
 logger = logging.getLogger(__name__)
+
+MIN_PATCH_PIXELS = 10          # islands smaller than this are absorbed (sieve, 8-connected)
+MAX_ENTITY_BYTES = 900 * 1024  # Orion rejects bodies near 1 MB
 
 
 class ZoningAlgorithm:
@@ -65,20 +71,54 @@ class ZoningAlgorithm:
         
         return output_labels, centroids
 
-    def vectorize_zones(self, label_img: np.ndarray, transform, ndvi_data: np.ndarray, centroids: np.ndarray):
-        """
-        Converts clustering result to GeoJSON polygons with enriched properties:
-        zone_id, cluster_id, zone_class, mean_value, area_ha.
+    @staticmethod
+    def _simplify_coverage(geoms: Dict[int, Any], tolerance: float) -> Dict[int, Any]:
+        """Simplify all zones together so shared edges stay shared.
 
-        zone_class is computed from per-zone mean NDVI relative to centroid order:
-          - Highest centroid → "high"
-          - Middle centroid(s) → "medium"
-          - Lowest centroid → "low"
+        Needs shapely >= 2.1 (coverage_simplify); on older shapely nothing is
+        simplified (per-zone simplification would open gaps/overlaps).
         """
-        from shapely.geometry import shape as shapely_shape
+        import shapely
+        if not hasattr(shapely, "coverage_simplify"):
+            return geoms
+        ids = list(geoms)
+        try:
+            out = shapely.coverage_simplify(np.array([geoms[i] for i in ids], dtype=object), tolerance)
+        except Exception as e:
+            logger.warning(f"Coverage simplification failed, keeping raw geometry: {e}")
+            return geoms
+        return {i: g for i, g in zip(ids, out) if not g.is_empty} | {
+            i: geoms[i] for i, g in zip(ids, out) if g.is_empty}
+
+    def vectorize_zones(self, label_img: np.ndarray, transform, ndvi_data: np.ndarray,
+                        centroids: np.ndarray, crs=None):
+        """
+        Converts clustering result to ONE GeoJSON (Multi)Polygon feature per cluster,
+        in WGS84, with properties: zone_id, cluster_id, zone_class, mean_value, area_ha.
+
+        All connected patches of a cluster are dissolved (unary_union), patches smaller
+        than one pixel are dropped, and the geometry is simplified with half a pixel
+        tolerance (in raster CRS units, coverage-wide) before reprojecting to EPSG:4326.
+        mean_value / area_ha describe the whole cluster.
+
+        crs: raster CRS (rasterio CRS or anything CRS.from_user_input accepts); required.
+
+        zone_class is computed from the cluster centroid order:
+          - Highest centroid -> "high", lowest -> "low", others -> "medium"
+        """
+        from shapely.geometry import shape as shapely_shape, mapping
+        from shapely.ops import unary_union
+        from rasterio.crs import CRS
+        from rasterio.warp import transform_geom
+
+        if crs is None:
+            raise ValueError("raster has no CRS")
+        src_crs = CRS.from_user_input(crs)
 
         label_img_int = label_img.astype(np.int32)
         mask = label_img_int != -1
+        # Absorb salt-and-pepper islands into their neighbours (nodata stays untouched)
+        label_img_int = sieve(label_img_int, size=MIN_PATCH_PIXELS, mask=mask, connectivity=8)
 
         # Sort zone IDs by their centroid (ascending NDVI)
         centroid_vals = centroids.flatten()
@@ -95,37 +135,153 @@ class ZoningAlgorithm:
             else:
                 zone_class_map[int(zone_id)] = "medium"
 
-        def _compute_area_ha(geom: dict) -> float:
-            try:
-                s = shapely_shape(geom)
-                # Transform from degrees to meters approximation
-                return s.area * 111319.9 * 111319.9 * 0.0001  # rough m² → ha
-            except Exception:
-                return 0.0
+        px_w, px_h = abs(transform[0]), abs(transform[4])
+        px_area_crs = px_w * px_h
+        tolerance = 0.5 * min(px_w, px_h)
+
+        patches: Dict[int, list] = {}
+        for geom, v in shapes(label_img_int, mask=mask, transform=transform):
+            patches.setdefault(int(v), []).append(shapely_shape(geom))
+
+        def _pixel_area_m2(lat_deg: float) -> float:
+            if src_crs.is_projected:
+                factor = src_crs.linear_units_factor[1]
+                return px_area_crs * factor * factor
+            return (px_w * 111320.0 * math.cos(math.radians(lat_deg))) * (px_h * 110574.0)
+
+        zone_ids = sorted(patches)
+        merged = {z: unary_union(patches[z]) for z in zone_ids}
+        merged = self._simplify_coverage(merged, tolerance)
 
         features = []
-        for i, (s, v) in enumerate(shapes(label_img_int, mask=mask, transform=transform)):
-            zone_id = int(v)
+        for zone_id in zone_ids:
+            wgs = transform_geom(src_crs, "EPSG:4326", mapping(merged[zone_id]), precision=7)
+
             zone_mask = label_img_int == zone_id
             zone_pixels = ndvi_data[zone_mask]
             mean_val = float(np.nanmean(zone_pixels)) if len(zone_pixels) > 0 else 0.0
-            pixel_area_ha = (abs(transform[0]) * abs(transform[4])) / 10000  # m²/px → ha
-            area_ha = float(np.count_nonzero(zone_mask)) * pixel_area_ha
-            zone_class = zone_class_map.get(zone_id, "medium")
+            lat = shapely_shape(wgs).centroid.y
+            area_ha = float(np.count_nonzero(zone_mask)) * _pixel_area_m2(lat) / 10000.0
             prescription_rate = 1.0 + (mean_val - 0.3) * 0.5  # simple linear mapping
 
             features.append({
                 'properties': {
                     'zone_id': zone_id,
                     'cluster_id': zone_id,
-                    'zone_class': zone_class,
+                    'zone_class': zone_class_map.get(zone_id, "medium"),
                     'mean_value': round(mean_val, 4),
                     'area_ha': round(area_ha, 2),
                     'prescription_rate': round(max(0.5, min(2.0, prescription_rate)), 2),
                 },
-                'geometry': s,
+                'geometry': wgs,
             })
         return features
+
+    def publish_zones(self, parcel_id: str, vectors: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Create/update zone entities for one run; if any succeeded, delete stale zones.
+
+        Returns {"run_id", "published", "failed"}.
+        """
+        run_id = str(uuid.uuid4())
+        short = parcel_id.split(':')[-1]
+        published = set()
+        failed = 0
+        entities = []
+        for zone in vectors:
+            props = zone['properties']
+            zone_id = f"urn:ngsi-ld:AgriManagementZone:{short}:Z{props['zone_id']}"
+            entity = {
+                "id": zone_id,
+                "type": "AgriManagementZone",
+                "hasAgriParcel": {
+                    "type": "Relationship",
+                    "object": parcel_id
+                },
+                "location": {
+                    "type": "GeoProperty",
+                    "value": zone['geometry']
+                },
+                "zoneName": {
+                    "type": "Property",
+                    "value": f"Zone {props['zone_id'] + 1}"
+                },
+                "zoneId": {
+                    "type": "Property",
+                    "value": props['zone_id']
+                },
+                "zoneClass": {
+                    "type": "Property",
+                    "value": props['zone_class']
+                },
+                "prescriptionRate": {
+                    "type": "Property",
+                    "value": props['prescription_rate']
+                },
+                "areaHa": {
+                    "type": "Property",
+                    "value": props['area_ha']
+                },
+                "meanValue": {
+                    "type": "Property",
+                    "value": round(float(props['mean_value']), 4)
+                },
+                "zoningRunId": {
+                    "type": "Property",
+                    "value": run_id
+                },
+                "variableAttribute": {
+                    "type": "Property",
+                    "value": "NDVI"
+                }
+            }
+            entities.append((zone_id, entity))
+
+        # Size guard: refuse the whole run before touching the broker
+        for zone_id, entity in entities:
+            size = len(json.dumps(entity).encode("utf-8"))
+            if size > MAX_ENTITY_BYTES:
+                msg = f"Zone {zone_id} is too large to publish ({size} bytes > {MAX_ENTITY_BYTES})"
+                logger.error(msg)
+                return {"run_id": run_id, "published": 0, "failed": 0, "error": msg}
+
+        for zone_id, entity in entities:
+            # POST; the client falls back to PATCH on 409 (zone already exists)
+            try:
+                ok = self.fiware.create_entity(entity)
+            except Exception as e:
+                logger.warning(f"Failed to publish zone {zone_id}: {e}")
+                ok = False
+            if ok:
+                published.add(zone_id)
+                logger.info(f"Created/Updated Zone: {zone_id}")
+            else:
+                failed += 1
+                logger.warning(f"Failed to publish zone {zone_id}")
+
+        if published:
+            self._delete_stale_zones(parcel_id, short, published)
+        else:
+            logger.error(f"No zone published for {parcel_id}; stale zones kept")
+        return {"run_id": run_id, "published": len(published), "failed": failed}
+
+    def _delete_stale_zones(self, parcel_id: str, short: str, published: set) -> None:
+        """Remove zones of this parcel left over from a previous run with more zones."""
+        prefix = f"urn:ngsi-ld:AgriManagementZone:{short}:Z"
+        try:
+            existing = self.fiware.list_entity_ids(
+                "AgriManagementZone", f'hasAgriParcel=="{parcel_id}"'
+            )
+        except Exception as e:
+            logger.warning(f"Could not list previous zones for {parcel_id}: {e}")
+            return
+        for eid in existing:
+            if not eid.startswith(prefix) or eid in published:
+                continue
+            try:
+                self.fiware.delete_entity(eid)
+                logger.info(f"Deleted stale zone: {eid}")
+            except Exception as e:
+                logger.warning(f"Failed to delete stale zone {eid}: {e}")
 
     async def generate_zones(self, parcel_id: str, n_zones: int=3, source_index: str = 'NDVI'):
         """
@@ -184,6 +340,13 @@ class ZoningAlgorithm:
             with rasterio.open(local_path) as src:
                 ndvi_data = src.read(1)
                 transform = src.transform
+                raster_crs = src.crs
+
+            if raster_crs is None:
+                logger.error("Raster for %s has no CRS; refusing to generate zones", parcel_id)
+                if os.path.exists(local_path):
+                    os.remove(local_path)
+                return {"status": "error", "message": "raster has no CRS"}
 
             # 2. Cluster
             labels, centroids = self.cluster_raster(ndvi_data, n_zones)
@@ -197,7 +360,7 @@ class ZoningAlgorithm:
                 return {"status": "error", "message": "Clustering failed"}
 
             # 3. Vectorize — pass NDVI data for per-zone statistics
-            vectors = self.vectorize_zones(labels, transform, ndvi_data, centroids)
+            vectors = self.vectorize_zones(labels, transform, ndvi_data, centroids, raster_crs)
 
             if not vectors:
                 logger.warning("No zones generated")
@@ -206,51 +369,11 @@ class ZoningAlgorithm:
             db.close()
 
         # 4. Upload to Orion — enriched with zoneClass and prescriptionRate
-        for zone in vectors:
-            props = zone['properties']
-            zone_id = f"urn:ngsi-ld:AgriManagementZone:{parcel_id.split(':')[-1]}:Z{props['zone_id']}"
-            entity = {
-                "id": zone_id,
-                "type": "AgriManagementZone",
-                "hasAgriParcel": {
-                    "type": "Relationship",
-                    "object": parcel_id
-                },
-                "location": {
-                    "type": "GeoProperty",
-                    "value": zone['geometry']
-                },
-                "zoneName": {
-                    "type": "Property",
-                    "value": f"Zone {props['zone_id'] + 1}"
-                },
-                "zoneId": {
-                    "type": "Property",
-                    "value": props['zone_id']
-                },
-                "zoneClass": {
-                    "type": "Property",
-                    "value": props['zone_class']
-                },
-                "prescriptionRate": {
-                    "type": "Property",
-                    "value": props['prescription_rate']
-                },
-                "areaHa": {
-                    "type": "Property",
-                    "value": props['area_ha']
-                },
-                "variableAttribute": {
-                    "type": "Property",
-                    "value": "NDVI"
-                }
-            }
-            # Create or Update via FIWARE Client
-            try:
-                self.fiware.update_entity(entity)
-                logger.info(f"Created/Updated Zone: {zone_id}")
-            except Exception as e:
-                logger.warning(f"Failed to update zone {zone_id}: {e}")
+        outcome = self.publish_zones(parcel_id, vectors)
+        if outcome.get("error"):
+            return {"status": "error", "message": outcome["error"]}
+        if outcome["published"] == 0:
+            return {"status": "error", "message": "Failed to publish any management zone to the context broker"}
 
         logger.info(f"Successfully generated {len(vectors)} zones for {parcel_id}")
 
@@ -262,7 +385,8 @@ class ZoningAlgorithm:
         return {
             "status": "success",
             "parcel_id": parcel_id,
-            "zones_created": len(vectors),
+            "zones_created": outcome["published"],
+            "zones_failed": outcome["failed"],
             "geojson": geojson,
             "webhook_metadata": {
                 "intelligence_module_compatible": True,

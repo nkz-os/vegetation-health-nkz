@@ -532,17 +532,46 @@ class FIWAREClient:
     def create_entity(self, entity: Dict[str, Any]) -> bool:
         try:
             url = f"{self.context_broker_url}/ngsi-ld/v1/entities"
-            response = self.session.post(url, json=entity, timeout=10)
+            # Body carries no @context: application/json + the session Link header
+            # (ld+json without a body @context is an Orion 400).
+            response = self.session.post(
+                url, json=entity, timeout=10,
+                headers={"Content-Type": "application/json"},
+            )
             if response.status_code in (201, 204):
                 logger.info("Created entity %s", entity.get('id'))
                 return True
             if response.status_code == 409:
-                return self.update_entity(entity)
+                return self._append_attrs(entity)
             logger.error("Failed to create entity: %s - %s", response.status_code, response.text)
             return False
         except Exception as e:
             logger.error("Failed to create entity: %s", e)
-            return self.update_entity(entity)
+            return False
+
+    def _append_attrs(self, entity: Dict[str, Any]) -> bool:
+        """POST /attrs: adds missing attributes and overwrites existing ones.
+
+        Unlike PATCH /attrs it can introduce attributes the entity lacks.
+        204 = done; 207 = partial (logged, False).
+        """
+        entity_id = entity.get('id')
+        url = f"{self.context_broker_url}/ngsi-ld/v1/entities/{entity_id}/attrs"
+        attrs = {k: v for k, v in entity.items() if k not in ('id', 'type', '@context')}
+        try:
+            response = self.session.post(
+                url, json=attrs, timeout=10,
+                headers={"Content-Type": "application/json"},
+            )
+        except Exception as e:
+            logger.error("Failed to append attrs to %s: %s", entity_id, e)
+            return False
+        if response.status_code == 204:
+            logger.info("Appended attrs to entity %s", entity_id)
+            return True
+        logger.error("Failed to append attrs to %s: %s - %s",
+                     entity_id, response.status_code, response.text)
+        return False
 
     def update_entity(self, entity: Dict[str, Any]) -> bool:
         try:
@@ -573,9 +602,46 @@ class FIWAREClient:
             if filters:
                 for key, value in filters.items():
                     params['q'] = f"{key}=={value}"
-            response = self.session.get(url, params=params, timeout=10)
+            response = self.session.get(
+                url, params=params, timeout=10,
+                headers={'Accept': 'application/json', 'Content-Type': None},
+            )
             response.raise_for_status()
             return response.json()
         except Exception as e:
             logger.error("Failed to query entities: %s", e)
             return []
+
+    def list_entity_ids(self, entity_type: str, q: str, page_size: int = 100) -> List[str]:
+        """Return every entity id of a type matching q, following pagination.
+
+        Raises on HTTP errors: callers must not mistake a failed read for an empty set.
+        """
+        url = f"{self.context_broker_url}/ngsi-ld/v1/entities"
+        ids: List[str] = []
+        offset = 0
+        while True:
+            response = self.session.get(
+                url,
+                params={'type': entity_type, 'q': q,
+                        'limit': page_size, 'offset': offset},
+                # None drops the session's ld+json Content-Type: with a Link
+                # header it makes Orion answer 400 on a GET.
+                headers={'Accept': 'application/json', 'Content-Type': None},
+                timeout=10,
+            )
+            response.raise_for_status()
+            page = response.json()
+            ids.extend(e['id'] for e in page if e.get('id'))
+            if len(page) < page_size:
+                return ids
+            offset += page_size
+
+    def delete_entity(self, entity_id: str) -> bool:
+        """Delete an entity. 404 is tolerated (returns False); other errors raise."""
+        url = f"{self.context_broker_url}/ngsi-ld/v1/entities/{entity_id}"
+        response = self.session.delete(url, timeout=10)
+        if response.status_code == 404:
+            return False
+        response.raise_for_status()
+        return True
