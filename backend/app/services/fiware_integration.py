@@ -579,3 +579,35 @@ class FIWAREClient:
         except Exception as e:
             logger.error("Failed to query entities: %s", e)
             return []
+
+    def list_entity_ids(self, entity_type: str, q: str, page_size: int = 100) -> List[str]:
+        """Return every entity id of a type matching q, following pagination.
+
+        Raises on HTTP errors: callers must not mistake a failed read for an empty set.
+        """
+        url = f"{self.context_broker_url}/ngsi-ld/v1/entities"
+        ids: List[str] = []
+        offset = 0
+        while True:
+            response = self.session.get(
+                url,
+                params={'type': entity_type, 'q': q, 'attrs': 'id',
+                        'limit': page_size, 'offset': offset},
+                headers={'Accept': 'application/json'},
+                timeout=10,
+            )
+            response.raise_for_status()
+            page = response.json()
+            ids.extend(e['id'] for e in page if e.get('id'))
+            if len(page) < page_size:
+                return ids
+            offset += page_size
+
+    def delete_entity(self, entity_id: str) -> bool:
+        """Delete an entity. 404 is tolerated (returns False); other errors raise."""
+        url = f"{self.context_broker_url}/ngsi-ld/v1/entities/{entity_id}"
+        response = self.session.delete(url, timeout=10)
+        if response.status_code == 404:
+            return False
+        response.raise_for_status()
+        return True

@@ -6,6 +6,7 @@ Designed for N8N integration and Intelligence Module handoff.
 
 import logging
 import os
+import uuid
 import numpy as np
 import rasterio
 from rasterio.features import shapes
@@ -127,6 +128,88 @@ class ZoningAlgorithm:
             })
         return features
 
+    def publish_zones(self, parcel_id: str, vectors: List[Dict[str, Any]]) -> str:
+        """Publish zone entities for one run, then delete stale zones of the parcel."""
+        run_id = str(uuid.uuid4())
+        short = parcel_id.split(':')[-1]
+        published = set()
+        for zone in vectors:
+            props = zone['properties']
+            zone_id = f"urn:ngsi-ld:AgriManagementZone:{short}:Z{props['zone_id']}"
+            published.add(zone_id)
+            entity = {
+                "id": zone_id,
+                "type": "AgriManagementZone",
+                "hasAgriParcel": {
+                    "type": "Relationship",
+                    "object": parcel_id
+                },
+                "location": {
+                    "type": "GeoProperty",
+                    "value": zone['geometry']
+                },
+                "zoneName": {
+                    "type": "Property",
+                    "value": f"Zone {props['zone_id'] + 1}"
+                },
+                "zoneId": {
+                    "type": "Property",
+                    "value": props['zone_id']
+                },
+                "zoneClass": {
+                    "type": "Property",
+                    "value": props['zone_class']
+                },
+                "prescriptionRate": {
+                    "type": "Property",
+                    "value": props['prescription_rate']
+                },
+                "areaHa": {
+                    "type": "Property",
+                    "value": props['area_ha']
+                },
+                "meanValue": {
+                    "type": "Property",
+                    "value": round(float(props['mean_value']), 4)
+                },
+                "zoningRunId": {
+                    "type": "Property",
+                    "value": run_id
+                },
+                "variableAttribute": {
+                    "type": "Property",
+                    "value": "NDVI"
+                }
+            }
+            # Create or Update via FIWARE Client
+            try:
+                self.fiware.update_entity(entity)
+                logger.info(f"Created/Updated Zone: {zone_id}")
+            except Exception as e:
+                logger.warning(f"Failed to update zone {zone_id}: {e}")
+
+        self._delete_stale_zones(parcel_id, short, published)
+        return run_id
+
+    def _delete_stale_zones(self, parcel_id: str, short: str, published: set) -> None:
+        """Remove zones of this parcel left over from a previous run with more zones."""
+        prefix = f"urn:ngsi-ld:AgriManagementZone:{short}:Z"
+        try:
+            existing = self.fiware.list_entity_ids(
+                "AgriManagementZone", f'hasAgriParcel=="{parcel_id}"'
+            )
+        except Exception as e:
+            logger.warning(f"Could not list previous zones for {parcel_id}: {e}")
+            return
+        for eid in existing:
+            if not eid.startswith(prefix) or eid in published:
+                continue
+            try:
+                self.fiware.delete_entity(eid)
+                logger.info(f"Deleted stale zone: {eid}")
+            except Exception as e:
+                logger.warning(f"Failed to delete stale zone {eid}: {e}")
+
     async def generate_zones(self, parcel_id: str, n_zones: int=3, source_index: str = 'NDVI'):
         """
         Main workflow:
@@ -206,51 +289,7 @@ class ZoningAlgorithm:
             db.close()
 
         # 4. Upload to Orion — enriched with zoneClass and prescriptionRate
-        for zone in vectors:
-            props = zone['properties']
-            zone_id = f"urn:ngsi-ld:AgriManagementZone:{parcel_id.split(':')[-1]}:Z{props['zone_id']}"
-            entity = {
-                "id": zone_id,
-                "type": "AgriManagementZone",
-                "hasAgriParcel": {
-                    "type": "Relationship",
-                    "object": parcel_id
-                },
-                "location": {
-                    "type": "GeoProperty",
-                    "value": zone['geometry']
-                },
-                "zoneName": {
-                    "type": "Property",
-                    "value": f"Zone {props['zone_id'] + 1}"
-                },
-                "zoneId": {
-                    "type": "Property",
-                    "value": props['zone_id']
-                },
-                "zoneClass": {
-                    "type": "Property",
-                    "value": props['zone_class']
-                },
-                "prescriptionRate": {
-                    "type": "Property",
-                    "value": props['prescription_rate']
-                },
-                "areaHa": {
-                    "type": "Property",
-                    "value": props['area_ha']
-                },
-                "variableAttribute": {
-                    "type": "Property",
-                    "value": "NDVI"
-                }
-            }
-            # Create or Update via FIWARE Client
-            try:
-                self.fiware.update_entity(entity)
-                logger.info(f"Created/Updated Zone: {zone_id}")
-            except Exception as e:
-                logger.warning(f"Failed to update zone {zone_id}: {e}")
+        self.publish_zones(parcel_id, vectors)
 
         logger.info(f"Successfully generated {len(vectors)} zones for {parcel_id}")
 
