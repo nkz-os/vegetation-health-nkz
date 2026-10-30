@@ -674,14 +674,66 @@ export class VegetationApiClient {
 
   /**
    * List all AgriParcel entities for the current tenant
-   * Uses the main Nekazari API (NGSI-LD broker via gateway)
+   * Uses the main Nekazari API (NGSI-LD broker via gateway) and enriches
+   * latestNDVI from canonical EOProduct entities when not directly on AgriParcel.
    */
   async listTenantParcels(): Promise<any[]> {
     try {
       const response = await this.orionClient.get('/ngsi-ld/v1/entities', {
         params: { type: 'AgriParcel' },
       });
-      return Array.isArray(response.data) ? response.data : [];
+      const parcels = Array.isArray(response.data) ? response.data : [];
+      if (parcels.length === 0) return [];
+
+      try {
+        const eoResp = await this.orionClient.get('/ngsi-ld/v1/entities', {
+          params: {
+            type: 'EOProduct',
+            attrs: 'hasAgriParcel,refAgriParcel,sensingDate,ndvi',
+            limit: 1000,
+          },
+        });
+        const eoList = Array.isArray(eoResp.data) ? eoResp.data : [];
+        const latestByParcel = new Map<string, { value: number; sensingDate: string }>();
+
+        for (const eo of eoList) {
+          const parcelRef =
+            eo?.hasAgriParcel?.object ??
+            eo?.hasAgriParcel?.value ??
+            eo?.refAgriParcel?.object ??
+            eo?.refAgriParcel?.value;
+          if (!parcelRef || typeof parcelRef !== 'string') continue;
+
+          const rawNdvi = eo?.ndvi?.value ?? eo?.ndvi;
+          const ndviVal = typeof rawNdvi === 'number' ? rawNdvi : Number(rawNdvi);
+          if (!Number.isFinite(ndviVal)) continue;
+
+          const sensingDate = String(eo?.sensingDate?.value ?? eo?.sensingDate ?? '');
+          const prev = latestByParcel.get(parcelRef);
+          if (!prev || sensingDate >= prev.sensingDate) {
+            latestByParcel.set(parcelRef, { value: ndviVal, sensingDate });
+          }
+        }
+
+        return parcels.map((parcel: any) => {
+          if (parcel?.latestNDVI?.value !== undefined && parcel?.latestNDVI?.value !== null) {
+            return parcel;
+          }
+          const latest = latestByParcel.get(parcel.id);
+          if (!latest) return parcel;
+          return {
+            ...parcel,
+            latestNDVI: {
+              type: 'Property',
+              value: latest.value,
+              observedAt: latest.sensingDate || undefined,
+            },
+          };
+        });
+      } catch (eoError) {
+        console.warn('[VegetationApi] Could not enrich parcels with EOProduct NDVI:', eoError);
+        return parcels;
+      }
     } catch (error) {
       console.error('[VegetationApi] Error fetching tenant parcels:', error);
       return [];
