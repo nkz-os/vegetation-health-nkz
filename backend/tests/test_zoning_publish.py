@@ -418,3 +418,52 @@ def test_oversized_zone_errors_and_touches_nothing():
     assert out["published"] == 0 and f"{PREFIX}1" in out["error"]
     algo.fiware.create_entity.assert_not_called()
     algo.fiware.delete_entity.assert_not_called()
+
+
+# ---- zoning vocabulary: several zonings per parcel coexist ---------------------
+
+def test_published_zone_has_zoning_method():
+    algo = _algo()
+    algo.publish_zones(PARCEL, _vectors(2))
+    for ent in _sent(algo):
+        assert ent["zoningMethod"] == {"type": "Property", "value": "vegetationIndex"}
+
+
+def test_published_zone_has_date_zoned():
+    from datetime import datetime
+    algo = _algo()
+    algo.publish_zones(PARCEL, _vectors(3))
+    values = [e["dateZoned"]["value"] for e in _sent(algo)]
+    assert {v["@type"] for v in values} == {"DateTime"}
+    dates = {v["@value"] for v in values}
+    assert len(dates) == 1
+    (value,) = dates
+    assert datetime.fromisoformat(value).tzinfo is not None
+
+
+def test_variable_attribute_follows_source_index():
+    algo = _algo()
+    algo.publish_zones(PARCEL, _vectors(2), source_index="NDRE")
+    assert {e["variableAttribute"]["value"] for e in _sent(algo)} == {"NDRE"}
+
+
+def test_stale_delete_keeps_manual_zones():
+    manual = "urn:ngsi-ld:AgriManagementZone:acme:p1:manual-1a2b3c4d-1"
+    algo = _algo(existing_ids=[manual, f"{PREFIX}7"])
+    algo.publish_zones(PARCEL, _vectors(3))
+    deleted = [c.args[0] for c in algo.fiware.delete_entity.call_args_list]
+    assert deleted == [f"{PREFIX}7"]
+
+
+def test_generate_zones_forwards_source_index(monkeypatch):
+    import asyncio
+    import app.jobs.zoning_algorithm as za
+    algo = _algo()
+    monkeypatch.setattr(za, "get_db_session", lambda: iter([_FakeDb()]))
+    monkeypatch.setattr(za, "create_storage_service", lambda **k: MagicMock())
+    monkeypatch.setattr(za.rasterio, "open", lambda p: _FakeSrc(), raising=False)
+    monkeypatch.setattr(za.os.path, "exists", lambda p: False)
+    monkeypatch.setattr(algo, "cluster_raster", lambda d, n: (object(), object()))
+    monkeypatch.setattr(algo, "vectorize_zones", lambda *a: _vectors(2))
+    asyncio.run(algo.generate_zones(PARCEL, 2, source_index="NDRE"))
+    assert {e["variableAttribute"]["value"] for e in _sent(algo)} == {"NDRE"}

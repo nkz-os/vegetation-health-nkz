@@ -9,6 +9,7 @@ import json
 import math
 import os
 import uuid
+from datetime import datetime, timezone
 import numpy as np
 import rasterio
 from rasterio.features import shapes, sieve
@@ -177,12 +178,18 @@ class ZoningAlgorithm:
             })
         return features
 
-    def publish_zones(self, parcel_id: str, vectors: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def publish_zones(self, parcel_id: str, vectors: List[Dict[str, Any]],
+                      source_index: str = "NDVI") -> Dict[str, Any]:
         """Create/update zone entities for one run; if any succeeded, delete stale zones.
+
+        Every zone of a run carries the same zoningRunId and dateZoned, and
+        zoningMethod "vegetationIndex" so readers can tell it from other
+        zonings of the parcel (manual, terrain, ...).
 
         Returns {"run_id", "published", "failed"}.
         """
         run_id = str(uuid.uuid4())
+        date_zoned = datetime.now(timezone.utc).isoformat()
         short = parcel_id.split(':')[-1]
         published = set()
         failed = 0
@@ -229,9 +236,17 @@ class ZoningAlgorithm:
                     "type": "Property",
                     "value": run_id
                 },
+                "zoningMethod": {
+                    "type": "Property",
+                    "value": "vegetationIndex"
+                },
+                "dateZoned": {
+                    "type": "Property",
+                    "value": {"@type": "DateTime", "@value": date_zoned}
+                },
                 "variableAttribute": {
                     "type": "Property",
-                    "value": "NDVI"
+                    "value": source_index
                 }
             }
             entities.append((zone_id, entity))
@@ -369,7 +384,7 @@ class ZoningAlgorithm:
             db.close()
 
         # 4. Upload to Orion — enriched with zoneClass and prescriptionRate
-        outcome = self.publish_zones(parcel_id, vectors)
+        outcome = self.publish_zones(parcel_id, vectors, source_index)
         if outcome.get("error"):
             return {"status": "error", "message": outcome["error"]}
         if outcome["published"] == 0:
