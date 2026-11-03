@@ -347,7 +347,7 @@ urn:ngsi-ld:AgriManagementZone:abc123:Z0
 {
   "id": "urn:ngsi-ld:AgriManagementZone:abc123:Z0",
   "type": "AgriManagementZone",
-  "refAgriParcel": {
+  "hasAgriParcel": {
     "type": "Relationship",
     "object": "urn:ngsi-ld:AgriParcel:abc123"
   },
@@ -378,6 +378,22 @@ urn:ngsi-ld:AgriManagementZone:abc123:Z0
     "type": "Property",
     "value": 2.85
   },
+  "meanValue": {
+    "type": "Property",
+    "value": 0.41
+  },
+  "zoningRunId": {
+    "type": "Property",
+    "value": "3f6c2a1e-..."
+  },
+  "zoningMethod": {
+    "type": "Property",
+    "value": "vegetationIndex"
+  },
+  "dateZoned": {
+    "type": "Property",
+    "value": {"@type": "DateTime", "@value": "2026-06-01T10:00:00+00:00"}
+  },
   "variableAttribute": {
     "type": "Property",
     "value": "NDVI"
@@ -385,10 +401,15 @@ urn:ngsi-ld:AgriManagementZone:abc123:Z0
 }
 ```
 
+All zones of one run share `zoningRunId` and `dateZoned`. `zoningMethod` tells
+this zoning apart from others of the same parcel (for example, manual zones),
+and re-running the zoning only replaces zones of this module's `Z` id prefix.
+`variableAttribute` is the index the zoning was computed from.
+
 **Consuming from Orion-LD:** Other modules can query management zones by subscribing to `AgriManagementZone` entities or querying the Context Broker directly:
 
 ```
-GET /ngsi-ld/v1/entities?type=AgriManagementZone&q=refAgriParcel==%22urn:ngsi-ld:AgriParcel:abc123%22
+GET /ngsi-ld/v1/entities?type=AgriManagementZone&q=hasAgriParcel==%22urn:ngsi-ld:AgriParcel:abc123%22
 ```
 
 **Important:** The Orion-LD GeoJSON uses `location.value.geometry` -- the VRA API wraps it in a top-level `FeatureCollection` for direct consumption.
