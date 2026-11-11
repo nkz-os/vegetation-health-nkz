@@ -521,13 +521,16 @@ class FIWAREClient:
             'Content-Type': 'application/ld+json',
             'Accept': 'application/ld+json',
         })
-        ctx = os.getenv('CONTEXT_URL', '')
-        if ctx:
-            self.session.headers['Link'] = (
-                f'<{ctx}>; '
-                f'rel="http://www.w3.org/ns/json-ld#context"; '
-                f'type="application/ld+json"'
-            )
+        # Every request carries the platform @context (same default as the SDK client). Without it
+        # the entities written here land under the default vocabulary, where no other module's
+        # query can find them: refuse to run instead.
+        if not CONTEXT_URL:
+            raise RuntimeError("CONTEXT_URL is empty: broker writes would lose the platform vocabulary")
+        self.session.headers['Link'] = (
+            f'<{CONTEXT_URL}>; '
+            f'rel="http://www.w3.org/ns/json-ld#context"; '
+            f'type="application/ld+json"'
+        )
 
     def create_entity(self, entity: Dict[str, Any]) -> bool:
         try:
