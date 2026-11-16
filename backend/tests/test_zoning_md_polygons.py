@@ -77,7 +77,7 @@ def test_stair_edges_become_diagonals():
     polys = level_polygons(lv, g)
     border = polys[1].intersection(polys[2].buffer(0.5))
     vertices = sum(len(p.exterior.coords) for p in getattr(polys[1], "geoms", [polys[1]]))
-    assert vertices < 12
+    assert vertices < 15  # staircase (half-pixel tolerance) gives 19-23; diagonals 8-12 depending on GEOS
     assert border.length > 0
 
 
