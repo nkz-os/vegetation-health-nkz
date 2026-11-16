@@ -31,6 +31,10 @@ class BrokerUnavailable(Exception):
     pass
 
 
+class ZoningInvalid(Exception):
+    pass
+
+
 def _stamp(at: datetime) -> dict:
     return {"type": "Property", "value": {"@type": "DateTime", "@value": at.strftime("%Y-%m-%dT%H:%M:%SZ")}}
 
@@ -173,6 +177,35 @@ def note(db, fiware, tenant_id: str, parcel_id: str, zone_id: str, cause: str, u
                         else copy.deepcopy(e) for e in cur.entities]
         db.flush()
     return {"zone_id": zone_id, "run_id": cur.run_id, "cause": cause}
+
+
+def merge(db, fiware, tenant_id: str, parcel_id: str, run_id: str, ranks: tuple[int, int],
+          target_rank: int, user_id: str, now: datetime):
+    """Publish a new accepted run where two levels of the current zoning are one."""
+    import uuid
+
+    from app.jobs.zoning_multidate.merge import merge_levels
+    with versions.parcel_lock(db, tenant_id, parcel_id):
+        cur = versions.current(db, tenant_id, parcel_id)
+        if cur is None and versions.by_run(db, tenant_id, parcel_id, run_id) is None:
+            cur = _backfill(db, fiware, tenant_id, parcel_id, run_id)
+        if cur is None or cur.run_id != run_id:
+            raise ZoningConflict("only the current zoning can be edited")
+        new_run_id = uuid.uuid4().hex
+        try:
+            entities = merge_levels(cur.entities, ranks, target_rank, new_run_id, run_id, now)
+        except ValueError as exc:
+            raise ZoningInvalid(str(exc)) from exc
+        entities = with_causes(entities, assign_notes(versions.notes_of(db, tenant_id, parcel_id), entities))
+        try:
+            publish(fiware, entities)
+        except RuntimeError as exc:
+            raise BrokerUnavailable(str(exc)) from exc
+        retire_after_publish(fiware, parcel_id, new_run_id)
+        version = versions.record_current(db, tenant_id, parcel_id, new_run_id, entities, source="merge",
+                                          derived_from=run_id, index_type=cur.index_type,
+                                          accepted_at=now, accepted_by=user_id)
+    return version
 
 
 def summary(version) -> dict:

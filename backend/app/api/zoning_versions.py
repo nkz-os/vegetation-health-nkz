@@ -31,6 +31,8 @@ def _run(action):
         return action()
     except actions.ZoningNotFound as exc:
         raise HTTPException(status_code=404, detail="Zoning not found") from exc
+    except actions.ZoningInvalid as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except actions.ZoningConflict as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except actions.BrokerUnavailable as exc:
@@ -69,6 +71,24 @@ def note_zone(parcel_id: str, zone_id: str, body: NoteRequest,
     tenant = current_user["tenant_id"]
     return _run(lambda: actions.note(db, broker_for(tenant), tenant, parcel_id, zone_id, body.cause,
                                      current_user["user_id"]))
+
+
+class MergeRequest(BaseModel):
+    run_id: str = Field(min_length=8, max_length=64)
+    ranks: list[int] = Field(min_length=2, max_length=2)
+    target_rank: int = Field(ge=1, le=4)
+
+
+@router.post("/{parcel_id}/merge")
+def merge_levels(parcel_id: str, body: MergeRequest,
+                 current_user: dict = Depends(require_auth),
+                 db: Session = Depends(get_db_with_tenant)):
+    tenant = current_user["tenant_id"]
+    a, b = body.ranks
+    version = _run(lambda: actions.merge(db, broker_for(tenant), tenant, parcel_id, body.run_id, (a, b),
+                                         body.target_rank, current_user["user_id"],
+                                         datetime.now(timezone.utc)))
+    return actions.summary(version)
 
 
 @router.get("/{parcel_id}/versions")
