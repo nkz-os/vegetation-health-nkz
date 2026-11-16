@@ -37,6 +37,8 @@ import type { ParcelOverview, ParcelSeasonCard, ParcelJobCard } from '../types';
 import { HistoricalChart } from './HistoricalChart';
 
 const STANDARD_INDICES = ['NDVI', 'EVI', 'SAVI', 'OSAVI', 'GNDVI', 'NDRE', 'NDMI'] as const;
+// Indices the zoning proposal accepts (NDMI measures water, not vigour).
+const ZONING_INDICES = ['NDVI', 'GNDVI', 'SAVI', 'OSAVI', 'EVI', 'NDRE'] as const;
 // What the backend computes for a parcel with no crop assigned (default_indices_for_species).
 const NO_CROP_DEFAULT_INDICES = ['NDVI', 'EVI', 'SAVI', 'GNDVI', 'NDRE'];
 const ALL_PILLS = [...STANDARD_INDICES, 'SAR'] as const;
@@ -125,7 +127,7 @@ const JobRow: React.FC<JobRowProps> = ({ job, onDelete, bulkMode, isSelected, on
             {job.is_vra && job.zoning_source && (
               <span className="text-slate-500"> · {t('parcelDetail.vraSourceLabel', 'Source')}: {job.zoning_source}</span>
             )}
-            {job.is_vra && job.zones_created != null && (
+            {job.is_vra && job.zones_created != null && job.zoning_status !== 'no_zones' && (
               <span className="text-slate-500"> · {job.zones_created} {t('parcelDetail.vraZones', 'zones')}</span>
             )}
             {!job.is_vra && job.indices.length > 0 && (
@@ -135,6 +137,11 @@ const JobRow: React.FC<JobRowProps> = ({ job, onDelete, bulkMode, isSelected, on
               <span className="text-slate-500"> · {job.index_type}</span>
             )}
           </span>
+          {job.is_vra && job.zoning_status === 'no_zones' && job.zoning_reason && (
+            <span className="w-full text-[11px] text-amber-700">
+              {t(`zoning.noZonesReason.${job.zoning_reason}`, 'No zones')}
+            </span>
+          )}
           {job.sensing_date && (
             <span className="text-[11px] text-slate-500">{t('parcelDetail.sensingDate', 'Sensed')}: {fmtDate(job.sensing_date)}</span>
           )}
@@ -562,31 +569,16 @@ interface AdvancedSectionProps {
   onAction: () => void;
 }
 
-const AdvancedSection: React.FC<AdvancedSectionProps> = ({ entityId, defaultIndex, onAction }) => {
+const AdvancedSection: React.FC<AdvancedSectionProps> = ({ entityId, onAction }) => {
   const { t } = useTranslation();
   const api = useVegetationApi();
   const [open, setOpen] = useState(false);
 
-  // ─── VRA Zoning ────────────────────────────────────────────────────────
-  const [vraSource, setVraSource] = useState<string>(defaultIndex || 'NDVI');
+  // ─── VRA Zoning (multi-date proposal) ─────────────────────────────────────
+  // 'auto' lets the backend choose the index from the parcel's crop.
+  const [vraSource, setVraSource] = useState<string>('auto');
   const [vraBusy, setVraBusy] = useState(false);
   const [vraMsg, setVraMsg] = useState<{ type: 'ok' | 'error'; text: string } | null>(null);
-  const [availableDates, setAvailableDates] = useState<Array<{sensing_date: string; index_type: string}>>([]);
-  const [selectedVraDate, setSelectedVraDate] = useState<string>('latest');
-
-  // Load available raster dates when the section opens
-  useEffect(() => {
-    if (open && entityId) {
-      api.getAvailableRasterDates(entityId)
-        .then(r => {
-          const dates = r.dates.filter((d: any) => d.index_type === vraSource);
-          setAvailableDates(dates);
-          if (dates.length > 0) setSelectedVraDate(dates[0].sensing_date);
-          else setSelectedVraDate('latest');
-        })
-        .catch(() => setAvailableDates([]));
-    }
-  }, [open, entityId, vraSource, api]);
 
   const handleVra = async () => {
     setVraBusy(true);
@@ -595,8 +587,7 @@ const AdvancedSection: React.FC<AdvancedSectionProps> = ({ entityId, defaultInde
       const res = await api.calculateIndex({
         entity_id: entityId,
         index_type: 'VRA_ZONES' as any,
-        source_index: vraSource,
-        sensing_date: selectedVraDate === 'latest' ? undefined : selectedVraDate,
+        source_index: vraSource === 'auto' ? undefined : vraSource,
       });
       setVraMsg({
         type: 'ok',
@@ -766,8 +757,8 @@ const AdvancedSection: React.FC<AdvancedSectionProps> = ({ entityId, defaultInde
             </h4>
             <p className="text-[11px] text-slate-500 mb-2">
               {t(
-                'parcelDetail.vraHint',
-                'Splits the parcel into prescription zones based on the chosen index. Run this once you have a recent computed index for the parcel.',
+                'zoning.proposeHint',
+                'Splits the parcel into up to four levels (high, medium, low, critical) by its relative vigour across all useful dates of the last two years. If the evidence shows no clear differences, no zones are proposed.',
               )}
             </p>
             <div className="flex flex-wrap items-center gap-2">
@@ -778,23 +769,9 @@ const AdvancedSection: React.FC<AdvancedSectionProps> = ({ entityId, defaultInde
                 disabled={vraBusy}
                 className="text-xs px-2 py-1 border border-slate-300 rounded-lg bg-white"
               >
-                {STANDARD_INDICES.map((idx) => (
+                <option value="auto">{t('zoning.indexAuto', 'Automatic (by crop)')}</option>
+                {ZONING_INDICES.map((idx) => (
                   <option key={idx} value={idx}>{idx}</option>
-                ))}
-              </select>
-
-              <label className="text-xs text-slate-600">{t('parcelDetail.vraDateLabel', 'Date')}:</label>
-              <select
-                value={selectedVraDate}
-                onChange={(e) => setSelectedVraDate(e.target.value)}
-                disabled={vraBusy || availableDates.length === 0}
-                className="text-xs px-2 py-1 border border-slate-300 rounded-lg bg-white"
-              >
-                {availableDates.length === 0 && <option value="latest">{t('parcelDetail.vraLatestAvailable', 'Latest available')}</option>}
-                {availableDates.map(d => (
-                  <option key={`${d.sensing_date}-${d.index_type}`} value={d.sensing_date}>
-                    {d.sensing_date}
-                  </option>
                 ))}
               </select>
 
@@ -804,7 +781,7 @@ const AdvancedSection: React.FC<AdvancedSectionProps> = ({ entityId, defaultInde
                 className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-emerald-600 text-white font-semibold hover:bg-emerald-700 disabled:opacity-50"
               >
                 {vraBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Beaker className="w-3.5 h-3.5" />}
-                {t('parcelDetail.vraGenerate', 'Generate zones')}
+                {t('zoning.propose', 'Propose zoning')}
               </button>
             </div>
             {vraMsg && (
