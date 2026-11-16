@@ -15,7 +15,7 @@ import rasterio
 from affine import Affine
 from pyproj import Transformer
 from rasterio.features import geometry_mask
-from rasterio.io import MemoryFile
+from rasterio import MemoryFile
 from rasterio.warp import Resampling, reproject
 from shapely.geometry import shape
 from shapely.geometry.base import BaseGeometry
