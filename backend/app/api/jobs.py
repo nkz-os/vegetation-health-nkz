@@ -117,21 +117,9 @@ async def get_zoning_geojson(
     db: Session = Depends(get_db_with_tenant),
 ):
     """Get latest zoning result as GeoJSON for a parcel."""
-    from sqlalchemy import text
+    from app.services.zoning_layer import latest_zoning_job
 
-    job = (
-        db.query(VegetationJob)
-        .filter(
-            VegetationJob.tenant_id == current_user["tenant_id"],
-            VegetationJob.entity_id == parcel_id,
-            VegetationJob.job_type == "calculate_index",
-            VegetationJob.status == "completed",
-            # Only VRA_ZONES jobs have zoning geojson
-            text("result->>'index_type' = 'VRA_ZONES'"),
-        )
-        .order_by(VegetationJob.created_at.desc())
-        .first()
-    )
+    job = latest_zoning_job(db, current_user["tenant_id"], parcel_id)
     if not job or not job.result or "geojson" not in job.result:
         raise HTTPException(status_code=404, detail="No zoning data available")
     return job.result["geojson"]
