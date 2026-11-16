@@ -14,6 +14,7 @@ import numpy as np
 from app.jobs.zoning_multidate import config as cfg
 
 RANK_HIGH, RANK_MEDIUM, RANK_LOW, RANK_CRITICAL = 1, 2, 3, 4
+_REFERENCE_ITERATIONS = 20
 
 
 def usable_dates(stack: np.ndarray, inside: np.ndarray, index: str) -> tuple[list[int], dict[str, int]]:
@@ -35,6 +36,30 @@ def usable_dates(stack: np.ndarray, inside: np.ndarray, index: str) -> tuple[lis
     return keep, dropped
 
 
+def _nanmedian(rel: np.ndarray) -> np.ndarray:
+    # All-NaN pixels (outside, or never clear) are expected: silence numpy's warning.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        return np.nanmedian(rel, axis=0).astype("float32")
+
+
+def _relative(stack: np.ndarray, inside: np.ndarray, expected: np.ndarray | None) -> np.ndarray:
+    """Each date divided by its parcel reference (plain mean, or mean corrected by ``expected``)."""
+    rel = np.full(stack.shape, np.nan, dtype="float32")
+    for i, day in enumerate(stack):
+        clear = inside & np.isfinite(day)
+        if expected is not None:
+            clear &= np.isfinite(expected)
+        if not clear.any():
+            continue
+        ref = float(np.mean(day[clear]))
+        if expected is not None:
+            ref /= float(np.mean(expected[clear]))
+        if np.isfinite(ref) and ref > 0:
+            rel[i] = np.where(inside, day / ref, np.nan)
+    return rel
+
+
 @dataclass
 class LevelResult:
     levels: np.ndarray      # int8: 0 outside / never valid, 1..4 rank
@@ -46,19 +71,27 @@ class LevelResult:
 
 def classify(stack: np.ndarray, inside: np.ndarray) -> LevelResult:
     """Per-pixel level from the relative vigour of every date."""
-    rel = np.full(stack.shape, np.nan, dtype="float32")
-    for i, day in enumerate(stack):
-        mean = np.nanmean(np.where(inside, day, np.nan))
-        if np.isfinite(mean) and mean > 0:
-            rel[i] = np.where(inside, day / mean, np.nan)
-    # All-NaN pixels (outside, or never clear) are expected: silence numpy's warning.
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", RuntimeWarning)
-        median_rel = np.nanmedian(rel, axis=0).astype("float32")
+    rel = _relative(stack, inside, None)
+    # A date's reference is the mean of its clear pixels corrected by how those pixels
+    # usually compare with the parcel; iterate to a fixed point. Clouds sitting on one
+    # vigour class would otherwise move the reference and shift every other pixel.
+    for _ in range(_REFERENCE_ITERATIONS):
+        expected = _nanmedian(rel)
+        known = inside & np.isfinite(expected)
+        if known.any():
+            # Relative vigour is defined up to a scale: anchor it so the parcel's mean is 1.
+            expected = expected / float(np.mean(expected[known]))
+        updated = _relative(stack, inside, expected)
+        converged = np.allclose(updated, rel, atol=1e-5, equal_nan=True)
+        rel = updated
+        if converged:
+            break
+    median_rel = _nanmedian(rel)
     valid_count = np.sum(~np.isnan(rel), axis=0)
+    seen_enough = valid_count >= max(1, int(np.ceil(cfg.MIN_PIXEL_DATE_SHARE * stack.shape[0])))
     critical_share = np.sum(rel < cfg.CRITICAL_MAX, axis=0) / np.maximum(valid_count, 1)
 
-    known = inside & np.isfinite(median_rel)
+    known = inside & np.isfinite(median_rel) & seen_enough
     values = median_rel[known]
     spread = float(np.percentile(values, 90) - np.percentile(values, 10)) if values.size else 0.0
 

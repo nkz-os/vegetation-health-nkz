@@ -30,7 +30,11 @@ LOW_MAX = _f("LOW_MAX", 0.90)
 CRITICAL_MAX = _f("CRITICAL_MAX", 0.75)
 CRITICAL_PERSISTENCE = _f("CRITICAL_PERSISTENCE", 0.8)
 MIN_ZONE_HA = _f("MIN_ZONE_HA", 0.25)
+# A pixel needs a value on at least this share of the dates to get a level.
+MIN_PIXEL_DATE_SHARE = _f("MIN_PIXEL_DATE_SHARE", 0.5)
 YEARS_BACK = _i("YEARS_BACK", 2)
 RES_M = _f("RES_M", 10.0)
+# Above this share of unavailable rasters the proposal is not trusted (fail-safe).
+MAX_FAILED_SHARE = _f("MAX_FAILED_SHARE", 0.2)
 
 ZONABLE_INDICES = frozenset(VEGETATED_FLOOR)

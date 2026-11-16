@@ -318,7 +318,8 @@ async def calculate_index_endpoint(
         parameters["result_index_key"] = f"custom:{request.formula_id}"
     if request.index_type == 'VRA_ZONES':
         # None lets the multi-date proposal choose the index from the parcel's crop.
-        parameters["source_index"] = request.source_index or None
+        from app.jobs.zoning_multidate.run import validate_zoning_index
+        parameters["source_index"] = validate_zoning_index(request.source_index)
         parameters["n_zones"] = request.n_zones
         if request.sensing_date:
             parameters["sensing_date"] = request.sensing_date
@@ -938,6 +939,8 @@ async def trigger_zoning(
 ):
     """Trigger a VRA zoning job for a parcel."""
     tenant_id = current_user["tenant_id"]
+    from app.jobs.zoning_multidate.run import validate_zoning_index
+    source_index = validate_zoning_index(request.source_index)
 
     job = VegetationJob(
         tenant_id=tenant_id,
@@ -948,7 +951,7 @@ async def trigger_zoning(
             "index_type": "VRA_ZONES",
             "entity_id": parcel_id,
             "n_zones": request.n_zones,
-            "source_index": request.source_index,
+            "source_index": source_index,
             "sensing_date": request.sensing_date,
         },
         created_by=current_user.get("user_id"),

@@ -66,7 +66,8 @@ def _fiware(existing=()):
 def test_proposal_publishes_and_retires_old_automatic():
     rows = [_row(i) for i in range(4)]
     tifs = {r.job_id: _tif(0.6) for r in rows}
-    fw = _fiware([{"id": "old", "zoningMethod": "vegetationIndex", "zoningRunId": "r0"}])
+    fw = _fiware([{"id": "old", "zoningMethod": "vegetationIndex", "zoningRunId": "r0",
+                   "hasAgriParcel": PARCEL_URN}])
     res = propose_zoning(_sources(rows, tifs), fw, PARCEL_URN, None, TODAY, NOW)
     assert res.status == "zones" and res.reason is None
     assert {z.level for z in res.zones} == {"high", "low"}
@@ -78,7 +79,8 @@ def test_proposal_publishes_and_retires_old_automatic():
 def test_not_enough_dates_is_no_zones_and_retires():
     rows = [_row(i) for i in range(2)]
     tifs = {r.job_id: _tif(0.6) for r in rows}
-    fw = _fiware([{"id": "old", "zoningMethod": "vegetationIndex", "zoningRunId": "r0"}])
+    fw = _fiware([{"id": "old", "zoningMethod": "vegetationIndex", "zoningRunId": "r0",
+                   "hasAgriParcel": PARCEL_URN}])
     res = propose_zoning(_sources(rows, tifs), fw, PARCEL_URN, None, TODAY, NOW)
     assert (res.status, res.reason) == ("no_zones", "not_enough_dates")
     fw.create_entity.assert_not_called()
@@ -128,3 +130,45 @@ def test_vra_job_result_no_zones():
     out = vra_job_result(res)
     assert out["status"] == "no_zones" and out["reason"] == "not_enough_dates"
     assert out["zones_created"] == 0 and out["geojson"]["features"] == []
+
+
+def test_outage_does_not_retire_current_zoning():
+    """Every raster failing (storage down, quota) must not delete the zoning in use."""
+    rows = [_row(i) for i in range(4)]
+    fw = _fiware([{"id": "old", "zoningMethod": "vegetationIndex", "zoningRunId": "r0",
+                   "hasAgriParcel": PARCEL_URN}])
+    res = propose_zoning(_sources(rows, {}), fw, PARCEL_URN, None, TODAY, NOW)
+    assert (res.status, res.reason) == ("no_zones", "sources_unavailable")
+    fw.delete_entity.assert_not_called()
+    fw.create_entity.assert_not_called()
+
+
+def test_partial_outage_does_not_replace_zoning():
+    rows = [_row(i) for i in range(6)]
+    tifs = {r.job_id: _tif(0.6) for r in rows[:3]}  # half the dates unavailable
+    fw = _fiware()
+    res = propose_zoning(_sources(rows, tifs), fw, PARCEL_URN, None, TODAY, NOW)
+    assert (res.status, res.reason) == ("no_zones", "sources_unavailable")
+    fw.create_entity.assert_not_called()
+    fw.delete_entity.assert_not_called()
+
+
+def test_features_carry_a_label_point_inside_the_zone():
+    from shapely.geometry import Point, shape
+    rows = [_row(i) for i in range(4)]
+    tifs = {r.job_id: _tif(0.6) for r in rows}
+    res = propose_zoning(_sources(rows, tifs), _fiware(), PARCEL_URN, None, TODAY, NOW)
+    for f in res.features:
+        lon, lat = f["properties"]["label_point"]
+        assert shape(f["geometry"]).buffer(1e-9).contains(Point(lon, lat))
+
+
+def test_zoning_index_is_validated_at_the_api():
+    from fastapi import HTTPException
+    from app.jobs.zoning_multidate.run import validate_zoning_index
+    assert validate_zoning_index(None) is None
+    assert validate_zoning_index("NDRE") == "NDRE"
+    for bad in ("NDMI", "SAR-VV", "bogus"):
+        with pytest.raises(HTTPException) as exc:
+            validate_zoning_index(bad)
+        assert exc.value.status_code == 422

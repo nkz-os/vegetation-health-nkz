@@ -52,7 +52,8 @@ def level_polygons(levels: np.ndarray, grid: Grid) -> dict[int, BaseGeometry]:
     largest = max(simplified, key=lambda r: (simplified[r].area, -r))
     out: dict[int, BaseGeometry] = {}
     claimed = None
-    for rank in sorted(r for r in simplified if r != largest):
+    # Critical claims first: a small critical patch must not be eaten by its neighbour.
+    for rank in sorted((r for r in simplified if r != largest), key=lambda r: (r != 4, r)):
         geom = simplified[rank] if claimed is None else simplified[rank].difference(claimed)
         geom = _polygonal(geom, pixel)
         if geom is None:
@@ -62,7 +63,19 @@ def level_polygons(levels: np.ndarray, grid: Grid) -> dict[int, BaseGeometry]:
     rest = grid.parcel_utm if claimed is None else grid.parcel_utm.difference(claimed)
     rest = _polygonal(rest, 0.0)
     if rest is not None:
-        out[largest] = rest
+        keep, slivers = [], []
+        for part in getattr(rest, "geoms", [rest]):
+            (keep if part.area >= pixel else slivers).append(part)
+        # Gaps left between simplified borders go to the neighbour they touch most.
+        for part in slivers:
+            touching = [(out[r].intersection(part.buffer(0.01)).area, -r, r) for r in out]
+            best = max(touching, default=None)
+            if best and best[0] > 0:
+                out[best[2]] = unary_union([out[best[2]], part])
+            else:
+                keep.append(part)
+        if keep:
+            out[largest] = unary_union(keep)
     return dict(sorted(out.items()))
 
 
@@ -87,10 +100,13 @@ def _confirms(rank: int, mean_rel: float) -> bool:
 
 
 def summarize(levels: np.ndarray, stack: np.ndarray, rel: np.ndarray,
-              polygons: dict[int, BaseGeometry]) -> list[ZoneSummary]:
+              polygons: dict[int, BaseGeometry], core: np.ndarray | None = None) -> list[ZoneSummary]:
+    """Statistics per level, measured on ``core`` pixels (the mixed border ring is skipped)."""
     zones: list[ZoneSummary] = []
     for rank, geom in sorted(polygons.items()):
         mask = levels == rank
+        if core is not None and (mask & core).any():
+            mask = mask & core
         if not mask.any():
             continue
         per_date = [float(np.nanmean(day[mask])) for day in rel if np.isfinite(day[mask]).any()]

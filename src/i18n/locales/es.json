@@ -176,7 +176,7 @@
       "critical": "Crítico"
     },
     "reviewInField": "Revisar en campo",
-    "confirmedDates": "Por encima/debajo de la media en {{n}} de {{total}} fechas",
+    "confirmedDates": "Coherente con su nivel en {{n}} de {{total}} fechas",
     "relativeVigour": "Vigor {{pct}} respecto a la media de la parcela",
     "noZonesReason": {
       "not_enough_dates": "Sin zonas: no hay suficientes imágenes útiles (con cultivo y sin nubes). Descarga más fechas de la campaña.",

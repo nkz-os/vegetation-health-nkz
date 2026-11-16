@@ -58,7 +58,8 @@ def test_nan_holes_do_not_bias_date_mean():
     holed = d.copy()
     holed[10:, 10:] = np.nan
     r = classify(_stack(d, holed, d), INSIDE)
-    assert np.allclose(r.rel[1][~np.isnan(r.rel[1])], (holed / np.nanmean(holed))[~np.isnan(holed)])
+    clear = ~np.isnan(holed)
+    assert np.allclose(r.rel[1][clear], r.rel[0][clear], atol=1e-4)
     assert set(np.unique(r.levels[:5, :5])) == {4}
 
 
@@ -70,3 +71,26 @@ def test_outside_and_never_valid_pixels_are_zero():
     r = classify(_stack(d, d, d), inside)
     assert (r.levels[0, :] == 0).all()
     assert r.levels[5, 5] == 0
+
+
+def test_clouds_over_one_class_do_not_shift_the_reference():
+    """Clouds sitting on the weaker half must not make that half look lower than it is."""
+    day = np.full((H, W), 0.66)
+    day[:, W // 2:] = 0.57
+    clear = classify(_stack(day, day, day), INSIDE)
+    cloudy = day.copy()
+    cloudy[: int(H * 0.6), W // 2:] = np.nan  # ~30 % of the parcel, all on the weak side
+    r = classify(_stack(day, cloudy, cloudy), INSIDE)
+    seen = r.levels > 0  # cloudy pixels seen on 1 of 3 dates get no level of their own
+    assert seen[:, W // 2:].any()
+    assert np.array_equal(r.levels[seen], clear.levels[seen])
+
+
+def test_pixels_seen_on_too_few_dates_get_no_level():
+    day = np.full((H, W), 0.6)
+    rare = day.copy()
+    rare[3, 3] = 0.2
+    others = day.copy()
+    others[3, 3] = np.nan
+    r = classify(_stack(rare, others, others, others), INSIDE)
+    assert r.levels[3, 3] == 0

@@ -35,6 +35,11 @@ export const VegetationLayer: React.FC = () => {
   const api = useVegetationApi();
   const layerRefs = useRef<any[]>([]);
   const dataSourceRef = useRef<any>(null);
+  const clickHandlerRef = useRef<any>(null);
+  // Card of the clicked zoning zone (the host viewer has no info box).
+  const [zoneCard, setZoneCard] = useState<null | {
+    level: string; pct: number; area: number | null; confirming: number | null; total: number | null;
+  }>(null);
 
   // Resolve rasters for the selected acquisition: a scene (local engine) or,
   // for Copernicus acquisitions that have no scene, a sensing date. Without a
@@ -132,6 +137,12 @@ export const VegetationLayer: React.FC = () => {
       dataSourceRef.current = null;
     }
 
+    if (clickHandlerRef.current) {
+      try { clickHandlerRef.current.destroy(); } catch { /* destroyed */ }
+      clickHandlerRef.current = null;
+    }
+    setZoneCard(null);
+
     // VRA_ZONES branch: zones of the latest zoning job, coloured by level.
     if (selectedIndex === 'VRA_ZONES' && selectedEntityId) {
       const geoJsonUrl = `${API_ORIGIN}/api/vegetation/jobs/zoning/${encodeURIComponent(selectedEntityId)}/geojson`;
@@ -177,16 +188,12 @@ export const VegetationLayer: React.FC = () => {
             const pctText = `${pct > 0 ? '+' : ''}${pct} %`;
             const levelText = t(`zoning.level.${level}`, level);
             entity.name = `${levelText} ${pctText}`;
-            entity.description = [
-              `<p><b>${levelText}</b> · ${prop('area_ha')} ha</p>`,
-              `<p>${t('zoning.relativeVigour', 'Vigour {{pct}} vs parcel mean', { pct: pctText })}</p>`,
-              `<p>${t('zoning.confirmedDates', 'Above/below the mean on {{n}} of {{total}} dates', {
-                n: prop('confirming_dates'), total: prop('total_dates'),
-              })}</p>`,
-              level === 'critical' ? `<p><b>${t('zoning.reviewInField', 'Review in the field')}</b></p>` : '',
-            ].join('');
+            const anchor = prop('label_point');
             if (ring && ring.length > 2) {
-              const centre = Cesium.BoundingSphere.fromPoints(ring).center;
+              // The backend sends a point inside the zone; a ring centre can fall in another zone.
+              const centre = Array.isArray(anchor)
+                ? Cesium.Cartesian3.fromDegrees(anchor[0], anchor[1])
+                : Cesium.BoundingSphere.fromPoints(ring).center;
               dataSource.entities.add({
                 position: centre,
                 label: {
@@ -204,6 +211,21 @@ export const VegetationLayer: React.FC = () => {
           }
           viewer.dataSources.add(dataSource);
           dataSourceRef.current = dataSource;
+          const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+          handler.setInputAction((click: any) => {
+            const picked = viewer.scene.pick(click.position);
+            const props = picked?.id?.properties;
+            const level = props?.zone_level?.getValue?.();
+            if (!level || !dataSource.entities.contains(picked.id)) return;
+            setZoneCard({
+              level,
+              pct: props.relative_pct?.getValue?.() ?? 0,
+              area: props.area_ha?.getValue?.() ?? null,
+              confirming: props.confirming_dates?.getValue?.() ?? null,
+              total: props.total_dates?.getValue?.() ?? null,
+            });
+          }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+          clickHandlerRef.current = handler;
           viewer.flyTo(dataSource);
         })
         .catch((err: any) => {
@@ -349,9 +371,42 @@ export const VegetationLayer: React.FC = () => {
     ? document.querySelector('.cesium-viewer') || document.getElementById('cesiumContainer')
     : null;
 
-  if (!hasLayer || !dateLabel || !cesiumContainer) return null;
+  const pctText = zoneCard ? `${zoneCard.pct > 0 ? '+' : ''}${zoneCard.pct} %` : '';
+  const card = zoneCard && typeof document !== 'undefined' ? createPortal(
+    <div className="fixed bottom-24 right-6 z-50 w-64 bg-white rounded-lg shadow-lg border border-slate-200 p-3 text-xs text-slate-700">
+      <div className="flex items-start justify-between gap-2 mb-1">
+        <span className="text-sm font-semibold">
+          {t(`zoning.level.${zoneCard.level}`, zoneCard.level)} {pctText}
+        </span>
+        <button
+          type="button"
+          onClick={() => setZoneCard(null)}
+          className="text-slate-500 hover:text-slate-700"
+          aria-label={t('common.close', 'Close')}
+        >
+          ×
+        </button>
+      </div>
+      {zoneCard.area != null && <p>{zoneCard.area} ha</p>}
+      <p>{t('zoning.relativeVigour', 'Vigour {{pct}} vs parcel mean', { pct: pctText })}</p>
+      {zoneCard.total != null && (
+        <p>{t('zoning.confirmedDates', 'Consistent with its level on {{n}} of {{total}} dates', {
+          n: zoneCard.confirming, total: zoneCard.total,
+        })}</p>
+      )}
+      {zoneCard.level === 'critical' && (
+        <p className="mt-1 font-semibold text-amber-700">{t('zoning.reviewInField', 'Review in the field')}</p>
+      )}
+    </div>,
+    document.body,
+  ) : null;
 
-  return createPortal(
+  if (!hasLayer || !dateLabel || !cesiumContainer) return card;
+
+  return (
+    <>
+      {card}
+      {createPortal(
     <div
       className={`absolute bottom-16 left-1/2 -translate-x-1/2 z-50 pointer-events-none transition-all duration-500 ${
         isTransitioning ? 'scale-110 opacity-100' : 'scale-100 opacity-80'
@@ -364,7 +419,9 @@ export const VegetationLayer: React.FC = () => {
         <span>{dateLabel}</span>
       </div>
     </div>,
-    cesiumContainer,
+        cesiumContainer,
+      )}
+    </>
   );
 };
 

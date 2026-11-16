@@ -69,11 +69,21 @@ def build_entities(parcel_urn: str, run_id: str, index: str, dates: list[date],
     return entities
 
 
+AUTOMATIC_METHODS = frozenset({"vegetationIndex", METHOD})
+
+
 def publish(fiware, entities: list[dict]) -> None:
-    """Create every zone; any failure raises so nothing older is retired."""
+    """Create every zone, or none: a failure deletes the zones already created and raises."""
+    created: list[str] = []
     for entity in entities:
         if not fiware.create_entity(entity):
+            for eid in created:
+                try:
+                    fiware.delete_entity(eid)
+                except Exception:
+                    pass  # best effort; the run id differs, so it never mixes with a later one
             raise RuntimeError(f"broker refused zone {entity['id']}")
+        created.append(entity["id"])
 
 
 def _value(row: dict, name: str) -> Any:
@@ -91,7 +101,7 @@ def _list_parcel_zones(fiware, parcel_urn: str) -> list[dict]:
         response = fiware.session.get(
             f"{fiware.context_broker_url}/ngsi-ld/v1/entities",
             params={"type": ZONE_TYPE, "q": f'hasAgriParcel=="{parcel_urn}"', "options": "keyValues",
-                    "attrs": "zoningMethod,zoningRunId", "limit": _PAGE, "offset": offset},
+                    "attrs": "zoningMethod,zoningRunId,hasAgriParcel", "limit": _PAGE, "offset": offset},
             headers={"Accept": "application/json", "Content-Type": None},
             timeout=10,
         )
@@ -103,12 +113,32 @@ def _list_parcel_zones(fiware, parcel_urn: str) -> list[dict]:
         offset += _PAGE
 
 
+def _parcel_of(row: dict) -> Any:
+    for key in ("hasAgriParcel", _NKZ + "hasAgriParcel", "refAgriParcel"):
+        v = row.get(key)
+        if isinstance(v, dict):
+            v = v.get("object") or v.get("value")
+        if v:
+            return v
+    return None
+
+
 def retire_automatic_zonings(fiware, parcel_urn: str, keep_run_id: str | None) -> int:
-    """Delete the parcel's automatic zones (any method but ``manual``) outside ``keep_run_id``."""
+    """Delete this parcel's vegetation zonings, except ``keep_run_id``.
+
+    Only known automatic methods go (never manual, never a zone whose method
+    cannot be read); each row is re-checked against the parcel in case the
+    broker's q filter misbehaves; the new run is protected by id and run id.
+    """
+    keep_prefix = None
+    if keep_run_id:
+        keep_prefix = f"urn:ngsi-ld:{ZONE_TYPE}:{parcel_urn.rsplit(':', 1)[-1]}:{keep_run_id[:8]}:"
     doomed = [
         row["id"] for row in _list_parcel_zones(fiware, parcel_urn)
         if row.get("id")
-        and _value(row, "zoningMethod") != "manual"
+        and _parcel_of(row) == parcel_urn
+        and _value(row, "zoningMethod") in AUTOMATIC_METHODS
+        and not (keep_prefix and row["id"].startswith(keep_prefix))
         and (keep_run_id is None or _value(row, "zoningRunId") != keep_run_id)
     ]
     return sum(1 for eid in doomed if fiware.delete_entity(eid))

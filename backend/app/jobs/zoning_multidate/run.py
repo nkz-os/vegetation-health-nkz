@@ -57,6 +57,15 @@ def choose_index(requested: str | None, crop_species: str | None) -> str:
     return "NDVI"
 
 
+def validate_zoning_index(index: str | None) -> str | None:
+    """API-side check: an index the proposal cannot use is a 422, not a failed job later."""
+    if index and index not in cfg.ZONABLE_INDICES:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=422, detail=f"Index {index} cannot be used for zoning; "
+                            f"use one of {sorted(cfg.ZONABLE_INDICES)} or leave it empty")
+    return index or None
+
+
 def _no_zones(result: ProposalResult, reason: str, fiware, parcel_urn: str) -> ProposalResult:
     result.status, result.reason = "no_zones", reason
     retired = retire_automatic_zonings(fiware, parcel_urn, keep_run_id=None)
@@ -86,6 +95,15 @@ def propose_zoning(sources: Sources, fiware, parcel_urn: str, index: str | None,
             logger.exception("zoning %s: unreadable raster for %s", parcel_urn, row.sensing_date)
             dropped["unreadable"] += 1
     result.dropped = dropped
+    # Fail-safe: when sources fail (storage down, Copernicus quota or credentials), the
+    # evidence is incomplete for reasons that say nothing about the field. Neither publish
+    # a weaker proposal nor delete the zoning in use; report and let a later run decide.
+    failed = dropped["pending_failed"] + dropped["unreadable"]
+    if failed and (not arrays or failed / (failed + len(arrays)) > cfg.MAX_FAILED_SHARE):
+        result.status, result.reason = "no_zones", "sources_unavailable"
+        logger.warning("zoning %s: %d of %d rasters unavailable; current zoning kept",
+                       parcel_urn, failed, failed + len(arrays))
+        return result
     if not arrays:
         return _no_zones(result, "not_enough_dates", fiware, parcel_urn)
 
@@ -93,6 +111,9 @@ def propose_zoning(sources: Sources, fiware, parcel_urn: str, index: str | None,
     keep, filtered = usable_dates(stack, grid.core, idx)
     dropped.update(filtered)
     if len(keep) < cfg.MIN_DATES:
+        if failed:  # a missing date might have made the difference
+            result.status, result.reason = "no_zones", "sources_unavailable"
+            return result
         return _no_zones(result, "not_enough_dates", fiware, parcel_urn)
     kept = stack[keep]
     result.dates_used = [dates[i] for i in keep]
@@ -101,7 +122,7 @@ def propose_zoning(sources: Sources, fiware, parcel_urn: str, index: str | None,
     if levels.homogeneous:
         return _no_zones(result, "homogeneous", fiware, parcel_urn)
     regular = regularize(levels.levels, grid.inside, cfg.RES_M, cfg.MIN_ZONE_HA)
-    zones = summarize(regular, kept, levels.rel, level_polygons(regular, grid))
+    zones = summarize(regular, kept, levels.rel, level_polygons(regular, grid), core=grid.core)
     if len(zones) < 2:
         return _no_zones(result, "single_level", fiware, parcel_urn)
 
@@ -112,10 +133,15 @@ def propose_zoning(sources: Sources, fiware, parcel_urn: str, index: str | None,
     logger.info("zoning %s: %d zones published (run %s); %d older automatic zones retired",
                 parcel_urn, len(zones), run_id, retired)
     result.status, result.run_id, result.zones = "zones", run_id, zones
-    result.features = [
-        {"type": "Feature", "geometry": e["location"]["value"], "properties": _properties(z)}
-        for e, z in zip(entities, zones)
-    ]
+    from pyproj import Transformer
+    to_wgs84 = Transformer.from_crs(grid.crs, "EPSG:4326", always_xy=True)
+    result.features = []
+    for e, z in zip(entities, zones):
+        largest = max(getattr(z.geometry_utm, "geoms", [z.geometry_utm]), key=lambda g: g.area)
+        anchor = largest.representative_point()
+        props = _properties(z)
+        props["label_point"] = [round(v, 7) for v in to_wgs84.transform(anchor.x, anchor.y)]
+        result.features.append({"type": "Feature", "geometry": e["location"]["value"], "properties": props})
     return result
 
 

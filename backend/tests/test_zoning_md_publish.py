@@ -74,28 +74,57 @@ def _fiware(pages):
 
 def test_no_zones_retires_automatic_keeps_manual():
     fw = _fiware([[
-        {"id": "z-old", "zoningMethod": "vegetationIndex", "zoningRunId": "r0"},
-        {"id": "z-iri", "https://nkz-os.org/ns/zoningMethod": "vegetationIndexMultiDate", "zoningRunId": "r1"},
-        {"id": "z-manual", "zoningMethod": "manual", "zoningRunId": "r2"},
-        {"id": "z-legacy"},
+        {"id": "z-old", "zoningMethod": "vegetationIndex", "zoningRunId": "r0", "hasAgriParcel": PARCEL},
+        {"id": "z-iri", "https://nkz-os.org/ns/zoningMethod": "vegetationIndexMultiDate", "zoningRunId": "r1",
+         "hasAgriParcel": PARCEL},
+        {"id": "z-manual", "zoningMethod": "manual", "zoningRunId": "r2", "hasAgriParcel": PARCEL},
+        {"id": "z-legacy", "hasAgriParcel": PARCEL},
     ]])
-    assert retire_automatic_zonings(fw, PARCEL, keep_run_id=None) == 3
+    assert retire_automatic_zonings(fw, PARCEL, keep_run_id=None) == 2
     deleted = sorted(c.args[0] for c in fw.delete_entity.call_args_list)
-    assert deleted == ["z-iri", "z-legacy", "z-old"]
+    assert deleted == ["z-iri", "z-old"]
     params = fw.session.get.call_args.kwargs["params"]
     assert params["type"] == "AgriManagementZone" and PARCEL in params["q"]
 
 
 def test_zones_published_keep_their_own_run():
     fw = _fiware([[
-        {"id": "z-new", "zoningMethod": "vegetationIndexMultiDate", "zoningRunId": RUN},
-        {"id": "z-old", "zoningMethod": "vegetationIndex", "zoningRunId": "r0"},
+        {"id": "z-new", "zoningMethod": "vegetationIndexMultiDate", "zoningRunId": RUN, "hasAgriParcel": PARCEL},
+        {"id": "z-old", "zoningMethod": "vegetationIndex", "zoningRunId": "r0", "hasAgriParcel": PARCEL},
     ]])
     assert retire_automatic_zonings(fw, PARCEL, keep_run_id=RUN) == 1
     assert [c.args[0] for c in fw.delete_entity.call_args_list] == ["z-old"]
 
 
 def test_retire_follows_pagination():
-    page1 = [{"id": f"z{i}", "zoningMethod": "vegetationIndex", "zoningRunId": "r"} for i in range(100)]
-    fw = _fiware([page1, [{"id": "z100", "zoningMethod": "vegetationIndex", "zoningRunId": "r"}]])
+    page1 = [{"id": f"z{i}", "zoningMethod": "vegetationIndex", "zoningRunId": "r", "hasAgriParcel": PARCEL}
+             for i in range(100)]
+    fw = _fiware([page1, [{"id": "z100", "zoningMethod": "vegetationIndex", "zoningRunId": "r",
+                           "hasAgriParcel": PARCEL}]])
     assert retire_automatic_zonings(fw, PARCEL, keep_run_id=None) == 101
+
+
+def test_publish_rolls_back_on_failure():
+    from app.jobs.zoning_multidate.publish import publish
+    fw = MagicMock()
+    fw.create_entity.side_effect = [True, False]
+    fw.delete_entity.return_value = True
+    ents = build_entities(PARCEL, RUN, "NDVI", [date(2026, 6, 13)], _zones(), "EPSG:32630", NOW)
+    with pytest.raises(RuntimeError):
+        publish(fw, ents)
+    assert [c.args[0] for c in fw.delete_entity.call_args_list] == [ents[0]["id"]]
+
+
+def test_retire_skips_unknown_methods_other_parcels_and_the_new_run():
+    fw = _fiware([[
+        {"id": "z-unknown-method", "zoningRunId": "r9", "hasAgriParcel": PARCEL},
+        {"id": "z-other-parcel", "zoningMethod": "vegetationIndex", "zoningRunId": "r1",
+         "hasAgriParcel": "urn:ngsi-ld:AgriParcel:acme-p2"},
+        {"id": "urn:ngsi-ld:AgriManagementZone:acme-p1:01234567:L2", "zoningMethod": "vegetationIndexMultiDate",
+         "hasAgriParcel": PARCEL},
+        {"id": "z-old", "zoningMethod": "vegetationIndex", "zoningRunId": "r0",
+         "https://nkz-os.org/ns/hasAgriParcel": {"object": PARCEL}},
+    ]])
+    assert retire_automatic_zonings(fw, PARCEL, keep_run_id=RUN) == 1
+    assert [c.args[0] for c in fw.delete_entity.call_args_list] == ["z-old"]
+    assert "hasAgriParcel" in fw.session.get.call_args.kwargs["params"]["attrs"]

@@ -98,3 +98,32 @@ def test_low_border_ring_is_not_a_zone():
     res = classify(stack, g.core)
     lv = regularize(res.levels, g.inside, 10.0, 0.25)
     assert 3 not in np.unique(lv[ring]) and 4 not in np.unique(lv[ring])
+
+
+def _patchwork(grid):
+    h, w = grid.shape
+    lv = np.where(grid.inside, 2, 0).astype("int8")
+    lv[2:9, 3:9] = np.where(grid.inside[2:9, 3:9], 1, 0)       # high block
+    lv[2:9, 9:14] = np.where(grid.inside[2:9, 9:14], 3, 0)     # low block touching it
+    lv[10:13, 4:7] = np.where(grid.inside[10:13, 4:7], 4, 0)   # critical patch
+    return lv
+
+
+def test_no_sub_pixel_parts_in_any_level():
+    g = parcel_grid(mapping(OUTER), 10.0)
+    polys = level_polygons(_patchwork(g), g)
+    for rank, p in polys.items():
+        for part in getattr(p, "geoms", [p]):
+            assert part.area >= 100.0, (rank, part.area)
+    assert sum(p.area for p in polys.values()) == pytest.approx(g.parcel_utm.area, rel=0.005)
+
+
+def test_mean_value_ignores_the_border_ring():
+    g = parcel_grid(mapping(OUTER), 10.0)
+    lv = _levels(g)
+    polys = level_polygons(lv, g)
+    ring = g.inside & ~g.core
+    stack = np.stack([np.where(ring, 0.1, 0.6).astype("float32") for _ in range(3)])
+    rel = np.stack([d / np.nanmean(np.where(g.core, d, np.nan)) for d in stack])
+    zones = summarize(lv, stack, rel, polys, core=g.core)
+    assert all(z.mean_value == pytest.approx(0.6, abs=1e-6) for z in zones)

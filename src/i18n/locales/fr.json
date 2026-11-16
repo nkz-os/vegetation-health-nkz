@@ -176,7 +176,7 @@
       "critical": "Critical"
     },
     "reviewInField": "Review in the field",
-    "confirmedDates": "Above/below the mean on {{n}} of {{total}} dates",
+    "confirmedDates": "Consistent with its level on {{n}} of {{total}} dates",
     "relativeVigour": "Vigour {{pct}} vs parcel mean",
     "noZonesReason": {
       "not_enough_dates": "No zones: not enough useful images (with crop and without clouds). Download more dates of the growing season.",
