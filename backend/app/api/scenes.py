@@ -66,8 +66,8 @@ class CalculateRequest(BaseModel):
 
 
 class ZoningRequest(BaseModel):
-    n_zones: int = 3
-    source_index: str = 'NDVI'
+    n_zones: int = 3  # ignored by the multi-date proposal; kept for older callers
+    source_index: Optional[str] = None  # None: chosen from the parcel's crop
     sensing_date: Optional[str] = None
     delegate_to_intelligence: bool = False
     n8n_callback_url: Optional[str] = None
@@ -317,7 +317,8 @@ async def calculate_index_endpoint(
         parameters["formula_expression"] = request.formula
         parameters["result_index_key"] = f"custom:{request.formula_id}"
     if request.index_type == 'VRA_ZONES':
-        parameters["source_index"] = request.source_index or 'NDVI'
+        # None lets the multi-date proposal choose the index from the parcel's crop.
+        parameters["source_index"] = request.source_index or None
         parameters["n_zones"] = request.n_zones
         if request.sensing_date:
             parameters["sensing_date"] = request.sensing_date

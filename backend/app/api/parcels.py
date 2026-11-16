@@ -49,9 +49,11 @@ def _job_card(job: VegetationJob) -> Dict[str, Any]:
     if not indices and result.get("index_type"):
         indices = [result.get("index_type")]
     # VRA_ZONES metadata
-    zones_created = result.get("zones_created") if result.get("index_type") == "VRA_ZONES" else None
+    is_vra = result.get("index_type") == "VRA_ZONES"
+    zones_created = result.get("zones_created") if is_vra else None
+    # The multi-date proposal records the index it chose (the request may leave it to the crop).
     zoning_source = (
-        job.parameters.get("source_index") if result.get("index_type") == "VRA_ZONES" else None
+        (result.get("zoning_source") or job.parameters.get("source_index")) if is_vra else None
     )
 
     return {
@@ -73,7 +75,9 @@ def _job_card(job: VegetationJob) -> Dict[str, Any]:
         "crop_season_id": str(job.crop_season_id) if job.crop_season_id else None,
         "zones_created": zones_created,
         "zoning_source": zoning_source,
-        "is_vra": result.get("index_type") == "VRA_ZONES",
+        "zoning_status": result.get("status") if is_vra else None,  # "zones" | "no_zones"
+        "zoning_reason": result.get("reason") if is_vra else None,
+        "is_vra": is_vra,
     }
 
 

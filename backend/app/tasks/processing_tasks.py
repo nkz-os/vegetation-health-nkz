@@ -349,31 +349,27 @@ def calculate_vegetation_index(
             if not entity_id:
                 raise ValueError("entity_id is required for VRA zoning")
 
-            n_zones = (job.parameters or {}).get('n_zones', 3)
-            source_index = (job.parameters or {}).get('source_index', 'NDVI')
-            from app.jobs.zoning_algorithm import ZoningAlgorithm
-            zoning = ZoningAlgorithm(tenant_id=tenant_id)
-            result = zoning.execute(
-                parcel_id=entity_id,
-                scene_id="",
-                parameters={"n_zones": n_zones, "source_index": source_index},
+            # Multi-date proposal (replaces the single-image k-means, owner 2026-11-14).
+            # A parcel without enough evidence completes with status "no_zones" and a reason.
+            from datetime import date as _date, datetime as _datetime, timezone as _tz
+            from app.jobs.zoning_multidate.run import default_sources, propose_zoning, vra_job_result
+            from app.services.fiware_integration import FIWAREClient
+            source_index = (job.parameters or {}).get('source_index') or None
+            fiware = FIWAREClient(
+                os.getenv("FIWARE_CONTEXT_BROKER_URL", "http://orion-ld-service:1026"),
+                tenant_id=tenant_id,
             )
-
-            if result.get('status') == 'error':
-                raise ValueError(result.get('message', 'Zoning algorithm failed'))
-
-            job.mark_completed({
-                'status': result.get('status'),
-                'zones_created': result.get('zones_created'),
-                'message': result.get('message'),
-                'geojson': result.get('geojson'),
-                'index_type': 'VRA_ZONES',
-            })
+            proposal = propose_zoning(
+                default_sources(db, fiware, tenant_id, entity_id), fiware, entity_id,
+                source_index, _date.today(), _datetime.now(_tz.utc),
+            )
+            result = vra_job_result(proposal)
+            job.mark_completed(result)
             db.commit()
 
             logger.info(
-                "VRA zoning completed for %s: %s zones",
-                entity_id, result.get('zones_created', 0),
+                "VRA zoning completed for %s: %s (%s zones, reason=%s)",
+                entity_id, result['status'], result['zones_created'], result['reason'],
             )
 
             # Band-cleanup not applicable for zoning
