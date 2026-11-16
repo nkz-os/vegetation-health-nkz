@@ -32,6 +32,10 @@ class Grid:
     shape: tuple[int, int]
     parcel_utm: BaseGeometry
     inside: np.ndarray  # all_touched mask of the parcel
+    # Pixels whose centre is at least one pixel inside the boundary. The ring
+    # between ``inside`` and ``core`` mixes crop with tracks or the next field,
+    # so vigour is measured on ``core`` and the ring takes its neighbour's level.
+    core: np.ndarray
 
 
 def utm_crs(lon: float, lat: float) -> str:
@@ -64,8 +68,15 @@ def parcel_grid(parcel_wgs84: dict[str, Any], res_m: float) -> Grid:
     transform = Affine(res_m, 0.0, x0, 0.0, -res_m, y0)
     inside = geometry_mask([parcel_utm], out_shape=(height, width), transform=transform,
                            invert=True, all_touched=True)
+    shrunk = parcel_utm.buffer(-res_m)
+    core = np.zeros_like(inside)
+    if not shrunk.is_empty:
+        core = geometry_mask([shrunk], out_shape=(height, width), transform=transform,
+                             invert=True, all_touched=False)
+    if not core.any():  # parcel too narrow to have a core: use all of it
+        core = inside.copy()
     return Grid(crs=crs, transform=transform, shape=(height, width), parcel_utm=parcel_utm,
-                inside=inside)
+                inside=inside, core=core & inside)
 
 
 def _read(ds) -> np.ndarray:

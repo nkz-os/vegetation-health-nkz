@@ -44,7 +44,8 @@ def level_polygons(levels: np.ndarray, grid: Grid) -> dict[int, BaseGeometry]:
         mask = levels == rank
         polys = [shape(g) for g, v in shapes(mask.astype("uint8"), mask=mask, transform=grid.transform)
                  if v == 1]
-        merged = unary_union(polys).simplify(res / 2.0, preserve_topology=True)
+        # One-pixel tolerance turns the 10 m staircase into diagonals (owner, 2026-11-16).
+        merged = unary_union(polys).simplify(res, preserve_topology=True)
         simplified[rank] = merged.intersection(grid.parcel_utm)
     if not simplified:
         return {}

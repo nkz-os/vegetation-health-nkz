@@ -16,7 +16,7 @@ MIN_DATES = _i("MIN_DATES", 3)
 MIN_VALID_FRACTION = _f("MIN_VALID_FRACTION", 0.7)
 # Parcel median below which a date shows no crop (bare soil, stubble).
 VEGETATED_FLOOR: dict[str, float] = {
-    "NDVI": _f("FLOOR_NDVI", 0.30),
+    "NDVI": _f("FLOOR_NDVI", 0.35),  # owner, 2026-11-16: keeps freshly sown / ripening dates out
     "GNDVI": _f("FLOOR_GNDVI", 0.30),
     "SAVI": _f("FLOOR_SAVI", 0.20),
     "OSAVI": _f("FLOOR_OSAVI", 0.20),

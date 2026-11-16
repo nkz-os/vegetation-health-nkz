@@ -91,3 +91,15 @@ def test_invalid_parcel_is_repaired():
     ]]}
     g = parcel_grid(bowtie, 10.0)
     assert g.parcel_utm.is_valid and g.parcel_utm.area > 0
+
+
+def test_core_excludes_the_mixed_border_ring():
+    g = parcel_grid(mapping(PARCEL), 10.0)
+    assert g.core.sum() < g.inside.sum()
+    assert not (g.core & ~g.inside).any()
+    # Every core pixel centre lies at least one pixel inside the boundary.
+    from shapely.geometry import Point
+    rows, cols = np.nonzero(g.core)
+    for r, c in zip(rows, cols):
+        x, y = g.transform * (c + 0.5, r + 0.5)
+        assert g.parcel_utm.boundary.distance(Point(x, y)) >= 9.99

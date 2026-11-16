@@ -66,3 +66,35 @@ def test_summary_confirming_counts():
     assert high.mean_value == pytest.approx(0.7, abs=1e-6)
     assert high.area_ha == pytest.approx(polys[1].area / 10_000, rel=1e-9)
     assert [z.rank for z in zones] == sorted(z.rank for z in zones)
+
+
+def test_stair_edges_become_diagonals():
+    """A 1:2 diagonal boundary between two levels is drawn as a few straight segments."""
+    g = parcel_grid(mapping(OUTER), 10.0)
+    h, w = g.shape
+    rows, cols = np.indices((h, w))
+    lv = np.where(g.inside, np.where(cols * 2 < rows + w // 2, 1, 2), 0).astype("int8")
+    polys = level_polygons(lv, g)
+    border = polys[1].intersection(polys[2].buffer(0.5))
+    vertices = sum(len(p.exterior.coords) for p in getattr(polys[1], "geoms", [polys[1]]))
+    assert vertices < 12
+    assert border.length > 0
+
+
+def test_ndvi_bare_floor_is_035():
+    from app.jobs.zoning_multidate import config
+    assert config.VEGETATED_FLOOR["NDVI"] == 0.35
+
+
+def test_low_border_ring_is_not_a_zone():
+    """Mixed pixels along the boundary (crop + track) must not become a 'low' strip."""
+    from app.jobs.zoning_multidate.levels import classify
+    from app.jobs.zoning_multidate.regions import regularize
+    g = parcel_grid(mapping(OUTER), 10.0)
+    ring = g.inside & ~g.core
+    day = np.where(ring, 0.35, 0.6).astype("float32")
+    day[:, : g.shape[1] // 2] *= 1.25
+    stack = np.stack([day, day * 0.9, day * 1.1])
+    res = classify(stack, g.core)
+    lv = regularize(res.levels, g.inside, 10.0, 0.25)
+    assert 3 not in np.unique(lv[ring]) and 4 not in np.unique(lv[ring])
