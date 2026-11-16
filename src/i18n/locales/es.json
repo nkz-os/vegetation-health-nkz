@@ -166,6 +166,23 @@
     "numZones": "Número de Zonas",
     "saveAsParcel": "Guardar como Parcela",
     "vraReady": "Listo para Aplicación Variable",
+    "propose": "Proponer zonificación",
+    "proposeHint": "Divide la parcela en hasta cuatro niveles (alto, medio, bajo, crítico) según su vigor relativo en todas las fechas útiles de los dos últimos años. Si la evidencia no muestra diferencias claras, no se proponen zonas.",
+    "indexAuto": "Automático (según cultivo)",
+    "level": {
+      "high": "Alto",
+      "medium": "Medio",
+      "low": "Bajo",
+      "critical": "Crítico"
+    },
+    "reviewInField": "Revisar en campo",
+    "confirmedDates": "Coherente con su nivel en {{n}} de {{total}} fechas",
+    "relativeVigour": "Vigor {{pct}} respecto a la media de la parcela",
+    "noZonesReason": {
+      "not_enough_dates": "Sin zonas: no hay suficientes imágenes útiles (con cultivo y sin nubes). Descarga más fechas de la campaña.",
+      "homogeneous": "Sin zonas: la parcela es homogénea; el vigor varía muy poco entre unas partes y otras.",
+      "single_level": "Sin zonas: toda la parcela cae en un mismo nivel."
+    },
     "noZones": "No hay zonas generadas"
   },
   "setup": {

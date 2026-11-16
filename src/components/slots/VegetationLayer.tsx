@@ -11,13 +11,14 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 
-import { useViewerOptional } from '@nekazari/sdk';
+import { useViewerOptional, useTranslation } from '@nekazari/sdk';
 import { useVegetationContext } from '../../services/vegetationContext';
 import { useVegetationApi } from '../../services/api';
 import { API_ORIGIN } from '../../services/apiOrigin';
 
 export const VegetationLayer: React.FC = () => {
   const viewerCtx = useViewerOptional();
+  const { t } = useTranslation();
   const viewer = viewerCtx?.cesiumViewer;
   const {
     selectedIndex, setSelectedIndex,
@@ -34,6 +35,11 @@ export const VegetationLayer: React.FC = () => {
   const api = useVegetationApi();
   const layerRefs = useRef<any[]>([]);
   const dataSourceRef = useRef<any>(null);
+  const clickHandlerRef = useRef<any>(null);
+  // Card of the clicked zoning zone (the host viewer has no info box).
+  const [zoneCard, setZoneCard] = useState<null | {
+    level: string; pct: number; area: number | null; confirming: number | null; total: number | null;
+  }>(null);
 
   // Resolve rasters for the selected acquisition: a scene (local engine) or,
   // for Copernicus acquisitions that have no scene, a sensing date. Without a
@@ -131,7 +137,13 @@ export const VegetationLayer: React.FC = () => {
       dataSourceRef.current = null;
     }
 
-    // VRA_ZONES branch — keep the existing behavior verbatim
+    if (clickHandlerRef.current) {
+      try { clickHandlerRef.current.destroy(); } catch { /* destroyed */ }
+      clickHandlerRef.current = null;
+    }
+    setZoneCard(null);
+
+    // VRA_ZONES branch: zones of the latest zoning job, coloured by level.
     if (selectedIndex === 'VRA_ZONES' && selectedEntityId) {
       const geoJsonUrl = `${API_ORIGIN}/api/vegetation/jobs/zoning/${encodeURIComponent(selectedEntityId)}/geojson`;
       fetch(geoJsonUrl, { credentials: 'include' })
@@ -140,29 +152,80 @@ export const VegetationLayer: React.FC = () => {
           return r.json();
         })
         .then((geojson: any) => Cesium.GeoJsonDataSource.load(geojson, {
-          stroke: Cesium.Color.BLACK,
-          fill: Cesium.Color.BLUE.withAlpha(0.5),
-          strokeWidth: 3,
+          clampToGround: true,
         }))
         .then((dataSource: any) => {
           if (viewer.isDestroyed()) return;
-          const entities = dataSource.entities.values;
-          const colors = [
-            Cesium.Color.RED.withAlpha(0.6),
-            Cesium.Color.ORANGE.withAlpha(0.6),
-            Cesium.Color.YELLOW.withAlpha(0.6),
-            Cesium.Color.GREEN.withAlpha(0.6),
-            Cesium.Color.BLUE.withAlpha(0.6),
-          ];
-          for (let i = 0; i < entities.length; i++) {
-            const entity = entities[i];
-            const clusterId = entity.properties?.cluster_id?.getValue() || 0;
-            entity.polygon.material = colors[clusterId % colors.length] || Cesium.Color.GRAY.withAlpha(0.6);
-            entity.polygon.outline = true;
-            entity.polygon.outlineColor = Cesium.Color.BLACK;
+          // Multi-date proposal: one zone per level (high/medium/low/critical).
+          const LEVEL_COLORS: Record<string, string> = {
+            high: '#1b5e20', medium: '#81c784', low: '#c8a24a', critical: '#c62828',
+          };
+          const LEGACY_COLORS = ['#c62828', '#fb8c00', '#fdd835', '#43a047', '#1e88e5'];
+          const entities = [...dataSource.entities.values];
+          for (const entity of entities) {
+            if (!entity.polygon) continue;
+            const prop = (k: string) => entity.properties?.[k]?.getValue?.();
+            const level: string | undefined = prop('zone_level');
+            const css = level ? LEVEL_COLORS[level] : LEGACY_COLORS[(prop('cluster_id') || 0) % LEGACY_COLORS.length];
+            const color = Cesium.Color.fromCssColorString(css || '#9e9e9e');
+            entity.polygon.material = color.withAlpha(0.45);
+            entity.polygon.outline = false;
+            const hierarchy = entity.polygon.hierarchy?.getValue?.(Cesium.JulianDate.now());
+            const ring = hierarchy?.positions;
+            if (ring && ring.length > 1) {
+              // Terrain-clamped polygons draw no outline: a ground polyline does.
+              dataSource.entities.add({
+                polyline: {
+                  positions: [...ring, ring[0]],
+                  clampToGround: true,
+                  width: level === 'critical' ? 4 : 1.5,
+                  material: level === 'critical' ? color : Cesium.Color.WHITE.withAlpha(0.8),
+                },
+              });
+            }
+            if (!level) continue;
+            const pct: number = prop('relative_pct') ?? 0;
+            const pctText = `${pct > 0 ? '+' : ''}${pct} %`;
+            const levelText = t(`zoning.level.${level}`, level);
+            entity.name = `${levelText} ${pctText}`;
+            const anchor = prop('label_point');
+            if (ring && ring.length > 2) {
+              // The backend sends a point inside the zone; a ring centre can fall in another zone.
+              const centre = Array.isArray(anchor)
+                ? Cesium.Cartesian3.fromDegrees(anchor[0], anchor[1])
+                : Cesium.BoundingSphere.fromPoints(ring).center;
+              dataSource.entities.add({
+                position: centre,
+                label: {
+                  text: `${levelText} ${pctText}`,
+                  font: '13px sans-serif',
+                  fillColor: Cesium.Color.WHITE,
+                  outlineColor: Cesium.Color.BLACK,
+                  outlineWidth: 2,
+                  style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+                  heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+                  disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                },
+              });
+            }
           }
           viewer.dataSources.add(dataSource);
           dataSourceRef.current = dataSource;
+          const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+          handler.setInputAction((click: any) => {
+            const picked = viewer.scene.pick(click.position);
+            const props = picked?.id?.properties;
+            const level = props?.zone_level?.getValue?.();
+            if (!level || !dataSource.entities.contains(picked.id)) return;
+            setZoneCard({
+              level,
+              pct: props.relative_pct?.getValue?.() ?? 0,
+              area: props.area_ha?.getValue?.() ?? null,
+              confirming: props.confirming_dates?.getValue?.() ?? null,
+              total: props.total_dates?.getValue?.() ?? null,
+            });
+          }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+          clickHandlerRef.current = handler;
           viewer.flyTo(dataSource);
         })
         .catch((err: any) => {
@@ -267,7 +330,7 @@ export const VegetationLayer: React.FC = () => {
       });
       layerRefs.current = [];
     };
-  }, [viewer, selectedIndex, activeJobId, activeRasterPath, selectedEntityId, indexResults, layerScope, layerVisible]);
+  }, [viewer, selectedIndex, activeJobId, activeRasterPath, selectedEntityId, indexResults, layerScope, layerVisible, t]);
 
   // Update opacity and visibility without recreating layers
   useEffect(() => {
@@ -308,9 +371,42 @@ export const VegetationLayer: React.FC = () => {
     ? document.querySelector('.cesium-viewer') || document.getElementById('cesiumContainer')
     : null;
 
-  if (!hasLayer || !dateLabel || !cesiumContainer) return null;
+  const pctText = zoneCard ? `${zoneCard.pct > 0 ? '+' : ''}${zoneCard.pct} %` : '';
+  const card = zoneCard && typeof document !== 'undefined' ? createPortal(
+    <div className="fixed bottom-24 right-6 z-50 w-64 bg-white rounded-lg shadow-lg border border-slate-200 p-3 text-xs text-slate-700">
+      <div className="flex items-start justify-between gap-2 mb-1">
+        <span className="text-sm font-semibold">
+          {t(`zoning.level.${zoneCard.level}`, zoneCard.level)} {pctText}
+        </span>
+        <button
+          type="button"
+          onClick={() => setZoneCard(null)}
+          className="text-slate-500 hover:text-slate-700"
+          aria-label={t('common.close', 'Close')}
+        >
+          ×
+        </button>
+      </div>
+      {zoneCard.area != null && <p>{zoneCard.area} ha</p>}
+      <p>{t('zoning.relativeVigour', 'Vigour {{pct}} vs parcel mean', { pct: pctText })}</p>
+      {zoneCard.total != null && (
+        <p>{t('zoning.confirmedDates', 'Consistent with its level on {{n}} of {{total}} dates', {
+          n: zoneCard.confirming, total: zoneCard.total,
+        })}</p>
+      )}
+      {zoneCard.level === 'critical' && (
+        <p className="mt-1 font-semibold text-amber-700">{t('zoning.reviewInField', 'Review in the field')}</p>
+      )}
+    </div>,
+    document.body,
+  ) : null;
 
-  return createPortal(
+  if (!hasLayer || !dateLabel || !cesiumContainer) return card;
+
+  return (
+    <>
+      {card}
+      {createPortal(
     <div
       className={`absolute bottom-16 left-1/2 -translate-x-1/2 z-50 pointer-events-none transition-all duration-500 ${
         isTransitioning ? 'scale-110 opacity-100' : 'scale-100 opacity-80'
@@ -323,7 +419,9 @@ export const VegetationLayer: React.FC = () => {
         <span>{dateLabel}</span>
       </div>
     </div>,
-    cesiumContainer,
+        cesiumContainer,
+      )}
+    </>
   );
 };
 

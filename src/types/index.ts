@@ -360,6 +360,9 @@ export interface ParcelJobCard {
   crop_season_id: string | null;
   zones_created: number | null;
   zoning_source: string | null;
+  /** Multi-date zoning outcome: 'zones' or 'no_zones' (with zoning_reason). */
+  zoning_status?: 'zones' | 'no_zones' | null;
+  zoning_reason?: 'not_enough_dates' | 'homogeneous' | 'single_level' | null;
   is_vra: boolean;
 }
 

@@ -166,6 +166,23 @@
     "numZones": "Zonalde Kopurua",
     "saveAsParcel": "Gorde Lurzati Bezala",
     "vraReady": "Aldakorra Aplikatzeko Prest",
+    "propose": "Propose zoning",
+    "proposeHint": "Splits the parcel into up to four levels (high, medium, low, critical) by its relative vigour across all useful dates of the last two years. If the evidence shows no clear differences, no zones are proposed.",
+    "indexAuto": "Automatic (by crop)",
+    "level": {
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low",
+      "critical": "Critical"
+    },
+    "reviewInField": "Review in the field",
+    "confirmedDates": "Consistent with its level on {{n}} of {{total}} dates",
+    "relativeVigour": "Vigour {{pct}} vs parcel mean",
+    "noZonesReason": {
+      "not_enough_dates": "No zones: not enough useful images (with crop and without clouds). Download more dates of the growing season.",
+      "homogeneous": "No zones: the parcel is homogeneous; vigour varies too little between areas.",
+      "single_level": "No zones: the whole parcel falls in a single level."
+    },
     "noZones": "Ez dago zonalderik sortuta"
   },
   "setup": {
