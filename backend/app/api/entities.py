@@ -11,7 +11,7 @@ import logging
 from app.database import get_db_with_tenant
 from app.middleware.auth import require_auth
 from app.models import VegetationScene, VegetationIndexCache, VegetationJob, VegetationCropSeason
-from app.services.zoning_layer import latest_zoning_job, zoning_drawable
+from app.services.zoning_layer import zoning_features
 from nkz_platform_sdk import OrionClient
 
 router = APIRouter(prefix="/api/vegetation/entities", tags=["entities"])
@@ -97,7 +97,7 @@ async def get_entity_data_status(
     )
     available_indices = [r[0] for r in index_rows if r[0]]
     # The zoning writes no raster; its pill follows the layer it draws.
-    if zoning_drawable(latest_zoning_job(db, tenant_id, entity_id)):
+    if zoning_features(db, tenant_id, entity_id):
         available_indices.append("VRA_ZONES")
 
     total_scenes = (

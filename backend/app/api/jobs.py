@@ -116,13 +116,13 @@ async def get_zoning_geojson(
     current_user: dict = Depends(require_auth),
     db: Session = Depends(get_db_with_tenant),
 ):
-    """Get latest zoning result as GeoJSON for a parcel."""
-    from app.services.zoning_layer import latest_zoning_job
+    """The parcel's zoning in force as GeoJSON."""
+    from app.services.zoning_layer import zoning_features
 
-    job = latest_zoning_job(db, current_user["tenant_id"], parcel_id)
-    if not job or not job.result or "geojson" not in job.result:
+    features = zoning_features(db, current_user["tenant_id"], parcel_id)
+    if not features:
         raise HTTPException(status_code=404, detail="No zoning data available")
-    return job.result["geojson"]
+    return {"type": "FeatureCollection", "features": features}
 
 
 @router.get("/parcels/{entity_id}/available-raster-dates")

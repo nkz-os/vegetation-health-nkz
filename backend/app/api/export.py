@@ -11,7 +11,6 @@ from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
-from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.database import get_db_with_tenant
@@ -25,31 +24,10 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/vegetation", tags=["export"])
 
 
-def _get_latest_zoning_job(db: Session, tenant_id: str, parcel_id: str) -> VegetationJob:
-    """Get the latest completed VRA_ZONES job for a parcel."""
-    job = (
-        db.query(VegetationJob)
-        .filter(
-            VegetationJob.tenant_id == tenant_id,
-            VegetationJob.entity_id == parcel_id,
-            VegetationJob.job_type == "calculate_index",
-            VegetationJob.status == "completed",
-            text("result->>'index_type' = 'VRA_ZONES'"),
-        )
-        .order_by(VegetationJob.created_at.desc())
-        .first()
-    )
-    return job
-
-
-def _get_features_from_job(job: VegetationJob) -> List[dict]:
-    """Extract GeoJSON features from a completed VRA_ZONES job result."""
-    if not job or not job.result:
-        return []
-    geojson = job.result.get("geojson")
-    if not geojson:
-        return []
-    return geojson.get("features", [])
+def _zoning_features(db: Session, tenant_id: str, parcel_id: str) -> List[dict]:
+    """Features of the parcel's zoning in force."""
+    from app.services.zoning_layer import zoning_features
+    return zoning_features(db, tenant_id, parcel_id)
 
 
 # ── Prescription map export endpoints ──────────────────────────────
@@ -63,8 +41,7 @@ async def export_geojson(
 ):
     """Export prescription zones as GeoJSON."""
     tenant_id = current_user["tenant_id"]
-    job = _get_latest_zoning_job(db, tenant_id, parcel_id)
-    features = _get_features_from_job(job)
+    features = _zoning_features(db, tenant_id, parcel_id)
     if not features:
         raise HTTPException(status_code=404, detail="No prescription data available for export")
 
@@ -86,8 +63,7 @@ async def export_shapefile(
 ):
     """Export prescription zones as zipped Shapefile."""
     tenant_id = current_user["tenant_id"]
-    job = _get_latest_zoning_job(db, tenant_id, parcel_id)
-    features = _get_features_from_job(job)
+    features = _zoning_features(db, tenant_id, parcel_id)
     if not features:
         raise HTTPException(status_code=404, detail="No prescription data available for export")
 
@@ -116,8 +92,7 @@ async def export_csv(
 ):
     """Export prescription zones as CSV."""
     tenant_id = current_user["tenant_id"]
-    job = _get_latest_zoning_job(db, tenant_id, parcel_id)
-    features = _get_features_from_job(job)
+    features = _zoning_features(db, tenant_id, parcel_id)
     if not features:
         raise HTTPException(status_code=404, detail="No prescription data available for export")
 

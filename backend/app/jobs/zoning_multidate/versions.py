@@ -151,3 +151,11 @@ def notes_of(db, tenant_id: str, parcel_id: str) -> list[ZoningNote]:
         .order_by(ZoningNote.created_at)
         .all()
     )
+
+
+def has_versions(db, tenant_id: str, parcel_id: str) -> bool:
+    return db.query(
+        db.query(ZoningVersion)
+        .filter(ZoningVersion.tenant_id == tenant_id, ZoningVersion.parcel_id == parcel_id)
+        .exists()
+    ).scalar()

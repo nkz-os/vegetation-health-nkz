@@ -203,6 +203,11 @@ def propose_zoning(sources: Sources, fiware, parcel_urn: str, index: str | None,
     return result
 
 
+def prescription_rate(mean_value: float) -> float:
+    """Legacy relative dose kept in the job geojson for older exports."""
+    return round(float(np.clip(1 + (mean_value - 0.3) * 0.5, 0.5, 2.0)), 3)
+
+
 def _properties(z: ZoneSummary) -> dict:
     return {
         # Legacy keys: exports and older readers of the job geojson.
@@ -211,7 +216,7 @@ def _properties(z: ZoneSummary) -> dict:
         "zone_class": z.level,
         "mean_value": round(z.mean_value, 4),
         "area_ha": round(z.area_ha, 2),
-        "prescription_rate": round(float(np.clip(1 + (z.mean_value - 0.3) * 0.5, 0.5, 2.0)), 3),
+        "prescription_rate": prescription_rate(z.mean_value),
         # Multi-date proposal.
         "zone_level": z.level,
         "relative_pct": z.relative_pct,
