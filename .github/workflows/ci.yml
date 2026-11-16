@@ -9,6 +9,19 @@ on:
 jobs:
   backend-tests:
     runs-on: ubuntu-latest
+    services:
+      # Zoning version tests need real partial unique indexes and advisory locks.
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     defaults:
       run:
         working-directory: backend
@@ -26,6 +39,8 @@ jobs:
           pip install pytest pytest-asyncio respx
 
       - name: Run pytest (per-file process isolation)
+        env:
+          ZONING_PG_URL: postgresql://postgres:postgres@localhost:5432/postgres
         run: sh run_tests.sh
 
   frontend-tests:
