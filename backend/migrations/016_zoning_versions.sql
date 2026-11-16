@@ -10,6 +10,8 @@ CREATE TABLE IF NOT EXISTS zoning_versions (
     status          TEXT NOT NULL CHECK (status IN ('current', 'pending', 'superseded', 'discarded')),
     source          TEXT NOT NULL CHECK (source IN ('proposal', 'merge')),
     derived_from    TEXT NULL,
+    -- pending only: the current run this proposal was set aside against
+    parked_on_run_id TEXT NULL,
     index_type      TEXT NULL,
     outcome_reason  TEXT NULL,
     entities        JSONB NOT NULL DEFAULT '[]'::jsonb,

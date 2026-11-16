@@ -117,14 +117,18 @@ def record_current(db, tenant_id: str, parcel_id: str, run_id: str, entities: li
 
 
 def record_pending(db, tenant_id: str, parcel_id: str, run_id: str, entities: list[dict], *,
-                   index_type: str | None, outcome_reason: str | None,
-                   job_id: str | None) -> ZoningVersion:
-    """A proposal kept aside because the current zoning was accepted (entities may be empty)."""
+                   index_type: str | None, outcome_reason: str | None, job_id: str | None,
+                   parked_on_run_id: str) -> ZoningVersion:
+    """A proposal kept aside because the current zoning (``parked_on_run_id``) was accepted.
+
+    ``entities`` may be empty (the proposal found no zones). Accepting it later is only
+    valid while that same run is still the current one.
+    """
     _retire(db, pending(db, tenant_id, parcel_id), "discarded")
     version = ZoningVersion(
         run_id=run_id, tenant_id=tenant_id, parcel_id=parcel_id, status="pending", source="proposal",
         index_type=index_type, outcome_reason=outcome_reason, entities=entities, job_id=job_id,
-        created_at=_now(),
+        parked_on_run_id=parked_on_run_id, created_at=_now(),
     )
     db.add(version)
     db.flush()

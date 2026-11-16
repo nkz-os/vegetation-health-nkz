@@ -126,16 +126,17 @@ def _parcel_of(row: dict) -> Any:
     return None
 
 
-def retire_after_publish(fiware, parcel_urn: str, keep_run_id: str) -> int:
-    """Retire the older zonings once a new run is published, without failing the publication.
+def retire_quietly(fiware, parcel_urn: str, keep_run_id: str | None) -> int:
+    """``retire_automatic_zonings`` that logs a broker failure instead of raising.
 
-    The new run is complete and is the newest automatic zoning (what consumers pick), so it is
-    recorded as current even if the broker fails here; leftovers are retired by the next run.
+    Used once the outcome is decided (a run published, or the zoning withdrawn): the tables
+    record that outcome, and every later action on the parcel sweeps the leftovers again
+    with the run in force kept, so a failure here is repaired by the next one.
     """
     try:
         return retire_automatic_zonings(fiware, parcel_urn, keep_run_id=keep_run_id)
     except Exception:
-        logger.exception("zoning %s: older zones not fully retired after run %s", parcel_urn, keep_run_id)
+        logger.exception("zoning %s: older zones not fully retired (kept run %s)", parcel_urn, keep_run_id)
         return 0
 
 

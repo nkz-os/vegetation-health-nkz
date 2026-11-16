@@ -24,6 +24,7 @@ class ZoningVersion(Base):
     status = Column(Text, nullable=False)
     source = Column(Text, nullable=False)
     derived_from = Column(Text, nullable=True)
+    parked_on_run_id = Column(Text, nullable=True)  # pending: the current run it was set aside against
     index_type = Column(Text, nullable=True)
     outcome_reason = Column(Text, nullable=True)
     entities = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"), default=list)

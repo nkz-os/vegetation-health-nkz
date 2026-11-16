@@ -15,7 +15,7 @@ from app.jobs.zoning_multidate import versions
 from app.jobs.zoning_multidate.errors import (BrokerUnavailable, ZoningConflict, ZoningInvalid,
                                               ZoningNotFound)
 from app.jobs.zoning_multidate.notes import assign_notes, with_causes
-from app.jobs.zoning_multidate.publish import METHOD, ZONE_TYPE, publish, retire_after_publish
+from app.jobs.zoning_multidate.publish import METHOD, ZONE_TYPE, publish, retire_quietly
 
 _NKZ = "https://nkz-os.org/ns/"
 _RANKS = (1, 2, 3, 4)
@@ -100,10 +100,13 @@ def accept(db, fiware, tenant_id: str, parcel_id: str, run_id: str, user_id: str
                     _append(fiware, entity["id"], {"acceptedAt": stamp})
                 cur.entities = [{**copy.deepcopy(e), "acceptedAt": stamp} for e in cur.entities]
                 versions.mark_accepted(db, cur, user_id, now)
+            retire_quietly(fiware, parcel_id, keep_run_id=cur.run_id)  # leftovers of a failed retire
             return cur
 
         pend = versions.pending(db, tenant_id, parcel_id)
         if pend is not None and pend.run_id == run_id:
+            if pend.parked_on_run_id != (cur.run_id if cur is not None else None):
+                raise ZoningConflict("the zoning changed since this proposal was made")
             if not pend.entities:
                 raise ZoningConflict("the pending proposal has no zones to publish")
             stamp = _stamp(now)
@@ -114,7 +117,7 @@ def accept(db, fiware, tenant_id: str, parcel_id: str, run_id: str, user_id: str
                 publish(fiware, entities)
             except RuntimeError as exc:
                 raise BrokerUnavailable(str(exc)) from exc
-            retire_after_publish(fiware, parcel_id, run_id)
+            retire_quietly(fiware, parcel_id, keep_run_id=run_id)
             pend.entities = entities
             versions.promote_pending(db, pend, accepted_by=user_id, accepted_at=now)
             return pend
@@ -187,7 +190,7 @@ def merge(db, fiware, tenant_id: str, parcel_id: str, run_id: str, ranks: tuple[
             publish(fiware, entities)
         except RuntimeError as exc:
             raise BrokerUnavailable(str(exc)) from exc
-        retire_after_publish(fiware, parcel_id, new_run_id)
+        retire_quietly(fiware, parcel_id, keep_run_id=new_run_id)
         version = versions.record_current(db, tenant_id, parcel_id, new_run_id, entities, source="merge",
                                           derived_from=run_id, index_type=cur.index_type,
                                           accepted_at=now, accepted_by=user_id)

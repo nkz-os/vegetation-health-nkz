@@ -55,7 +55,7 @@ def _seed_versions(dbf, *, current=None, pending=None, accepted=True):
                              accepted_at=datetime(2026, 11, 10, tzinfo=timezone.utc) if accepted else None)
         if pending:
             v.record_pending(db, TENANT, PARCEL, pending, run(pending), index_type="NDVI",
-                             outcome_reason=None, job_id="j")
+                             outcome_reason=None, job_id="j", parked_on_run_id=current)
     return db
 
 

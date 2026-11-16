@@ -62,3 +62,15 @@ def test_map_layer_follows_the_merged_run(api):  # noqa: F811
     layer = client.get(f"/api/vegetation/jobs/zoning/{PARCEL}/geojson")
     assert layer.status_code == 200
     assert [f["properties"]["run_id"] for f in layer.json()["features"]] == [new]
+
+
+def test_accept_pending_after_a_merge_is_409(api):  # noqa: F811
+    """A pending proposal was parked against the run that a merge has since replaced."""
+    client, broker, dbf = api
+    broker.store.update({e["id"]: e for e in run(A)})
+    _seed(dbf, current=A, accepted=True, pendings=[(B, run(B), None)])
+    merged = _merge(client, A).json()["run_id"]
+    r = client.post(f"{URL}/accept", json={"run_id": B})
+    assert r.status_code == 409
+    assert broker.run_ids() == {merged}
+    assert _rows(dbf)[merged].status == "current"

@@ -18,8 +18,8 @@ from app.jobs.zoning_multidate.grid import parcel_grid, read_onto_grid
 from app.jobs.zoning_multidate.levels import classify, usable_dates
 from app.jobs.zoning_multidate.notes import assign_notes, with_causes
 from app.jobs.zoning_multidate.polygons import ZoneSummary, level_polygons, summarize
-from app.jobs.zoning_multidate.publish import (build_entities, publish, retire_after_publish,
-                                               retire_automatic_zonings)
+from app.jobs.zoning_multidate.publish import (build_entities, publish, retire_automatic_zonings,
+                                               retire_quietly)
 from app.jobs.zoning_multidate.regions import regularize
 
 logger = logging.getLogger(__name__)
@@ -92,11 +92,12 @@ def _no_zones(result: ProposalResult, reason: str, fiware, parcel_urn: str,
         if cur is not None and cur.accepted_at is not None:
             # An accepted zoning stays in force; the outcome is only recorded.
             versions.record_pending(db, tenant, parcel_urn, uuid.uuid4().hex, [], index_type=result.index,
-                                    outcome_reason=reason, job_id=store.job_id)
+                                    outcome_reason=reason, job_id=store.job_id, parked_on_run_id=cur.run_id)
+            retire_quietly(fiware, parcel_urn, keep_run_id=cur.run_id)  # leftovers of a failed retire
             result.pending_acceptance = True
             logger.info("zoning %s: no zones (%s); accepted run %s kept", parcel_urn, reason, cur.run_id)
             return result
-        retired = retire_automatic_zonings(fiware, parcel_urn, keep_run_id=None)
+        retired = retire_quietly(fiware, parcel_urn, keep_run_id=None)
         versions.supersede_current(db, tenant, parcel_urn)
     logger.info("zoning %s: no zones (%s); %d automatic zones retired", parcel_urn, reason, retired)
     return result
@@ -119,14 +120,15 @@ def _publish_zones(fiware, parcel_urn: str, run_id: str, entities: list[dict], r
         cur = versions.current(db, tenant, parcel_urn)
         if cur is not None and cur.accepted_at is not None:
             versions.record_pending(db, tenant, parcel_urn, run_id, entities, index_type=result.index,
-                                    outcome_reason=None, job_id=store.job_id)
+                                    outcome_reason=None, job_id=store.job_id, parked_on_run_id=cur.run_id)
+            retire_quietly(fiware, parcel_urn, keep_run_id=cur.run_id)  # leftovers of a failed retire
             result.pending_acceptance = True
             logger.info("zoning %s: run %s kept pending; accepted run %s stays in force",
                         parcel_urn, run_id, cur.run_id)
             return entities
         entities = with_causes(entities, assign_notes(versions.notes_of(db, tenant, parcel_urn), entities))
         publish(fiware, entities)
-        retired = retire_after_publish(fiware, parcel_urn, run_id)
+        retired = retire_quietly(fiware, parcel_urn, keep_run_id=run_id)
         versions.record_current(db, tenant, parcel_urn, run_id, entities, source="proposal",
                                 index_type=result.index, job_id=store.job_id)
     logger.info("zoning %s: %d zones published (run %s); %d older automatic zones retired",

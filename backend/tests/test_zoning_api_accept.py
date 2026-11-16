@@ -40,7 +40,7 @@ def _seed(db_factory, *, current=None, accepted=False, pendings=()):
                              accepted_at=ACCEPTED if accepted else None, accepted_by="u0" if accepted else None)
         for run_id, entities, reason in pendings:
             v.record_pending(db, TENANT, PARCEL, run_id, entities, index_type="NDVI",
-                             outcome_reason=reason, job_id="j")
+                             outcome_reason=reason, job_id="j", parked_on_run_id=current)
     db.close()
 
 
@@ -168,3 +168,13 @@ def test_versions_list_order_and_shape(api):
                            {"level": "low", "area_ha": 1.0, "relative_pct": 88}]
     for key in ("derived_from", "index_type", "outcome_reason", "created_at"):
         assert key in a
+
+
+def test_accept_current_sweeps_leftovers(api):
+    from tests.zoning_fakes import zone, WEST
+    client, broker, dbf = api
+    leftover = zone("z" * 32, 2, "medium", WEST)
+    broker.store.update({e["id"]: e for e in run(A) + [leftover]})
+    _seed(dbf, current=A)
+    assert client.post(f"{URL}/accept", json={"run_id": A}).status_code == 200
+    assert broker.run_ids() == {A}

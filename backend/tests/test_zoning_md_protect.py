@@ -118,3 +118,39 @@ def test_sources_unavailable_records_nothing(zoning_db):
     res = propose_zoning(_sources(rows, {}), _fiware([OLD]), PARCEL_URN, None, TODAY, NOW, store=_store(db))
     assert res.reason == "sources_unavailable"
     assert v.current(db, T, PARCEL_URN).run_id == "aaaaaaaa" and v.pending(db, T, PARCEL_URN) is None
+
+
+LEFTOVER = {"id": "urn:ngsi-ld:AgriManagementZone:acme-p1:zzzzzzzz:L3", "zoningMethod": "vegetationIndexMultiDate",
+            "zoningRunId": "zzzzzzzz", "hasAgriParcel": PARCEL_URN}
+
+
+def test_kept_pending_still_sweeps_leftovers(zoning_db):
+    """Zones an earlier failed retire left behind go, even though the accepted zoning stays."""
+    from app.jobs.zoning_multidate.run import propose_zoning
+    db = zoning_db()
+    _seed_current(db, accepted=True)
+    fw = _fiware([OLD, LEFTOVER])
+    res = propose_zoning(_zoned(), fw, PARCEL_URN, None, TODAY, NOW, store=_store(db))
+    assert res.pending_acceptance is True
+    assert [c.args[0] for c in fw.delete_entity.call_args_list] == [LEFTOVER["id"]]
+
+
+def test_no_zones_with_accepted_current_sweeps_leftovers(zoning_db):
+    from app.jobs.zoning_multidate.run import propose_zoning
+    db = zoning_db()
+    _seed_current(db, accepted=True)
+    fw = _fiware([OLD, LEFTOVER])
+    propose_zoning(_flat(), fw, PARCEL_URN, None, TODAY, NOW, store=_store(db))
+    assert [c.args[0] for c in fw.delete_entity.call_args_list] == [LEFTOVER["id"]]
+
+
+def test_failed_retire_on_no_zones_still_withdraws_the_current(zoning_db):
+    from app.jobs.zoning_multidate import versions as v
+    from app.jobs.zoning_multidate.run import propose_zoning
+    db = zoning_db()
+    _seed_current(db, accepted=False)
+    fw = _fiware([OLD])
+    fw.delete_entity.side_effect = RuntimeError("broker 500")
+    res = propose_zoning(_flat(), fw, PARCEL_URN, None, TODAY, NOW, store=_store(db))
+    assert res.status == "no_zones"
+    assert v.current(db, T, PARCEL_URN) is None

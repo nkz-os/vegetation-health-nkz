@@ -85,9 +85,11 @@ def test_record_pending_discards_previous_pending(zoning_db):
     with v.parcel_lock(db, T, P):
         v.record_current(db, T, P, "run-a", _entities("run-a"), source="proposal", index_type="NDVI",
                          accepted_at=NOW, accepted_by="u1")
-        v.record_pending(db, T, P, "run-b", _entities("run-b"), index_type="NDVI", outcome_reason=None, job_id="j1")
+        v.record_pending(db, T, P, "run-b", _entities("run-b"), index_type="NDVI", outcome_reason=None, job_id="j1",
+                         parked_on_run_id="run-a")
     with v.parcel_lock(db, T, P):
-        v.record_pending(db, T, P, "run-c", [], index_type="NDVI", outcome_reason="homogeneous", job_id="j2")
+        v.record_pending(db, T, P, "run-c", [], index_type="NDVI", outcome_reason="homogeneous", job_id="j2",
+                         parked_on_run_id="run-a")
     assert _statuses(db) == {"run-a": "current", "run-b": "discarded", "run-c": "pending"}
     assert v.pending(db, T, P).outcome_reason == "homogeneous"
 
@@ -98,7 +100,8 @@ def test_promote_pending_and_mark_accepted(zoning_db):
     with v.parcel_lock(db, T, P):
         v.record_current(db, T, P, "run-a", _entities("run-a"), source="proposal", index_type="NDVI")
         v.mark_accepted(db, v.current(db, T, P), "u1", NOW)
-        v.record_pending(db, T, P, "run-b", _entities("run-b"), index_type="NDVI", outcome_reason=None, job_id="j1")
+        v.record_pending(db, T, P, "run-b", _entities("run-b"), index_type="NDVI", outcome_reason=None, job_id="j1",
+                         parked_on_run_id="run-a")
     with v.parcel_lock(db, T, P):
         v.promote_pending(db, v.pending(db, T, P), accepted_by="u2", accepted_at=NOW)
     assert _statuses(db) == {"run-a": "superseded", "run-b": "current"}
