@@ -35,6 +35,7 @@ from app.api.sar import router as sar_router
 from app.api.history import router as history_router
 from app.api.config import router as config_router
 from app.api.usage import router as usage_router
+from app.api.zoning_versions import router as zoning_versions_router
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -127,6 +128,7 @@ async def readyz():
 
 # Include Routers (The core of the platform)
 app.include_router(jobs_router)
+app.include_router(zoning_versions_router)
 app.include_router(parcels_router)
 app.include_router(tiles_router)
 app.include_router(entities_router)
