@@ -1,6 +1,7 @@
 """Zoning versions of a parcel: accept, note a cause, merge levels, list versions.
 
 Plain ``def`` handlers: the broker client is blocking, so FastAPI runs them in its thread pool.
+The geometry stack (shapely, pyproj) is imported by the handlers, not when the app starts.
 """
 from __future__ import annotations
 
@@ -13,7 +14,7 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 
 from app.database import get_db_with_tenant
-from app.jobs.zoning_multidate import actions, versions
+from app.jobs.zoning_multidate import errors, versions
 from app.middleware.auth import require_auth
 
 router = APIRouter(prefix="/api/vegetation/zoning", tags=["zoning"])
@@ -29,13 +30,13 @@ def broker_for(tenant_id: str):
 def _run(action):
     try:
         return action()
-    except actions.ZoningNotFound as exc:
+    except errors.ZoningNotFound as exc:
         raise HTTPException(status_code=404, detail="Zoning not found") from exc
-    except actions.ZoningInvalid as exc:
+    except errors.ZoningInvalid as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except actions.ZoningConflict as exc:
+    except errors.ZoningConflict as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except actions.BrokerUnavailable as exc:
+    except errors.BrokerUnavailable as exc:
         logger.error("zoning action failed at the broker: %s", exc)
         raise HTTPException(status_code=502, detail="Context broker unavailable; nothing was changed") from exc
 
@@ -48,6 +49,7 @@ class AcceptRequest(BaseModel):
 def accept_zoning(parcel_id: str, body: AcceptRequest,
                   current_user: dict = Depends(require_auth),
                   db: Session = Depends(get_db_with_tenant)):
+    from app.jobs.zoning_multidate import actions
     tenant = current_user["tenant_id"]
     version = _run(lambda: actions.accept(db, broker_for(tenant), tenant, parcel_id, body.run_id,
                                           current_user["user_id"], datetime.now(timezone.utc)))
@@ -68,6 +70,7 @@ class NoteRequest(BaseModel):
 def note_zone(parcel_id: str, zone_id: str, body: NoteRequest,
               current_user: dict = Depends(require_auth),
               db: Session = Depends(get_db_with_tenant)):
+    from app.jobs.zoning_multidate import actions
     tenant = current_user["tenant_id"]
     return _run(lambda: actions.note(db, broker_for(tenant), tenant, parcel_id, zone_id, body.cause,
                                      current_user["user_id"]))
@@ -83,6 +86,7 @@ class MergeRequest(BaseModel):
 def merge_levels(parcel_id: str, body: MergeRequest,
                  current_user: dict = Depends(require_auth),
                  db: Session = Depends(get_db_with_tenant)):
+    from app.jobs.zoning_multidate import actions
     tenant = current_user["tenant_id"]
     a, b = body.ranks
     version = _run(lambda: actions.merge(db, broker_for(tenant), tenant, parcel_id, body.run_id, (a, b),
@@ -95,4 +99,5 @@ def merge_levels(parcel_id: str, body: MergeRequest,
 def list_versions(parcel_id: str,
                   current_user: dict = Depends(require_auth),
                   db: Session = Depends(get_db_with_tenant)):
+    from app.jobs.zoning_multidate import actions
     return [actions.summary(v) for v in versions.history(db, current_user["tenant_id"], parcel_id)]

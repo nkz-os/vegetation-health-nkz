@@ -12,27 +12,13 @@ from typing import Any
 from urllib.parse import quote
 
 from app.jobs.zoning_multidate import versions
+from app.jobs.zoning_multidate.errors import (BrokerUnavailable, ZoningConflict, ZoningInvalid,
+                                              ZoningNotFound)
 from app.jobs.zoning_multidate.notes import assign_notes, with_causes
 from app.jobs.zoning_multidate.publish import METHOD, ZONE_TYPE, publish, retire_after_publish
 
 _NKZ = "https://nkz-os.org/ns/"
 _RANKS = (1, 2, 3, 4)
-
-
-class ZoningNotFound(Exception):
-    pass
-
-
-class ZoningConflict(Exception):
-    pass
-
-
-class BrokerUnavailable(Exception):
-    pass
-
-
-class ZoningInvalid(Exception):
-    pass
 
 
 def _stamp(at: datetime) -> dict:
