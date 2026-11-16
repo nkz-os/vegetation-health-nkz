@@ -10,12 +10,12 @@ tenant setting, so row-level security cannot be relied on here.
 from __future__ import annotations
 
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Iterator
 
 from sqlalchemy import text
 
-from app.models.zoning import ZoningVersion
+from app.models.zoning import ZoningNote, ZoningVersion
 
 _LOCK = text("SELECT pg_advisory_xact_lock(hashtext(:key))")
 
@@ -79,6 +79,11 @@ def history(db, tenant_id: str, parcel_id: str) -> list[ZoningVersion]:
     )
 
 
+def _now() -> datetime:
+    # Wall clock, not the transaction start: versions recorded in one transaction keep their order.
+    return datetime.now(timezone.utc)
+
+
 def _retire(db, version: ZoningVersion | None, status: str) -> None:
     # Flushed on its own: SQLAlchemy writes INSERTs before UPDATEs, and the new
     # row would otherwise collide with this one on the partial unique index.
@@ -104,7 +109,7 @@ def record_current(db, tenant_id: str, parcel_id: str, run_id: str, entities: li
     version = ZoningVersion(
         run_id=run_id, tenant_id=tenant_id, parcel_id=parcel_id, status="current", source=source,
         derived_from=derived_from, index_type=index_type, entities=entities, job_id=job_id,
-        accepted_at=accepted_at, accepted_by=accepted_by,
+        accepted_at=accepted_at, accepted_by=accepted_by, created_at=_now(),
     )
     db.add(version)
     db.flush()
@@ -119,6 +124,7 @@ def record_pending(db, tenant_id: str, parcel_id: str, run_id: str, entities: li
     version = ZoningVersion(
         run_id=run_id, tenant_id=tenant_id, parcel_id=parcel_id, status="pending", source="proposal",
         index_type=index_type, outcome_reason=outcome_reason, entities=entities, job_id=job_id,
+        created_at=_now(),
     )
     db.add(version)
     db.flush()
@@ -136,3 +142,12 @@ def promote_pending(db, version: ZoningVersion, *, accepted_by: str, accepted_at
 def mark_accepted(db, version: ZoningVersion, user_id: str, at: datetime) -> None:
     version.accepted_at, version.accepted_by = at, user_id
     db.flush()
+
+
+def notes_of(db, tenant_id: str, parcel_id: str) -> list[ZoningNote]:
+    return (
+        db.query(ZoningNote)
+        .filter(ZoningNote.tenant_id == tenant_id, ZoningNote.parcel_id == parcel_id)
+        .order_by(ZoningNote.created_at)
+        .all()
+    )

@@ -12,11 +12,14 @@ from typing import Any, Callable, Literal
 import numpy as np
 
 from app.jobs.zoning_multidate import config as cfg
+from app.jobs.zoning_multidate import versions
 from app.jobs.zoning_multidate.dates import RasterRow, load_raster_rows, select_dates
 from app.jobs.zoning_multidate.grid import parcel_grid, read_onto_grid
 from app.jobs.zoning_multidate.levels import classify, usable_dates
+from app.jobs.zoning_multidate.notes import assign_notes, with_causes
 from app.jobs.zoning_multidate.polygons import ZoneSummary, level_polygons, summarize
-from app.jobs.zoning_multidate.publish import build_entities, publish, retire_automatic_zonings
+from app.jobs.zoning_multidate.publish import (build_entities, publish, retire_after_publish,
+                                               retire_automatic_zonings)
 from app.jobs.zoning_multidate.regions import regularize
 
 logger = logging.getLogger(__name__)
@@ -42,6 +45,16 @@ class ProposalResult:
     dropped: dict[str, int] = field(default_factory=dict)
     parcel_area_ha: float = 0.0
     features: list[dict] = field(default_factory=list)
+    pending_acceptance: bool = False  # kept as a proposal: the current zoning was accepted
+
+
+@dataclass
+class VersionStore:
+    """Where zoning versions are recorded. Without one (tests of the pipeline alone),
+    every proposal replaces the published zoning, as before versions existed."""
+    db: Any
+    tenant_id: str
+    job_id: str | None = None
 
 
 def choose_index(requested: str | None, crop_species: str | None) -> str:
@@ -66,15 +79,63 @@ def validate_zoning_index(index: str | None) -> str | None:
     return index or None
 
 
-def _no_zones(result: ProposalResult, reason: str, fiware, parcel_urn: str) -> ProposalResult:
+def _no_zones(result: ProposalResult, reason: str, fiware, parcel_urn: str,
+              store: VersionStore | None) -> ProposalResult:
     result.status, result.reason = "no_zones", reason
-    retired = retire_automatic_zonings(fiware, parcel_urn, keep_run_id=None)
+    if store is None:
+        retired = retire_automatic_zonings(fiware, parcel_urn, keep_run_id=None)
+        logger.info("zoning %s: no zones (%s); %d automatic zones retired", parcel_urn, reason, retired)
+        return result
+    db, tenant = store.db, store.tenant_id
+    with versions.parcel_lock(db, tenant, parcel_urn):
+        cur = versions.current(db, tenant, parcel_urn)
+        if cur is not None and cur.accepted_at is not None:
+            # An accepted zoning stays in force; the outcome is only recorded.
+            versions.record_pending(db, tenant, parcel_urn, uuid.uuid4().hex, [], index_type=result.index,
+                                    outcome_reason=reason, job_id=store.job_id)
+            result.pending_acceptance = True
+            logger.info("zoning %s: no zones (%s); accepted run %s kept", parcel_urn, reason, cur.run_id)
+            return result
+        retired = retire_automatic_zonings(fiware, parcel_urn, keep_run_id=None)
+        versions.supersede_current(db, tenant, parcel_urn)
     logger.info("zoning %s: no zones (%s); %d automatic zones retired", parcel_urn, reason, retired)
     return result
 
 
+def _publish_zones(fiware, parcel_urn: str, run_id: str, entities: list[dict], result: ProposalResult,
+                   store: VersionStore | None) -> list[dict]:
+    """Publish the proposal as the current zoning, or keep it pending if the current one was accepted.
+
+    Returns the entities as published or stored (with the technicians' causes when published).
+    """
+    if store is None:
+        publish(fiware, entities)
+        retired = retire_automatic_zonings(fiware, parcel_urn, keep_run_id=run_id)
+        logger.info("zoning %s: %d zones published (run %s); %d older automatic zones retired",
+                    parcel_urn, len(entities), run_id, retired)
+        return entities
+    db, tenant = store.db, store.tenant_id
+    with versions.parcel_lock(db, tenant, parcel_urn):
+        cur = versions.current(db, tenant, parcel_urn)
+        if cur is not None and cur.accepted_at is not None:
+            versions.record_pending(db, tenant, parcel_urn, run_id, entities, index_type=result.index,
+                                    outcome_reason=None, job_id=store.job_id)
+            result.pending_acceptance = True
+            logger.info("zoning %s: run %s kept pending; accepted run %s stays in force",
+                        parcel_urn, run_id, cur.run_id)
+            return entities
+        entities = with_causes(entities, assign_notes(versions.notes_of(db, tenant, parcel_urn), entities))
+        publish(fiware, entities)
+        retired = retire_after_publish(fiware, parcel_urn, run_id)
+        versions.record_current(db, tenant, parcel_urn, run_id, entities, source="proposal",
+                                index_type=result.index, job_id=store.job_id)
+    logger.info("zoning %s: %d zones published (run %s); %d older automatic zones retired",
+                parcel_urn, len(entities), run_id, retired)
+    return entities
+
+
 def propose_zoning(sources: Sources, fiware, parcel_urn: str, index: str | None,
-                   today: date, now: datetime) -> ProposalResult:
+                   today: date, now: datetime, store: VersionStore | None = None) -> ProposalResult:
     idx = choose_index(index, None if index else sources.crop_species())
     result = ProposalResult(status="no_zones", reason=None, index=idx)
     grid = parcel_grid(sources.parcel_geometry(), cfg.RES_M)
@@ -105,7 +166,7 @@ def propose_zoning(sources: Sources, fiware, parcel_urn: str, index: str | None,
                        parcel_urn, failed, failed + len(arrays))
         return result
     if not arrays:
-        return _no_zones(result, "not_enough_dates", fiware, parcel_urn)
+        return _no_zones(result, "not_enough_dates", fiware, parcel_urn, store)
 
     stack = np.stack(arrays)
     keep, filtered = usable_dates(stack, grid.core, idx)
@@ -114,24 +175,21 @@ def propose_zoning(sources: Sources, fiware, parcel_urn: str, index: str | None,
         if failed:  # a missing date might have made the difference
             result.status, result.reason = "no_zones", "sources_unavailable"
             return result
-        return _no_zones(result, "not_enough_dates", fiware, parcel_urn)
+        return _no_zones(result, "not_enough_dates", fiware, parcel_urn, store)
     kept = stack[keep]
     result.dates_used = [dates[i] for i in keep]
 
     levels = classify(kept, grid.core)
     if levels.homogeneous:
-        return _no_zones(result, "homogeneous", fiware, parcel_urn)
+        return _no_zones(result, "homogeneous", fiware, parcel_urn, store)
     regular = regularize(levels.levels, grid.inside, cfg.RES_M, cfg.MIN_ZONE_HA)
     zones = summarize(regular, kept, levels.rel, level_polygons(regular, grid), core=grid.core)
     if len(zones) < 2:
-        return _no_zones(result, "single_level", fiware, parcel_urn)
+        return _no_zones(result, "single_level", fiware, parcel_urn, store)
 
     run_id = uuid.uuid4().hex
     entities = build_entities(parcel_urn, run_id, idx, result.dates_used, zones, grid.crs, now)
-    publish(fiware, entities)
-    retired = retire_automatic_zonings(fiware, parcel_urn, keep_run_id=run_id)
-    logger.info("zoning %s: %d zones published (run %s); %d older automatic zones retired",
-                parcel_urn, len(zones), run_id, retired)
+    entities = _publish_zones(fiware, parcel_urn, run_id, entities, result, store)
     result.status, result.run_id, result.zones = "zones", run_id, zones
     from pyproj import Transformer
     to_wgs84 = Transformer.from_crs(grid.crs, "EPSG:4326", always_xy=True)
@@ -174,6 +232,7 @@ def vra_job_result(result: ProposalResult) -> dict[str, Any]:
         "geojson": {"type": "FeatureCollection", "features": result.features},
         "index_type": "VRA_ZONES",
         "zoning_source": result.index,
+        "pending_acceptance": result.pending_acceptance,
     }
 
 
