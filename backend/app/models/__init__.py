@@ -11,6 +11,7 @@ from .limits import VegetationPlanLimits, VegetationUsageStats, VegetationUsageL
 from .global_scene_cache import GlobalSceneCache
 from .subscriptions import VegetationSubscription
 from .crop_seasons import VegetationCropSeason
+from .zoning import ZoningNote, ZoningVersion
 
 __all__ = [
     'BaseModel',
@@ -26,5 +27,7 @@ __all__ = [
     'GlobalSceneCache',
     'VegetationSubscription',
     'VegetationCropSeason',
+    'ZoningVersion',
+    'ZoningNote',
 ]
 
