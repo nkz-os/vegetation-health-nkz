@@ -6,6 +6,7 @@ each interface translates: no human-language text goes into the broker.
 from __future__ import annotations
 
 import json
+import logging
 from datetime import date, datetime
 from typing import Any
 
@@ -14,6 +15,8 @@ from shapely.geometry import mapping
 from shapely.ops import transform as shp_transform
 
 from app.jobs.zoning_multidate.polygons import ZoneSummary
+
+logger = logging.getLogger(__name__)
 
 METHOD = "vegetationIndexMultiDate"
 ZONE_TYPE = "AgriManagementZone"
@@ -121,6 +124,20 @@ def _parcel_of(row: dict) -> Any:
         if v:
             return v
     return None
+
+
+def retire_quietly(fiware, parcel_urn: str, keep_run_id: str | None) -> int:
+    """``retire_automatic_zonings`` that logs a broker failure instead of raising.
+
+    Used once the outcome is decided (a run published, or the zoning withdrawn): the tables
+    record that outcome, and every later action on the parcel sweeps the leftovers again
+    with the run in force kept, so a failure here is repaired by the next one.
+    """
+    try:
+        return retire_automatic_zonings(fiware, parcel_urn, keep_run_id=keep_run_id)
+    except Exception:
+        logger.exception("zoning %s: older zones not fully retired (kept run %s)", parcel_urn, keep_run_id)
+        return 0
 
 
 def retire_automatic_zonings(fiware, parcel_urn: str, keep_run_id: str | None) -> int:

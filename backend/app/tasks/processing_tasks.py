@@ -352,7 +352,8 @@ def calculate_vegetation_index(
             # Multi-date proposal (replaces the single-image k-means, owner 2026-11-14).
             # A parcel without enough evidence completes with status "no_zones" and a reason.
             from datetime import date as _date, datetime as _datetime, timezone as _tz
-            from app.jobs.zoning_multidate.run import default_sources, propose_zoning, vra_job_result
+            from app.jobs.zoning_multidate.run import (VersionStore, default_sources, propose_zoning,
+                                                       vra_job_result)
             from app.services.fiware_integration import FIWAREClient
             source_index = (job.parameters or {}).get('source_index') or None
             fiware = FIWAREClient(
@@ -362,6 +363,7 @@ def calculate_vegetation_index(
             proposal = propose_zoning(
                 default_sources(db, fiware, tenant_id, entity_id), fiware, entity_id,
                 source_index, _date.today(), _datetime.now(_tz.utc),
+                store=VersionStore(db=db, tenant_id=tenant_id, job_id=str(job.id)),
             )
             result = vra_job_result(proposal)
             job.mark_completed(result)

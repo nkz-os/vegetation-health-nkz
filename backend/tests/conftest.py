@@ -25,3 +25,36 @@ os.environ.setdefault("MINIO_ENDPOINT", "localhost:9000")
 os.environ.setdefault("MINIO_ACCESS_KEY", "test")
 os.environ.setdefault("MINIO_SECRET_KEY", "test")
 os.environ.setdefault("INTERNAL_SERVICE_SECRET", "test-secret")
+
+
+import pytest  # noqa: E402
+
+
+@pytest.fixture
+def zoning_db():
+    """Session factory on a real Postgres with the zoning tables (migration 016) freshly created.
+
+    Needs ZONING_PG_URL (CI sets it); tests using it are skipped without it.
+    """
+    url = os.getenv("ZONING_PG_URL")
+    if not url:
+        pytest.skip("ZONING_PG_URL not set")
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    migration = Path(__file__).resolve().parents[1] / "migrations" / "016_zoning_versions.sql"
+    engine = create_engine(url)
+    with engine.begin() as conn:
+        conn.exec_driver_sql("DROP TABLE IF EXISTS zoning_versions, zoning_notes")
+        conn.exec_driver_sql(migration.read_text())
+    factory = sessionmaker(bind=engine)
+    opened = []
+
+    def make():
+        s = factory()
+        opened.append(s)
+        return s
+
+    yield make
+    for s in opened:  # an open read transaction would block the next test's DROP
+        s.close()
+    engine.dispose()

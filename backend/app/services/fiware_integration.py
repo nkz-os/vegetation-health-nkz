@@ -576,6 +576,10 @@ class FIWAREClient:
                      entity_id, response.status_code, response.text)
         return False
 
+    def append_attrs(self, entity_id: str, attrs: Dict[str, Any]) -> bool:
+        """Add or overwrite attributes of an existing entity (True only on 204)."""
+        return self._append_attrs({"id": entity_id, **attrs})
+
     def update_entity(self, entity: Dict[str, Any]) -> bool:
         try:
             entity_id = entity.get('id')
