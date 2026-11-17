@@ -44,6 +44,8 @@ logging.basicConfig(level=logging.INFO)
 async def lifespan(app: FastAPI):
     """Lifecycle events for the module."""
     logger.info("Starting Vegetation Prime API...")
+    from app.middleware.auth import check_signature_config
+    check_signature_config()
     init_db()
 
     # Fail-fast: INTERNAL_SERVICE_SECRET is required for internal auth
