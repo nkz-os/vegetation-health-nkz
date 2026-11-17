@@ -58,6 +58,9 @@ type Mode = 'view' | 'note' | 'merge' | 'confirmMerge';
 
 const MAX_CAUSE = 500;
 
+/** Levels from most to least vigorous. */
+const ZONE_LEVEL_ORDER = ['high', 'medium', 'low', 'critical'];
+
 /** First position of the floating zone card (and of the notice that replaces it). */
 export const ZONE_CARD_START = () => ({ x: window.innerWidth / 2 + 24, y: 96 });
 
@@ -72,7 +75,12 @@ export const ZoneCard: React.FC<ZoneCardProps> = ({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [causeText, setCauseText] = useState(zone.cause ?? '');
-  const others = useMemo(() => levels.filter((l) => l.rank !== zone.rank), [levels, zone.rank]);
+  // Only neighbouring levels merge (the backend refuses the rest): high–medium, medium–low, low–critical.
+  const others = useMemo(() => {
+    const at = ZONE_LEVEL_ORDER.indexOf(zone.level);
+    return levels.filter((l) => l.rank !== zone.rank && at >= 0
+      && Math.abs(ZONE_LEVEL_ORDER.indexOf(l.level) - at) === 1);
+  }, [levels, zone.rank, zone.level]);
   const [otherRank, setOtherRank] = useState<number | null>(others[0]?.rank ?? null);
   const [targetRank, setTargetRank] = useState<number | null>(null);
 

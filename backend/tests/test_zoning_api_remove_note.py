@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from urllib.parse import quote
 
 from tests.test_zoning_api_accept import A, URL, _rows, _seed, api, as_roles  # noqa: F401  (fixture)
-from tests.zoning_fakes import EAST, PARCEL, TENANT, WEST, run
+from tests.zoning_fakes import EAST, PARCEL, TENANT, WEST, run, run_neighbours
 
 
 def _note_url(zone_id):
@@ -41,13 +41,13 @@ def test_remove_cause(api):  # noqa: F811
 
 def test_removed_cause_does_not_come_back(api):  # noqa: F811
     client, broker, dbf = api
-    broker.store.update({e["id"]: e for e in run(A)})
-    _seed(dbf, current=A, accepted=True)
+    broker.store.update({e["id"]: e for e in run_neighbours(A)})
+    _seed(dbf, current=A, accepted=True, current_entities=run_neighbours(A))
     _add_note(dbf, "urn:ngsi-ld:AgriManagementZone:p1:old:L1", WEST, "old west cause", 0)
-    _add_note(dbf, run(A)[1]["id"], EAST, "stones", 1)
-    assert client.delete(_note_url(run(A)[0]["id"])).status_code == 200
+    _add_note(dbf, run_neighbours(A)[1]["id"], EAST, "stones", 1)
+    assert client.delete(_note_url(run_neighbours(A)[0]["id"])).status_code == 200
     assert _causes(dbf) == ["stones"]
-    r = client.post(f"{URL}/merge", json={"run_id": A, "ranks": [1, 3], "target_rank": 3})
+    r = client.post(f"{URL}/merge", json={"run_id": A, "ranks": [1, 2], "target_rank": 2})
     assert r.status_code == 200, r.text
     causes = [e.get("technicianCause", {}).get("value") for e in broker.store.values()]
     assert causes == ["stones"]
