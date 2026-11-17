@@ -16,7 +16,7 @@ import { syncZoningPendingFlag, useVegetationContext } from '../../services/vege
 import { useVegetationApi } from '../../services/api';
 import { API_ORIGIN } from '../../services/apiOrigin';
 import { useAuth } from '../../hooks/useAuth';
-import { ZoneCard, canEditZoning, type ZoneCardLevel, type ZoneCardZone } from '../zoning/ZoneCard';
+import { ZoneCard, ZoningNotice, canEditZoning, type ZoneCardLevel, type ZoneCardZone } from '../zoning/ZoneCard';
 import { PendingPanel } from '../zoning/PendingPanel';
 import type { PendingZoning } from '../../types';
 
@@ -477,17 +477,7 @@ export const VegetationLayer: React.FC = () => {
   };
 
   const notice = zoningNotice && !zoneCard && typeof document !== 'undefined' ? createPortal(
-    <div className="fixed top-24 right-4 z-nkz-modal w-80 bg-nkz-surface rounded-nkz-md shadow-lg border border-nkz-border p-3 text-nkz-xs text-nkz-text-primary flex items-start justify-between gap-2">
-      <span>{zoningNotice}</span>
-      <button
-        type="button"
-        onClick={() => setZoningNotice(null)}
-        className="text-nkz-text-muted hover:text-nkz-text-primary"
-        aria-label={t('common.close', 'Close')}
-      >
-        ×
-      </button>
-    </div>,
+    <ZoningNotice message={zoningNotice} onClose={() => setZoningNotice(null)} />,
     document.body,
   ) : null;
 

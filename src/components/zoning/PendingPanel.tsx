@@ -8,6 +8,7 @@ import { useTranslation } from '@nekazari/sdk';
 import { Button, Spinner, Switch } from '@nekazari/ui-kit';
 import { useVegetationApi } from '../../services/api';
 import type { PendingZoning, ZoningLevel } from '../../types';
+import { useDraggable } from './useDraggable';
 
 interface PendingPanelProps {
   parcelId: string;
@@ -28,6 +29,8 @@ export const PendingPanel: React.FC<PendingPanelProps> = ({
 }) => {
   const { t, i18n } = useTranslation();
   const api = useVegetationApi();
+  // Floats over the map, to the left of its centre; the user moves it by the title bar.
+  const drag = useDraggable('pending-panel', () => ({ x: Math.max(0, window.innerWidth / 2 - 384 - 24), y: 96 }));
   const [data, setData] = useState<PendingZoning | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -85,8 +88,8 @@ export const PendingPanel: React.FC<PendingPanelProps> = ({
   const rows = LEVEL_ORDER.filter((lv) => before.has(lv) || after.has(lv));
 
   return (
-    <div className="fixed top-24 left-4 z-nkz-modal w-96 max-h-96 overflow-y-auto bg-nkz-surface rounded-nkz-md shadow-lg border border-nkz-border p-3 text-nkz-xs text-nkz-text-primary flex flex-col gap-2">
-      <div className="flex items-start justify-between gap-2">
+    <div style={drag.style} className="fixed z-nkz-modal w-96 max-h-96 overflow-y-auto bg-nkz-surface rounded-nkz-md shadow-lg border border-nkz-border p-3 text-nkz-xs text-nkz-text-primary flex flex-col gap-2">
+      <div {...drag.handleProps} className={`flex items-start justify-between gap-2 ${drag.handleProps.className}`}>
         <span className="text-nkz-sm font-semibold">{t('zoning.pending.title', 'New zoning proposal')}</span>
         <button
           type="button"

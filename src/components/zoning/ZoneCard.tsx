@@ -9,6 +9,7 @@ import React, { useMemo, useState } from 'react';
 import { useTranslation } from '@nekazari/sdk';
 import { Badge, Button, Textarea } from '@nekazari/ui-kit';
 import { useVegetationApi } from '../../services/api';
+import { useDraggable } from './useDraggable';
 
 /** Roles that may change a zoning; field workers (Farmer) only read it. */
 export const ZONING_EDITOR_ROLES = ['TechnicalConsultant', 'TenantAdmin', 'PlatformAdmin'];
@@ -57,11 +58,16 @@ type Mode = 'view' | 'note' | 'merge' | 'confirmMerge';
 
 const MAX_CAUSE = 500;
 
+/** First position of the floating zone card (and of the notice that replaces it). */
+export const ZONE_CARD_START = () => ({ x: window.innerWidth / 2 + 24, y: 96 });
+
 export const ZoneCard: React.FC<ZoneCardProps> = ({
   parcelId, zone, levels, canEdit, hasPending, onChanged, onStale, onOpenPending, onClose,
 }) => {
   const { t, i18n } = useTranslation();
   const api = useVegetationApi();
+  // Floats over the map, to the right of its centre; the user moves it by the title bar.
+  const drag = useDraggable('zone-card', ZONE_CARD_START);
   const [mode, setMode] = useState<Mode>('view');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -110,8 +116,8 @@ export const ZoneCard: React.FC<ZoneCardProps> = ({
   const trimmed = causeText.trim();
 
   return (
-    <div className="fixed top-24 right-4 z-nkz-modal w-80 overflow-y-auto bg-nkz-surface rounded-nkz-md shadow-lg border border-nkz-border p-3 text-nkz-xs text-nkz-text-primary flex flex-col gap-2">
-      <div className="flex items-start justify-between gap-2">
+    <div style={drag.style} className="fixed z-nkz-modal w-80 overflow-y-auto bg-nkz-surface rounded-nkz-md shadow-lg border border-nkz-border p-3 text-nkz-xs text-nkz-text-primary flex flex-col gap-2">
+      <div {...drag.handleProps} className={`flex items-start justify-between gap-2 ${drag.handleProps.className}`}>
         <span className="text-nkz-sm font-semibold">
           {levelName(zone.level)} {pctText}
         </span>
@@ -247,6 +253,27 @@ export const ZoneCard: React.FC<ZoneCardProps> = ({
           </div>
         </div>
       )}
+    </div>
+  );
+};
+
+/** Takes the zone card's place (and position) when an edit found the zoning changed. */
+export const ZoningNotice: React.FC<{ message: string; onClose: () => void }> = ({ message, onClose }) => {
+  const { t } = useTranslation();
+  const drag = useDraggable('zone-card', ZONE_CARD_START);
+  return (
+    <div style={drag.style} className="fixed z-nkz-modal w-80 bg-nkz-surface rounded-nkz-md shadow-lg border border-nkz-border p-3 text-nkz-xs text-nkz-text-primary">
+      <div {...drag.handleProps} className={`flex items-start justify-between gap-2 ${drag.handleProps.className}`}>
+        <span>{message}</span>
+        <button
+          type="button"
+          onClick={onClose}
+          className="text-nkz-text-muted hover:text-nkz-text-primary"
+          aria-label={t('common.close', 'Close')}
+        >
+          ×
+        </button>
+      </div>
     </div>
   );
 };
