@@ -21,6 +21,15 @@ router = APIRouter(prefix="/api/vegetation/zoning", tags=["zoning"])
 logger = logging.getLogger(__name__)
 
 
+# Roles that may change a zoning; field workers (Farmer) only read it.
+EDITOR_ROLES = frozenset({"TechnicalConsultant", "TenantAdmin", "PlatformAdmin"})
+
+
+def require_editor(current_user: dict) -> None:
+    if not EDITOR_ROLES.intersection(current_user.get("roles") or []):
+        raise HTTPException(status_code=403, detail="Not allowed to edit zonings")
+
+
 def broker_for(tenant_id: str):
     from app.services.fiware_integration import FIWAREClient
     return FIWAREClient(os.getenv("FIWARE_CONTEXT_BROKER_URL", "http://orion-ld-service:1026"),
@@ -49,6 +58,7 @@ class AcceptRequest(BaseModel):
 def accept_zoning(parcel_id: str, body: AcceptRequest,
                   current_user: dict = Depends(require_auth),
                   db: Session = Depends(get_db_with_tenant)):
+    require_editor(current_user)
     from app.jobs.zoning_multidate import actions
     tenant = current_user["tenant_id"]
     version = _run(lambda: actions.accept(db, broker_for(tenant), tenant, parcel_id, body.run_id,
@@ -70,6 +80,7 @@ class NoteRequest(BaseModel):
 def note_zone(parcel_id: str, zone_id: str, body: NoteRequest,
               current_user: dict = Depends(require_auth),
               db: Session = Depends(get_db_with_tenant)):
+    require_editor(current_user)
     from app.jobs.zoning_multidate import actions
     tenant = current_user["tenant_id"]
     return _run(lambda: actions.note(db, broker_for(tenant), tenant, parcel_id, zone_id, body.cause,
@@ -86,6 +97,7 @@ class MergeRequest(BaseModel):
 def merge_levels(parcel_id: str, body: MergeRequest,
                  current_user: dict = Depends(require_auth),
                  db: Session = Depends(get_db_with_tenant)):
+    require_editor(current_user)
     from app.jobs.zoning_multidate import actions
     tenant = current_user["tenant_id"]
     a, b = body.ranks
