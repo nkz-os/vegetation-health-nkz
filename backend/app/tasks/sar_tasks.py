@@ -202,11 +202,11 @@ def _publish_zone_sar_products(tenant_id: str, entity_id: str, calibrated_paths:
     from shapely.geometry import shape as shapely_shape
 
     from app.services.fiware_integration import upsert_eo_zone_product
-    from app.services.zone_products import fetch_management_zones
+    from app.services.zone_products import fetch_zone_targets
 
     published = 0
     parcel_short = entity_id.split(":")[-1][:10]
-    for zone in fetch_management_zones(tenant_id, entity_id):
+    for zone in fetch_zone_targets(tenant_id, entity_id):
         try:
             zone_geom = shapely_shape(zone["geometry"])
             vv = _zone_sigma0_stats(calibrated_paths["VV"], zone_geom)

@@ -1,8 +1,10 @@
 """Per-management-zone statistics and EOProduct ids.
 
-Zones are published by the weather-map module as ``AgriParcelZone`` entities.
-Zone products carry ``hasAgriParcelZone`` and never ``hasAgriParcel``, so every
-existing parcel-level query keeps returning the same entities.
+Targets are the weather-map terrain units (``AgriParcelZone``, relation
+``hasAgriParcelZone``) and the current multi-date zoning of the parcel
+(``AgriManagementZone``, relation ``hasAgriManagementZone``). Zone products never
+carry ``hasAgriParcel``, so every existing parcel-level query keeps returning the
+same entities.
 """
 
 import logging
@@ -10,6 +12,7 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 from nkz_platform_sdk import SyncOrionClient
+from nkz_platform_sdk.gis.zones import ZONE_TYPE, default_zoning, group_zonings
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +22,10 @@ MIN_VALID_FRACTION = 0.5
 _ZONE_TYPE_KEYS = ("zoneType", "nkz:zoneType", "https://nkz-os.org/ns/zoneType")
 _ZONE_ID_KEYS = ("nkz:zoneId", "zoneId", "https://nkz-os.org/ns/zoneId")
 _ZONE_VERSION_KEYS = ("nkz:zoneVersion", "zoneVersion", "https://nkz-os.org/ns/zoneVersion")
+_ZONE_LEVEL_KEYS = ("zoneLevel", "nkz:zoneLevel", "https://nkz-os.org/ns/zoneLevel")
+_MULTIDATE_METHOD = "vegetationIndexMultiDate"
+CURRENT_ZONE_RELATION = "hasAgriManagementZone"
+TERRAIN_ZONE_RELATION = "hasAgriParcelZone"
 
 
 def _unwrap(attr: Any) -> Any:
@@ -85,19 +92,101 @@ def fetch_management_zones(tenant_id: str, parcel_urn: str) -> List[Dict[str, An
             "zone_urn": e["id"],
             "zone_version": _first(e, _ZONE_VERSION_KEYS),
             "geometry": geometry,
+            "relation": TERRAIN_ZONE_RELATION,
         })
     return zones
 
 
-def zone_statistics(processor, index_array: np.ndarray, zone_geometry: dict) -> Optional[Dict[str, Any]]:
+def fetch_current_zones(tenant_id: str, parcel_urn: str) -> List[Dict[str, Any]]:
+    """Zones of the parcel's current zoning, only when it is a multi-date vegetation run.
+
+    Each item is ``{zone_id, zone_urn, zone_version, geometry, relation, level, run_id}``
+    with ``zone_id = {run_id[:8]}-{level}``. Any other current zoning (older single
+    image method, manual, none), or a run whose levels are missing or repeated,
+    gives ``[]``. Fail-safe: any Orion error returns ``[]``.
+    """
+    try:
+        entities = SyncOrionClient(tenant_id).query_entities(
+            type=ZONE_TYPE, q=f'hasAgriParcel=="{parcel_urn}"', limit=1000,
+        )
+    except Exception as exc:
+        logger.warning("Current zoning lookup failed for %s: %s", parcel_urn, exc)
+        return []
+    entities = entities if isinstance(entities, list) else []
+    try:
+        current = default_zoning(group_zonings(entities))
+    except Exception as exc:
+        logger.warning("Current zoning grouping failed for %s: %s", parcel_urn, exc)
+        return []
+    if current is None or current.method != _MULTIDATE_METHOD:
+        return []
+    by_id = {e.get("id"): e for e in entities}
+    zones: List[Dict[str, Any]] = []
+    seen_levels = set()
+    for ref in current.zones:
+        level = _first(by_id.get(ref.id) or {}, _ZONE_LEVEL_KEYS)
+        if not isinstance(level, str) or not level or level in seen_levels:
+            logger.warning("Current zoning %s of %s has a missing or repeated level, ignored",
+                           current.run_id, parcel_urn)
+            return []
+        if not isinstance(ref.geometry, dict) or "coordinates" not in ref.geometry:
+            logger.warning("Zone %s has no usable geometry, skipped", ref.id)
+            continue
+        seen_levels.add(level)
+        zones.append({
+            "zone_id": f"{current.run_id[:8]}-{level}",
+            "zone_urn": ref.id,
+            "zone_version": current.run_id,
+            "geometry": ref.geometry,
+            "relation": CURRENT_ZONE_RELATION,
+            "level": level,
+            "run_id": current.run_id,
+        })
+    return zones
+
+
+def fetch_zone_targets(tenant_id: str, parcel_urn: str) -> List[Dict[str, Any]]:
+    """Terrain units plus the current zoning's zones: every zone that gets products."""
+    return fetch_management_zones(tenant_id, parcel_urn) + fetch_current_zones(tenant_id, parcel_urn)
+
+
+def zone_mask(geometry: dict, transform, shape, crs=None) -> np.ndarray:
+    """Exact (unbuffered) mask of a 4326 GeoJSON zone on a raster grid. True = excluded.
+
+    Same convention as ``create_geometry_mask`` but without its outward buffer,
+    so adjacent or nested zones do not share pixels. ``crs`` is the raster CRS the
+    geometry is reprojected to (omit for a geometry already in it).
+    """
+    from rasterio.features import geometry_mask
+    from shapely.geometry import shape as shp
+
+    geom = shp(geometry)
+    if crs and str(crs) != "EPSG:4326":
+        from pyproj import Transformer
+        from shapely.ops import transform as shp_transform
+
+        geom = shp_transform(Transformer.from_crs("EPSG:4326", crs, always_xy=True).transform, geom)
+    return geometry_mask([geom], out_shape=tuple(shape), transform=transform,
+                         all_touched=False, invert=False)
+
+
+def zone_statistics(processor, index_array: np.ndarray, zone_geometry: dict,
+                    exact: bool = False) -> Optional[Dict[str, Any]]:
     """Statistics of ``index_array`` inside a zone, or None when the zone is too thin.
 
     None when fewer than MIN_ZONE_PIXELS valid pixels or valid pixels are under
     MIN_VALID_FRACTION of the zone's pixels (``valid_fraction``).
     """
-    # NOTE: create_geometry_mask buffers by PARCEL_GEOMETRY_BUFFER_M (10 m) with no
-    # opt-out, so zone counts are slightly inflated. Follow-up: buffer parameter.
-    mask = processor.create_geometry_mask(zone_geometry)  # True = excluded
+    if exact:
+        # Current-zoning zones are nested/adjacent: the 10 m buffer of
+        # create_geometry_mask would pull in pixels of the neighbouring level.
+        meta = processor.band_meta
+        mask = zone_mask(zone_geometry, meta["transform"], (meta["height"], meta["width"]),
+                         crs=meta.get("crs"))
+    else:
+        # NOTE: create_geometry_mask buffers by PARCEL_GEOMETRY_BUFFER_M (10 m), so
+        # terrain-unit counts are slightly inflated.
+        mask = processor.create_geometry_mask(zone_geometry)  # True = excluded
     if mask.shape != index_array.shape:
         rows = (np.arange(index_array.shape[0]) * mask.shape[0]) // index_array.shape[0]
         cols = (np.arange(index_array.shape[1]) * mask.shape[1]) // index_array.shape[1]
@@ -114,7 +203,7 @@ def zone_statistics(processor, index_array: np.ndarray, zone_geometry: dict) -> 
 
 def publish_zone_indices(tenant_id: str, parcel_urn: str, index_type: str, processor,
                          index_array: np.ndarray, sensing_date, cloud_cover=None) -> int:
-    """Publish one optical zone product per management zone; per-zone failures are logged.
+    """Publish one optical zone product per zone target; per-zone failures are logged.
 
     Never raises: zone work must not change the parcel result. Returns the number
     of zone products published.
@@ -124,13 +213,14 @@ def publish_zone_indices(tenant_id: str, parcel_urn: str, index_type: str, proce
     parcel_short = parcel_urn.split(":")[-1][:10]
     published = 0
     try:
-        zones = fetch_management_zones(tenant_id, parcel_urn)
+        zones = fetch_zone_targets(tenant_id, parcel_urn)
     except Exception as exc:
         logger.warning("Zone discovery failed for %s: %s", parcel_urn, exc)
         return 0
     for zone in zones:
         try:
-            stats = zone_statistics(processor, index_array, zone["geometry"])
+            stats = zone_statistics(processor, index_array, zone["geometry"],
+                                    exact=zone.get("relation") == CURRENT_ZONE_RELATION)
             if stats is None:
                 logger.info("Zone %s skipped (too few valid pixels)", zone["zone_id"])
                 continue
@@ -148,7 +238,7 @@ def delete_zone_products(tenant_id: str, parcel_urn: str, sensing_date, index_ty
 
     try:
         parcel_short = parcel_urn.split(":")[-1][:10]
-        for zone in fetch_management_zones(tenant_id, parcel_urn):
+        for zone in fetch_zone_targets(tenant_id, parcel_urn):
             try:
                 delete_eo_index(tenant_id, zone_eo_product_id(tenant_id, parcel_short, zone["zone_id"], sensing_date),
                                 index_type)

@@ -342,11 +342,15 @@ def upsert_eo_product(
 
 
 def _zone_base_entity(entity_id: str, zone: Dict[str, Any], stats: Dict[str, Any]) -> Dict[str, Any]:
-    """Common attributes of a per-zone EOProduct: hasAgriParcelZone, never hasAgriParcel."""
+    """Common attributes of a per-zone EOProduct: the zone relation, never hasAgriParcel.
+
+    The relation is ``hasAgriParcelZone`` (terrain unit) or ``hasAgriManagementZone``
+    (current zoning, which also carries its level and run).
+    """
     entity: Dict[str, Any] = {
         "id": entity_id,
         "type": "EOProduct",
-        "hasAgriParcelZone": {"type": "Relationship", "object": zone["zone_urn"]},
+        zone.get("relation", "hasAgriParcelZone"): {"type": "Relationship", "object": zone["zone_urn"]},
         "nkz:zoneId": {"type": "Property", "value": zone["zone_id"]},
         "pixelCount": {"type": "Property", "value": int(stats.get("pixel_count", 0))},
         "nkz:validPixelFraction": {"type": "Property", "value": round(float(stats.get("valid_fraction", 0.0)), 4)},
@@ -354,6 +358,10 @@ def _zone_base_entity(entity_id: str, zone: Dict[str, Any], stats: Dict[str, Any
     }
     if zone.get("zone_version") is not None:
         entity["nkz:zoneVersion"] = {"type": "Property", "value": zone["zone_version"]}
+    if zone.get("level") is not None:
+        entity["nkz:zoneLevel"] = {"type": "Property", "value": zone["level"]}
+    if zone.get("run_id") is not None:
+        entity["nkz:zoningRunId"] = {"type": "Property", "value": zone["run_id"]}
     return entity
 
 
