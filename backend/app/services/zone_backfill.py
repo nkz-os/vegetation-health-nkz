@@ -84,7 +84,8 @@ def backfill_current_zone_products(db, tenant_id: str, parcel_urn: str, *, last_
     """Publish the NDVI zone products of the current zoning for the ``last_n`` latest dates.
 
     ``read_raster(row, grid)`` returns the raster on the parcel grid (default: object
-    storage). Returns the number of products published; never raises.
+    storage). Returns the number of products published; never raises. Closes ``db``
+    once the raster rows are loaded.
     """
     try:
         from app.jobs.zoning_multidate.dates import load_raster_rows
@@ -96,6 +97,8 @@ def backfill_current_zone_products(db, tenant_id: str, parcel_urn: str, *, last_
         if not zones:
             return 0
         rows = _latest_ready_rows(load_raster_rows(db, tenant_id, parcel_urn, BACKFILL_INDEX), last_n)
+        if db is not None:
+            db.close()  # rows are plain values: do not hold a connection across broker and storage I/O
         if not rows:
             return 0
         grid = parcel_grid(_parcel_geometry(tenant_id, parcel_urn), GRID_RES_M)

@@ -145,3 +145,48 @@ def test_merge_enqueues_backfill(zoning_db, monkeypatch):
     monkeypatch.setattr(actions, "_enqueue_backfill", lambda t, p: calls.append((t, p)))
     actions.merge(db, FakeBroker(run_neighbours(old)), TENANT, ZP, old, (1, 2), 2, "u1", datetime.now(timezone.utc))
     assert calls == [(TENANT, ZP)]
+
+
+def test_backfill_releases_session_after_loading_rows(wired):
+    events = []
+
+    class Db:
+        def close(self):
+            events.append("close")
+
+    def reader(row, grid):
+        events.append("read")
+        return np.full(grid.shape, 0.6, dtype="float32")
+
+    zb.backfill_current_zone_products(Db(), "acme", P1, read_raster=reader)
+    assert events[0] == "close" and events.count("close") == 1 and "read" in events
+
+
+def _propose(zoning_db, accepted):
+    from app.jobs.zoning_multidate import versions as v
+    from app.jobs.zoning_multidate.run import VersionStore, propose_zoning
+    from tests.test_zoning_md_protect import (NOW, PARCEL_URN, T, TODAY, _fiware, _seed_current,
+                                              _zoned)
+    db = zoning_db()
+    _seed_current(db, accepted=accepted)
+    res = propose_zoning(_zoned(), _fiware([]), PARCEL_URN, None, TODAY, NOW,
+                         store=VersionStore(db=db, tenant_id=T, job_id="job-1"))
+    return res, (T, PARCEL_URN)
+
+
+def test_published_proposal_enqueues_backfill(zoning_db, monkeypatch):
+    from app.jobs.zoning_multidate import actions
+    calls = []
+    monkeypatch.setattr(actions, "_enqueue_backfill", lambda t, p: calls.append((t, p)))
+    res, key = _propose(zoning_db, accepted=False)
+    assert res.status == "zones" and res.pending_acceptance is False
+    assert calls == [key]
+
+
+def test_pending_proposal_does_not_enqueue_backfill(zoning_db, monkeypatch):
+    from app.jobs.zoning_multidate import actions
+    calls = []
+    monkeypatch.setattr(actions, "_enqueue_backfill", lambda t, p: calls.append((t, p)))
+    res, _ = _propose(zoning_db, accepted=True)
+    assert res.pending_acceptance is True
+    assert calls == []
