@@ -95,3 +95,13 @@ def zoning_features(db, tenant_id: str, entity_id: str) -> list[dict]:
     if versions.has_versions(db, tenant_id, entity_id):
         return []  # the last zoning was withdrawn (no zones); older jobs are not in force
     return _job_features(latest_zoning_job(db, tenant_id, entity_id))
+
+
+def zoning_pending(db, tenant_id: str, entity_id: str) -> bool:
+    """A proposal waits for review and can still be accepted (parked on the zoning in force)."""
+    from app.jobs.zoning_multidate import versions
+    pend = versions.pending(db, tenant_id, entity_id)
+    if pend is None:
+        return False
+    cur = versions.current(db, tenant_id, entity_id)
+    return pend.parked_on_run_id == (cur.run_id if cur is not None else None)

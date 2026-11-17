@@ -61,3 +61,13 @@ def test_no_pending_404(api):  # noqa: F811
     client, broker, dbf = api
     _seed(dbf, current=A, accepted=True)
     assert client.get(f"{URL}/pending").status_code == 404
+
+
+def test_layer_flags_the_pending(api):  # noqa: F811
+    from tests.zoning_fakes import PARCEL
+    client, broker, dbf = api
+    _seed(dbf, current=A, accepted=True, pendings=[(B, run(B), None)])
+    layer = client.get(f"/api/vegetation/jobs/zoning/{PARCEL}/geojson")
+    assert layer.status_code == 200 and layer.json()["has_pending"] is True
+    client.post(f"{URL}/discard", json={"run_id": B})
+    assert client.get(f"/api/vegetation/jobs/zoning/{PARCEL}/geojson").json()["has_pending"] is False
