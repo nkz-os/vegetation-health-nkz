@@ -60,8 +60,16 @@ def test_current_zones_from_multidate_vigente():
     assert z["geometry"] == SQUARE
 
 
-def test_current_zones_empty_when_vigente_not_multidate():
-    assert _fetch([_amz(1, RUN, "vegetationIndex", "2026-06-01", "high")]) == []
+def test_current_zones_empty_when_vigente_not_multidate(caplog):
+    with caplog.at_level("INFO", logger="app.services.zone_products"):
+        assert _fetch([_amz(1, RUN, "vegetationIndex", "2026-06-01", "high")]) == []
+    assert "reason=method=vegetationIndex" in caplog.text and P1 in caplog.text
+
+
+def test_current_zones_empty_without_zoning_logs_reason(caplog):
+    with caplog.at_level("INFO", logger="app.services.zone_products"):
+        assert _fetch([]) == []
+    assert "reason=no_zoning" in caplog.text
 
 
 def test_current_zones_empty_when_level_missing_or_duplicated():

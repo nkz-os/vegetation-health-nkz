@@ -105,10 +105,19 @@ def test_backfill_latest_row_wins_per_date_and_unreadable_date_is_skipped(wired)
     assert seen == ["new.tif", "bad.tif"]
 
 
-def test_backfill_noop_without_current_zoning(wired):
+def test_backfill_noop_without_current_zoning(wired, caplog):
     wired.zones = []
-    assert zb.backfill_current_zone_products(None, "acme", P1, read_raster=_constant(0.6)) == 0
+    with caplog.at_level("INFO", logger="app.services.zone_backfill"):
+        assert zb.backfill_current_zone_products(None, "acme", P1, read_raster=_constant(0.6)) == 0
     assert wired.upserts == []
+    assert "reason=no_current_zones" in caplog.text and P1 in caplog.text
+
+
+def test_backfill_noop_without_ready_rasters_logs_reason(wired, caplog):
+    wired.rows = []
+    with caplog.at_level("INFO", logger="app.services.zone_backfill"):
+        assert zb.backfill_current_zone_products(None, "acme", P1, read_raster=_constant(0.6)) == 0
+    assert "reason=no_ready_rasters" in caplog.text
 
 
 def test_backfill_never_raises(wired, monkeypatch):

@@ -118,7 +118,11 @@ def fetch_current_zones(tenant_id: str, parcel_urn: str) -> List[Dict[str, Any]]
     except Exception as exc:
         logger.warning("Current zoning grouping failed for %s: %s", parcel_urn, exc)
         return []
-    if current is None or current.method != _MULTIDATE_METHOD:
+    if current is None:
+        logger.info("No current zones for %s (reason=no_zoning)", parcel_urn)
+        return []
+    if current.method != _MULTIDATE_METHOD:
+        logger.info("No current zones for %s (reason=method=%s)", parcel_urn, current.method)
         return []
     by_id = {e.get("id"): e for e in entities}
     zones: List[Dict[str, Any]] = []

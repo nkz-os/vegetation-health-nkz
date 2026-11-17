@@ -95,11 +95,13 @@ def backfill_current_zone_products(db, tenant_id: str, parcel_urn: str, *, last_
 
         zones = fetch_current_zones(tenant_id, parcel_urn)
         if not zones:
+            logger.info("Zone backfill for %s: nothing to do (reason=no_current_zones)", parcel_urn)
             return 0
         rows = _latest_ready_rows(load_raster_rows(db, tenant_id, parcel_urn, BACKFILL_INDEX), last_n)
         if db is not None:
             db.close()  # rows are plain values: do not hold a connection across broker and storage I/O
         if not rows:
+            logger.info("Zone backfill for %s: nothing to do (reason=no_ready_rasters)", parcel_urn)
             return 0
         grid = parcel_grid(_parcel_geometry(tenant_id, parcel_urn), GRID_RES_M)
         reader = read_raster or _storage_reader(tenant_id)

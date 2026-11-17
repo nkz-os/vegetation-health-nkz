@@ -1,5 +1,5 @@
 """Merging two levels through the API: a new accepted run replaces the current one (real Postgres, fake broker)."""
-from tests.test_zoning_api_accept import A, B, URL, _rows, _seed, api  # noqa: F401  (fixture)
+from tests.test_zoning_api_accept import A, B, URL, _queue_down, _rows, _seed, api  # noqa: F401  (fixture)
 from tests.zoning_fakes import run, run_neighbours
 
 
@@ -83,3 +83,16 @@ def test_merge_non_neighbour_levels_is_422(api):  # noqa: F811
     _seed(dbf, current=A, accepted=True)  # high (1) and low (3): not neighbours
     assert _merge(client, A, (1, 3), 3).status_code == 422
     assert broker.run_ids() == {A}
+
+
+def test_merge_succeeds_when_the_backfill_cannot_be_queued(api, monkeypatch, caplog):  # noqa: F811
+    client, broker, dbf = api
+    broker.store.update({e["id"]: e for e in run_neighbours(A)})
+    _seed(dbf, current=A, accepted=True, current_entities=run_neighbours(A))
+    calls = _queue_down(monkeypatch)
+    r = _merge(client, A)
+    assert r.status_code == 200, r.text
+    new = r.json()["run_id"]
+    assert calls
+    assert broker.run_ids() == {new} and _rows(dbf)[new].status == "current"
+    assert "zone backfill not queued" in caplog.text

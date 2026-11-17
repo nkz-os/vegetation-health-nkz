@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 
 import pytest
 
+from app.jobs.zoning_multidate.actions import _enqueue_backfill as REAL_ENQUEUE  # before the fixture stubs it
 from tests.zoning_fakes import EAST, NKZ, PARCEL, TENANT, FakeBroker, run
 
 A, B, C = "a" * 32, "b" * 32, "c" * 32
@@ -188,3 +189,32 @@ def test_accept_current_sweeps_leftovers(api):
     _seed(dbf, current=A)
     assert client.post(f"{URL}/accept", json={"run_id": A}).status_code == 200
     assert broker.run_ids() == {A}
+
+
+def _queue_down(monkeypatch):
+    """The real enqueue, with the Celery broker refusing the task."""
+    from app.jobs.zoning_multidate import actions
+    from app.tasks import processing_tasks
+
+    calls = []
+
+    def boom(*args, **kwargs):
+        calls.append(args)
+        raise ConnectionError("queue down")
+
+    monkeypatch.setattr(actions, "_enqueue_backfill", REAL_ENQUEUE)
+    monkeypatch.setattr(processing_tasks.backfill_current_zone_products_task, "delay", boom)
+    return calls
+
+
+def test_accept_succeeds_when_the_backfill_cannot_be_queued(api, monkeypatch, caplog):
+    client, broker, dbf = api
+    broker.store.update({e["id"]: e for e in run(A)})
+    _seed(dbf, current=A, accepted=True, pendings=[(B, run(B), None)])
+    calls = _queue_down(monkeypatch)
+    r = client.post(f"{URL}/accept", json={"run_id": B})
+    assert r.status_code == 200, r.text
+    assert calls  # the enqueue was attempted and failed
+    assert broker.run_ids() == {B}
+    assert _rows(dbf)[B].status == "current"
+    assert "zone backfill not queued" in caplog.text
