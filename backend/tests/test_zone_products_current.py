@@ -164,3 +164,41 @@ def test_zone_stats_unbuffered_mask():
     # the legacy buffered mask (10 "m" = 10 degrees here) swallows the ring
     buffered = zp.zone_statistics(proc, arr, inner)
     assert buffered["pixel_count"] > 25
+
+
+def _hole_polygon():
+    """Outer 9x9 zone whose hole is the inner 5x5 zone (nested levels)."""
+    outer = _box(0, 0, 9, 9)["coordinates"][0]
+    hole = _box(2, 2, 7, 7)["coordinates"][0]
+    return {"type": "Polygon", "coordinates": [outer, hole]}
+
+
+def test_zone_stats_unbuffered_mask_with_hole():
+    size = 9
+    arr = np.full((size, size), 0.2)
+    arr[2:7, 2:7] = 0.8
+    stats = zp.zone_statistics(_GridProc(size), arr, _hole_polygon(), exact=True)
+    assert stats["pixel_count"] == size * size - 25
+    assert abs(stats["mean"] - 0.2) < 1e-9
+
+
+def test_sar_zone_stats_exact_excludes_hole(tmp_path):
+    import rasterio
+    from shapely.geometry import shape
+    from app.tasks import sar_tasks
+
+    size = 9
+    data = np.full((size, size), -10.0, dtype="float32")
+    data[2:7, 2:7] = -5.0
+    path = tmp_path / "vv.tif"
+    with rasterio.open(path, "w", driver="GTiff", height=size, width=size, count=1, dtype="float32",
+                       crs="EPSG:4326", transform=from_origin(0, size, 1, 1)) as dst:
+        dst.write(data, 1)
+    # hole edges fall mid-pixel (as real zone borders do): all_touched would take them
+    hole = _box(2.4, 2.4, 6.6, 6.6)["coordinates"][0]
+    geom = shape({"type": "Polygon", "coordinates": [_box(0, 0, 9, 9)["coordinates"][0], hole]})
+    exact = sar_tasks._zone_sigma0_stats(str(path), geom, exact=True)
+    assert exact["pixel_count"] == size * size - 25
+    assert exact["mean"] < -9.9  # no inner-level pixels (-5 dB) leak in
+    touched = sar_tasks._zone_sigma0_stats(str(path), geom)  # terrain-unit behaviour
+    assert touched["pixel_count"] > exact["pixel_count"]
