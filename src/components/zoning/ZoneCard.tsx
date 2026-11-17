@@ -7,7 +7,7 @@
  */
 import React, { useMemo, useState } from 'react';
 import { useTranslation } from '@nekazari/sdk';
-import { Badge, Button, Select, Textarea } from '@nekazari/ui-kit';
+import { Badge, Button, Textarea } from '@nekazari/ui-kit';
 import { useVegetationApi } from '../../services/api';
 
 /** Roles that may change a zoning; field workers (Farmer) only read it. */
@@ -19,6 +19,8 @@ export const canEditZoning = (roles: string[] | undefined): boolean =>
 export interface ZoneCardZone {
   entityId: string;
   runId: string;
+  /** False for zonings from before versions (no ids): read-only card. */
+  editable: boolean;
   rank: number;
   level: string;
   pct: number;
@@ -45,6 +47,8 @@ interface ZoneCardProps {
   hasPending: boolean;
   /** After an action: idsChanged = the zoning got new zone ids (merge), so the card closes. */
   onChanged: (idsChanged: boolean) => void;
+  /** The zoning changed underneath (409/404): the parent shows the message and redraws. */
+  onStale: (message: string) => void;
   onOpenPending: () => void;
   onClose: () => void;
 }
@@ -54,7 +58,7 @@ type Mode = 'view' | 'note' | 'merge' | 'confirmMerge';
 const MAX_CAUSE = 500;
 
 export const ZoneCard: React.FC<ZoneCardProps> = ({
-  parcelId, zone, levels, canEdit, hasPending, onChanged, onOpenPending, onClose,
+  parcelId, zone, levels, canEdit, hasPending, onChanged, onStale, onOpenPending, onClose,
 }) => {
   const { t, i18n } = useTranslation();
   const api = useVegetationApi();
@@ -83,9 +87,8 @@ export const ZoneCard: React.FC<ZoneCardProps> = ({
       onChanged(idsChanged);
     } catch (err: any) {
       const status = err?.response?.status;
-      if (status === 409) {
-        setError(t('zoning.edit.changed', 'The zoning has changed; open the zone again.'));
-        onChanged(true);
+      if (status === 409 || status === 404) {
+        onStale(t('zoning.edit.changed', 'The zoning has changed; open the zone again.'));
       } else if (status === 403) {
         setError(t('zoning.edit.forbidden', 'You are not allowed to edit the zoning.'));
       } else {
@@ -201,19 +204,23 @@ export const ZoneCard: React.FC<ZoneCardProps> = ({
       {canEdit && mode === 'merge' && other && (
         <div className="flex flex-col gap-1">
           <p className="text-nkz-text-muted">{t('zoning.edit.mergeOther', 'Level to merge with')}</p>
-          <Select
-            size="sm"
-            value={String(otherRank)}
-            onValueChange={(v) => { setOtherRank(Number(v)); setTargetRank(null); }}
-            options={others.map((l) => ({ value: String(l.rank), label: levelName(l.level) }))}
-          />
+          <div className="flex flex-wrap gap-1">
+            {others.map((l) => (
+              <Button key={l.rank} size="sm" variant={l.rank === otherRank ? 'primary' : 'ghost'}
+                onClick={() => { setOtherRank(l.rank); setTargetRank(null); }}>
+                {levelName(l.level)}
+              </Button>
+            ))}
+          </div>
           <p className="text-nkz-text-muted">{t('zoning.edit.mergeResult', 'Resulting level')}</p>
-          <Select
-            size="sm"
-            value={String(chosenTarget)}
-            onValueChange={(v) => setTargetRank(Number(v))}
-            options={[self, other].map((l) => ({ value: String(l.rank), label: levelName(l.level) }))}
-          />
+          <div className="flex flex-wrap gap-1">
+            {[self, other].map((l) => (
+              <Button key={l.rank} size="sm" variant={l.rank === chosenTarget ? 'primary' : 'ghost'}
+                onClick={() => setTargetRank(l.rank)}>
+                {levelName(l.level)}
+              </Button>
+            ))}
+          </div>
           <div className="flex gap-1">
             <Button size="sm" variant="primary" disabled={busy} onClick={() => setMode('confirmMerge')}>
               {t('zoning.edit.continue', 'Continue')}

@@ -16,12 +16,16 @@ interface PendingPanelProps {
   onPreview: (geojson: PendingZoning['geojson'] | null) => void;
   /** The proposal was accepted or discarded: the layer is redrawn. */
   onDone: () => void;
+  /** The zoning changed underneath (409/404): the parent shows the message and redraws. */
+  onStale: (message: string) => void;
   onClose: () => void;
 }
 
 const LEVEL_ORDER = ['high', 'medium', 'low', 'critical'];
 
-export const PendingPanel: React.FC<PendingPanelProps> = ({ parcelId, canEdit, onPreview, onDone, onClose }) => {
+export const PendingPanel: React.FC<PendingPanelProps> = ({
+  parcelId, canEdit, onPreview, onDone, onStale, onClose,
+}) => {
   const { t, i18n } = useTranslation();
   const api = useVegetationApi();
   const [data, setData] = useState<PendingZoning | null>(null);
@@ -60,12 +64,13 @@ export const PendingPanel: React.FC<PendingPanelProps> = ({ parcelId, canEdit, o
       onDone();
     } catch (err: any) {
       const status = err?.response?.status;
-      setError(status === 409
-        ? t('zoning.edit.changed', 'The zoning has changed; open the zone again.')
-        : status === 403
-          ? t('zoning.edit.forbidden', 'You are not allowed to edit the zoning.')
-          : t('zoning.edit.failed', 'The change could not be saved. Try again.'));
-      if (status === 409) onDone();
+      if (status === 409 || status === 404) {
+        onStale(t('zoning.edit.changed', 'The zoning has changed; open the zone again.'));
+        return;
+      }
+      setError(status === 403
+        ? t('zoning.edit.forbidden', 'You are not allowed to edit the zoning.')
+        : t('zoning.edit.failed', 'The change could not be saved. Try again.'));
     } finally {
       setBusy(false);
     }
@@ -94,13 +99,14 @@ export const PendingPanel: React.FC<PendingPanelProps> = ({ parcelId, canEdit, o
       </div>
 
       {loading && <Spinner />}
+      {error && <p className="text-nkz-danger">{error}</p>}
       {!loading && !pending && !error && (
         <p className="text-nkz-text-muted">{t('zoning.pending.none', 'There is no proposal waiting for review.')}</p>
       )}
 
       {pending && (
         <>
-          <p>
+          {pending.source_dates.length > 0 && (<p>
             {t('zoning.pending.origin', 'Uses {{n}} image dates ({{index}})', {
               n: pending.source_dates.length, index: pending.index_type ?? '—',
             })}
@@ -112,7 +118,7 @@ export const PendingPanel: React.FC<PendingPanelProps> = ({ parcelId, canEdit, o
                 })}
               </>
             )}
-          </p>
+          </p>)}
 
           {empty ? (
             <div className="flex flex-col gap-1">
@@ -171,8 +177,6 @@ export const PendingPanel: React.FC<PendingPanelProps> = ({ parcelId, canEdit, o
               label={t('zoning.pending.preview', 'Show proposal on the map')}
             />
           )}
-
-          {error && <p className="text-nkz-danger">{error}</p>}
 
           {canEdit && (
             <div className="flex flex-wrap gap-1">

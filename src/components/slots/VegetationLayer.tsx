@@ -24,11 +24,15 @@ import type { PendingZoning } from '../../types';
 function zoneFromProps(props: any): ZoneCardZone | null {
   const get = (k: string) => props?.[k]?.getValue?.();
   const level = get('zone_level');
-  const entityId = get('entity_id');
-  const runId = get('run_id');
-  if (!level || !entityId || !runId) return null;
+  if (!level) return null;
+  const entityId = get('entity_id') ?? null;
+  const runId = get('run_id') ?? null;
   return {
-    entityId, runId, level,
+    // Zonings from before versions carry no ids: their card is read-only.
+    entityId: entityId ?? `legacy:${get('zone_id')}`,
+    runId: runId ?? '',
+    editable: !!entityId && !!runId,
+    level,
     rank: get('zone_id'),
     pct: get('relative_pct') ?? 0,
     area: get('area_ha') ?? null,
@@ -70,6 +74,8 @@ export const VegetationLayer: React.FC = () => {
   const reopenZoneRef = useRef<string | null>(null);
   const zonesFlownToRef = useRef<string | null>(null);
   const [pendingOpen, setPendingOpen] = useState(false);
+  // Shown when an edit found the zoning changed underneath (409/404): the layer is redrawn.
+  const [zoningNotice, setZoningNotice] = useState<string | null>(null);
   const [proposalOutline, setProposalOutline] = useState<PendingZoning['geojson'] | null>(null);
   const outlineRef = useRef<any>(null);
   const { roles } = useAuth();
@@ -227,6 +233,8 @@ export const VegetationLayer: React.FC = () => {
 
     // VRA_ZONES branch: zones of the latest zoning job, coloured by level.
     if (selectedIndex === 'VRA_ZONES' && selectedEntityId) {
+      // A late answer for another parcel or index must not draw, flag or open anything.
+      let cancelled = false;
       const geoJsonUrl = `${API_ORIGIN}/api/vegetation/jobs/zoning/${encodeURIComponent(selectedEntityId)}/geojson`;
       fetch(geoJsonUrl, { credentials: 'include' })
         .then(r => {
@@ -234,12 +242,13 @@ export const VegetationLayer: React.FC = () => {
           return r.json();
         })
         .then((geojson: any) => {
+          if (cancelled) return null;
           setZoningPending(geojson?.has_pending === true);
           syncZoningPendingFlag(geojson?.has_pending === true);
           return Cesium.GeoJsonDataSource.load(geojson, { clampToGround: true });
         })
         .then((dataSource: any) => {
-          if (viewer.isDestroyed()) return;
+          if (cancelled || !dataSource || viewer.isDestroyed()) return;
           // Multi-date proposal: one zone per level (high/medium/low/critical).
           const LEVEL_COLORS: Record<string, string> = {
             high: '#1b5e20', medium: '#81c784', low: '#c8a24a', critical: '#c62828',
@@ -307,7 +316,7 @@ export const VegetationLayer: React.FC = () => {
             const picked = viewer.scene.pick(click.position);
             if (!picked?.id || !dataSource.entities.contains(picked.id)) return;
             const zone = zoneFromProps(picked.id.properties);
-            if (zone) setZoneCard(zone);
+            if (zone) { setZoningNotice(null); setZoneCard(zone); }
           }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
           clickHandlerRef.current = handler;
           // Fly once per parcel: redraws (an edit, another date) keep the camera where it is.
@@ -317,9 +326,9 @@ export const VegetationLayer: React.FC = () => {
           }
         })
         .catch((err: any) => {
-          console.error('[VegetationLayer] Error loading zones:', err);
+          if (!cancelled) console.error('[VegetationLayer] Error loading zones:', err);
         });
-      return;
+      return () => { cancelled = true; };
     }
 
     // Tenant-wide view with no parcel picked yet: default to NDVI.
@@ -459,19 +468,48 @@ export const VegetationLayer: React.FC = () => {
     ? document.querySelector('.cesium-viewer') || document.getElementById('cesiumContainer')
     : null;
 
+  const staleZoning = (message: string) => {
+    setZoningNotice(message);
+    setZoneCard(null);
+    setPendingOpen(false);
+    setProposalOutline(null);
+    setZoningReload((n) => n + 1);
+  };
+
+  const notice = zoningNotice && !zoneCard && typeof document !== 'undefined' ? createPortal(
+    <div className="fixed top-24 right-4 z-nkz-modal w-80 bg-nkz-surface rounded-nkz-md shadow-lg border border-nkz-border p-3 text-nkz-xs text-nkz-text-primary flex items-start justify-between gap-2">
+      <span>{zoningNotice}</span>
+      <button
+        type="button"
+        onClick={() => setZoningNotice(null)}
+        className="text-nkz-text-muted hover:text-nkz-text-primary"
+        aria-label={t('common.close', 'Close')}
+      >
+        ×
+      </button>
+    </div>,
+    document.body,
+  ) : null;
+
   const card = zoneCard && selectedEntityId && typeof document !== 'undefined' ? createPortal(
     <ZoneCard
       key={zoneCard.entityId}
       parcelId={selectedEntityId}
       zone={zoneCard}
       levels={zoneLevels}
-      canEdit={canEdit}
       hasPending={zoningPending}
+      canEdit={canEdit && zoneCard.editable}
       onChanged={(idsChanged) => {
         reopenZoneRef.current = idsChanged ? null : zoneCard.entityId;
-        if (idsChanged) setZoneCard(null);
+        if (idsChanged) {
+          // New zone ids (merge): the card and any pending proposal shown are gone.
+          setZoneCard(null);
+          setPendingOpen(false);
+          setProposalOutline(null);
+        }
         setZoningReload((n) => n + 1);
       }}
+      onStale={staleZoning}
       onOpenPending={() => setPendingOpen(true)}
       onClose={() => setZoneCard(null)}
     />,
@@ -483,6 +521,7 @@ export const VegetationLayer: React.FC = () => {
       parcelId={selectedEntityId}
       canEdit={canEdit}
       onPreview={setProposalOutline}
+      onStale={staleZoning}
       onDone={() => {
         setPendingOpen(false);
         setProposalOutline(null);
@@ -494,12 +533,13 @@ export const VegetationLayer: React.FC = () => {
     document.body,
   ) : null;
 
-  if (!hasLayer || !dateLabel || !cesiumContainer) return <>{card}{panel}</>;
+  if (!hasLayer || !dateLabel || !cesiumContainer) return <>{card}{panel}{notice}</>;
 
   return (
     <>
       {card}
       {panel}
+      {notice}
       {createPortal(
     <div
       className={`absolute bottom-16 left-1/2 -translate-x-1/2 z-50 pointer-events-none transition-all duration-500 ${
