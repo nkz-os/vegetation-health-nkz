@@ -97,6 +97,16 @@ def note_zone(parcel_id: str, zone_id: str, body: NoteRequest,
                                      current_user["user_id"]))
 
 
+@router.delete("/{parcel_id}/zones/{zone_id}/note")
+def remove_zone_note(parcel_id: str, zone_id: str,
+                     current_user: dict = Depends(require_auth),
+                     db: Session = Depends(get_db_with_tenant)):
+    require_editor(current_user)
+    from app.jobs.zoning_multidate import actions
+    tenant = current_user["tenant_id"]
+    return _run(lambda: actions.remove_note(db, broker_for(tenant), tenant, parcel_id, zone_id))
+
+
 class MergeRequest(BaseModel):
     run_id: str = Field(min_length=8, max_length=64)
     ranks: list[int] = Field(min_length=2, max_length=2)

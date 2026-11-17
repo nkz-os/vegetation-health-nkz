@@ -34,6 +34,7 @@ class FakeBroker:
         self.store = {e["id"]: copy.deepcopy(e) for e in entities}
         self.refuse_create = False
         self.refuse_append = False
+        self.refuse_delete_attr = False
         self.created, self.deleted, self.appended = [], [], []
 
     # --- session.get
@@ -68,6 +69,12 @@ class FakeBroker:
             return False
         self.store[entity_id].update(copy.deepcopy(attrs))
         self.appended.append((entity_id, sorted(attrs)))
+        return True
+
+    def delete_attr(self, entity_id, attr):
+        if self.refuse_delete_attr:
+            return False
+        self.store.get(entity_id, {}).pop(attr, None)
         return True
 
     def run_ids(self):

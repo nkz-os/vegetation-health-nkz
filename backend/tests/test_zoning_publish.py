@@ -1,4 +1,5 @@
 """Zone publication: meanValue, zoningRunId and removal of stale zones."""
+import pytest
 import logging
 from unittest.mock import MagicMock
 
@@ -467,3 +468,16 @@ def test_generate_zones_forwards_source_index(monkeypatch):
     monkeypatch.setattr(algo, "vectorize_zones", lambda *a: _vectors(2))
     asyncio.run(algo.generate_zones(PARCEL, 2, source_index="NDRE"))
     assert {e["variableAttribute"]["value"] for e in _sent(algo)} == {"NDRE"}
+
+
+def test_client_delete_attr():
+    c = _client()
+    c.session.delete.return_value = _Resp(204)
+    assert c.delete_attr(f"{PREFIX}0", "technicianCause") is True
+    assert c.session.delete.call_args.args[0].endswith(
+        "/ngsi-ld/v1/entities/urn%3Angsi-ld%3AAgriManagementZone%3Ap1%3AZ0/attrs/technicianCause")
+    c.session.delete.return_value = _Resp(404)  # already absent
+    assert c.delete_attr(f"{PREFIX}0", "technicianCause") is True
+    c.session.delete.return_value = _Resp(500)
+    with pytest.raises(Exception):
+        c.delete_attr(f"{PREFIX}0", "technicianCause")

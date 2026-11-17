@@ -14,7 +14,7 @@ from urllib.parse import quote
 from app.jobs.zoning_multidate import versions
 from app.jobs.zoning_multidate.errors import (BrokerUnavailable, ZoningConflict, ZoningInvalid,
                                               ZoningNotFound)
-from app.jobs.zoning_multidate.notes import assign_notes, with_causes
+from app.jobs.zoning_multidate.notes import assign_notes, notes_on_zone, with_causes
 from app.jobs.zoning_multidate.publish import METHOD, ZONE_TYPE, publish, retire_quietly
 
 _NKZ = "https://nkz-os.org/ns/"
@@ -178,6 +178,31 @@ def note(db, fiware, tenant_id: str, parcel_id: str, zone_id: str, cause: str, u
                         else copy.deepcopy(e) for e in cur.entities]
         db.flush()
     return {"zone_id": zone_id, "run_id": cur.run_id, "cause": cause}
+
+
+def remove_note(db, fiware, tenant_id: str, parcel_id: str, zone_id: str):
+    """Remove the cause of a zone of the current zoning, and every note that would bring it back."""
+    with versions.parcel_lock(db, tenant_id, parcel_id):
+        cur = versions.current(db, tenant_id, parcel_id)
+        if cur is None:
+            run_id = _run_of_zone(fiware, parcel_id, zone_id)
+            if run_id is None or versions.by_run(db, tenant_id, parcel_id, run_id) is not None:
+                raise ZoningNotFound(zone_id)
+            cur = _backfill(db, fiware, tenant_id, parcel_id, run_id)
+        if not any(e.get("id") == zone_id for e in cur.entities):
+            raise ZoningNotFound(zone_id)
+        try:
+            removed = fiware.delete_attr(zone_id, "technicianCause")
+        except Exception as exc:
+            raise BrokerUnavailable(str(exc)) from exc
+        if not removed:
+            raise BrokerUnavailable(f"broker kept technicianCause on {zone_id}")
+        for stale in notes_on_zone(versions.notes_of(db, tenant_id, parcel_id), cur.entities, zone_id):
+            db.delete(stale)
+        cur.entities = [{k: v for k, v in copy.deepcopy(e).items() if k != "technicianCause"}
+                        if e.get("id") == zone_id else copy.deepcopy(e) for e in cur.entities]
+        db.flush()
+    return {"zone_id": zone_id, "run_id": cur.run_id, "cause": None}
 
 
 def merge(db, fiware, tenant_id: str, parcel_id: str, run_id: str, ranks: tuple[int, int],

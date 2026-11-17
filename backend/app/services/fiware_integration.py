@@ -12,6 +12,7 @@ Follows the platform convention:
 """
 
 import logging
+from urllib.parse import quote
 import os
 import re
 from typing import Dict, Any, Optional, List
@@ -643,6 +644,15 @@ class FIWAREClient:
             if len(page) < page_size:
                 return ids
             offset += page_size
+
+    def delete_attr(self, entity_id: str, attr: str) -> bool:
+        """Remove one attribute; True when it is gone (204, or 404 when it was already absent)."""
+        url = f"{self.context_broker_url}/ngsi-ld/v1/entities/{quote(entity_id, safe='')}/attrs/{attr}"
+        response = self.session.delete(url, timeout=10)
+        if response.status_code in (204, 404):
+            return True
+        response.raise_for_status()
+        return False
 
     def delete_entity(self, entity_id: str) -> bool:
         """Delete an entity. 404 is tolerated (returns False); other errors raise."""
