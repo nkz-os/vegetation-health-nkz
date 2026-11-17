@@ -183,7 +183,47 @@
       "homogeneous": "Sin zonas: la parcela es homogénea; el vigor varía muy poco entre unas partes y otras.",
       "single_level": "Sin zonas: toda la parcela cae en un mismo nivel."
     },
-    "noZones": "No hay zonas generadas"
+    "noZones": "No hay zonas generadas",
+    "edit": {
+      "changed": "La zonificación ha cambiado; vuelve a abrir la zona.",
+      "forbidden": "No tienes permiso para editar la zonificación.",
+      "failed": "No se ha podido guardar el cambio. Inténtalo de nuevo.",
+      "acceptedOn": "Aceptada el {{date}}",
+      "accepted": "Aceptada",
+      "notAccepted": "Propuesta de la plataforma, sin aceptar",
+      "cause": "Causa",
+      "accept": "Aceptar zonificación",
+      "editCause": "Editar causa",
+      "addCause": "Anotar causa",
+      "removeCause": "Quitar causa",
+      "mergeWith": "Unir con…",
+      "causePlaceholder": "P. ej. encharcamiento en primavera",
+      "save": "Guardar",
+      "cancel": "Cancelar",
+      "mergeOther": "Nivel con el que unir",
+      "mergeResult": "Nivel resultante",
+      "continue": "Continuar",
+      "mergeConfirm": "Se crea una zonificación nueva. Las dosis de FaST y las recetas de GIS-routing hechas sobre la actual dejan de aplicar.",
+      "merge": "Unir"
+    },
+    "pending": {
+      "badge": "Propuesta nueva",
+      "title": "Propuesta nueva de zonificación",
+      "loadFailed": "No se ha podido cargar la propuesta.",
+      "none": "No hay ninguna propuesta pendiente de revisar.",
+      "origin": "Usa {{n}} fechas de imagen ({{index}})",
+      "newDates": "{{n}} nuevas: {{dates}}",
+      "empty": "La propuesta nueva no encuentra zonas diferenciadas.",
+      "level": "Nivel",
+      "current": "Vigente",
+      "proposed": "Propuesta",
+      "causes": "Causas anotadas",
+      "causeMoves": "{{from}} → {{to}}",
+      "causeLost": "se perdería",
+      "preview": "Ver propuesta en el mapa",
+      "accept": "Aceptar propuesta",
+      "discard": "Descartar"
+    }
   },
   "setup": {
     "configureMonitoring": "Configurar Monitoreo: {{name}}",

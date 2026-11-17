@@ -12,9 +12,37 @@ import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 
 import { useViewerOptional, useTranslation } from '@nekazari/sdk';
-import { useVegetationContext } from '../../services/vegetationContext';
+import { syncZoningPendingFlag, useVegetationContext } from '../../services/vegetationContext';
 import { useVegetationApi } from '../../services/api';
 import { API_ORIGIN } from '../../services/apiOrigin';
+import { useAuth } from '../../hooks/useAuth';
+import { ZoneCard, canEditZoning, type ZoneCardLevel, type ZoneCardZone } from '../zoning/ZoneCard';
+import { PendingPanel } from '../zoning/PendingPanel';
+import type { PendingZoning } from '../../types';
+
+/** Card data of a zone feature drawn by the zoning layer (Cesium property bag). */
+function zoneFromProps(props: any): ZoneCardZone | null {
+  const get = (k: string) => props?.[k]?.getValue?.();
+  const level = get('zone_level');
+  if (!level) return null;
+  const entityId = get('entity_id') ?? null;
+  const runId = get('run_id') ?? null;
+  return {
+    // Zonings from before versions carry no ids: their card is read-only.
+    entityId: entityId ?? `legacy:${get('zone_id')}`,
+    runId: runId ?? '',
+    editable: !!entityId && !!runId,
+    level,
+    rank: get('zone_id'),
+    pct: get('relative_pct') ?? 0,
+    area: get('area_ha') ?? null,
+    confirming: get('confirming_dates') ?? null,
+    total: get('total_dates') ?? null,
+    accepted: get('accepted') === true,
+    acceptedAt: get('accepted_at') ?? null,
+    cause: get('technician_cause') ?? null,
+  };
+}
 
 export const VegetationLayer: React.FC = () => {
   const viewerCtx = useViewerOptional();
@@ -37,9 +65,21 @@ export const VegetationLayer: React.FC = () => {
   const dataSourceRef = useRef<any>(null);
   const clickHandlerRef = useRef<any>(null);
   // Card of the clicked zoning zone (the host viewer has no info box).
-  const [zoneCard, setZoneCard] = useState<null | {
-    level: string; pct: number; area: number | null; confirming: number | null; total: number | null;
-  }>(null);
+  const [zoneCard, setZoneCard] = useState<ZoneCardZone | null>(null);
+  const [zoneLevels, setZoneLevels] = useState<ZoneCardLevel[]>([]);
+  const [zoningPending, setZoningPending] = useState(false);
+  // Bumped after an edit so the zoning layer is drawn again from the server.
+  const [zoningReload, setZoningReload] = useState(0);
+  // Zone whose card reopens once the layer is drawn again (an edit that keeps the zone ids).
+  const reopenZoneRef = useRef<string | null>(null);
+  const zonesFlownToRef = useRef<string | null>(null);
+  const [pendingOpen, setPendingOpen] = useState(false);
+  // Shown when an edit found the zoning changed underneath (409/404): the layer is redrawn.
+  const [zoningNotice, setZoningNotice] = useState<string | null>(null);
+  const [proposalOutline, setProposalOutline] = useState<PendingZoning['geojson'] | null>(null);
+  const outlineRef = useRef<any>(null);
+  const { roles } = useAuth();
+  const canEdit = canEditZoning(roles);
 
   // Resolve rasters for the selected acquisition: a scene (local engine) or,
   // for Copernicus acquisitions that have no scene, a sensing date. Without a
@@ -123,6 +163,52 @@ export const VegetationLayer: React.FC = () => {
     setActiveRasterPath(indexResults[selectedIndex].raster_path ?? null);
   }, [selectedIndex, indexResults, setActiveJobId, setActiveRasterPath]);
 
+  // The pending panel belongs to the zoning of one parcel.
+  useEffect(() => {
+    setPendingOpen(false);
+    setProposalOutline(null);
+  }, [selectedEntityId, selectedIndex]);
+
+  // Outline of a pending proposal over the zoning in force: borders only, never picked as a zone.
+  useEffect(() => {
+    if (!viewer) return;
+    const Cesium = (window as any).Cesium;
+    if (!Cesium) return;
+    let cancelled = false;
+    const drop = () => {
+      if (outlineRef.current && !viewer.isDestroyed()) {
+        try { viewer.dataSources.remove(outlineRef.current, true); } catch { /* destroyed */ }
+      }
+      outlineRef.current = null;
+    };
+    drop();
+    if (proposalOutline && proposalOutline.features.length > 0) {
+      const outline = new Cesium.CustomDataSource('zoning-proposal-outline');
+      Cesium.GeoJsonDataSource.load(proposalOutline, { clampToGround: true })
+        .then((loaded: any) => {
+          if (cancelled || viewer.isDestroyed()) return;
+          for (const entity of loaded.entities.values) {
+            const ring = entity.polygon?.hierarchy?.getValue?.(Cesium.JulianDate.now())?.positions;
+            if (!ring || ring.length < 2) continue;
+            outline.entities.add({
+              polyline: {
+                positions: [...ring, ring[0]],
+                clampToGround: true,
+                width: 3,
+                material: new Cesium.PolylineDashMaterialProperty({
+                  color: Cesium.Color.YELLOW, gapColor: Cesium.Color.BLACK.withAlpha(0.6), dashLength: 12,
+                }),
+              },
+            });
+          }
+          viewer.dataSources.add(outline);
+          outlineRef.current = outline;
+        })
+        .catch((err: any) => console.error('[VegetationLayer] Error drawing the proposal:', err));
+    }
+    return () => { cancelled = true; drop(); };
+  }, [viewer, proposalOutline]);
+
   // Cesium layer management
   useEffect(() => {
     if (!viewer) return;
@@ -147,17 +233,22 @@ export const VegetationLayer: React.FC = () => {
 
     // VRA_ZONES branch: zones of the latest zoning job, coloured by level.
     if (selectedIndex === 'VRA_ZONES' && selectedEntityId) {
+      // A late answer for another parcel or index must not draw, flag or open anything.
+      let cancelled = false;
       const geoJsonUrl = `${API_ORIGIN}/api/vegetation/jobs/zoning/${encodeURIComponent(selectedEntityId)}/geojson`;
       fetch(geoJsonUrl, { credentials: 'include' })
         .then(r => {
           if (!r.ok) throw new Error(`HTTP ${r.status}`);
           return r.json();
         })
-        .then((geojson: any) => Cesium.GeoJsonDataSource.load(geojson, {
-          clampToGround: true,
-        }))
+        .then((geojson: any) => {
+          if (cancelled) return null;
+          setZoningPending(geojson?.has_pending === true);
+          syncZoningPendingFlag(geojson?.has_pending === true);
+          return Cesium.GeoJsonDataSource.load(geojson, { clampToGround: true });
+        })
         .then((dataSource: any) => {
-          if (viewer.isDestroyed()) return;
+          if (cancelled || !dataSource || viewer.isDestroyed()) return;
           // Multi-date proposal: one zone per level (high/medium/low/critical).
           const LEVEL_COLORS: Record<string, string> = {
             high: '#1b5e20', medium: '#81c784', low: '#c8a24a', critical: '#c62828',
@@ -213,27 +304,31 @@ export const VegetationLayer: React.FC = () => {
           }
           viewer.dataSources.add(dataSource);
           dataSourceRef.current = dataSource;
+          const zones = entities
+            .map((e: any) => zoneFromProps(e.properties))
+            .filter((z: ZoneCardZone | null): z is ZoneCardZone => z !== null);
+          setZoneLevels(zones.map((z: ZoneCardZone) => ({ rank: z.rank, level: z.level, area: z.area })));
+          const reopen = reopenZoneRef.current;
+          reopenZoneRef.current = null;
+          if (reopen) setZoneCard(zones.find((z: ZoneCardZone) => z.entityId === reopen) ?? null);
           const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
           handler.setInputAction((click: any) => {
             const picked = viewer.scene.pick(click.position);
-            const props = picked?.id?.properties;
-            const level = props?.zone_level?.getValue?.();
-            if (!level || !dataSource.entities.contains(picked.id)) return;
-            setZoneCard({
-              level,
-              pct: props.relative_pct?.getValue?.() ?? 0,
-              area: props.area_ha?.getValue?.() ?? null,
-              confirming: props.confirming_dates?.getValue?.() ?? null,
-              total: props.total_dates?.getValue?.() ?? null,
-            });
+            if (!picked?.id || !dataSource.entities.contains(picked.id)) return;
+            const zone = zoneFromProps(picked.id.properties);
+            if (zone) { setZoningNotice(null); setZoneCard(zone); }
           }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
           clickHandlerRef.current = handler;
-          viewer.flyTo(dataSource);
+          // Fly once per parcel: redraws (an edit, another date) keep the camera where it is.
+          if (zonesFlownToRef.current !== selectedEntityId) {
+            zonesFlownToRef.current = selectedEntityId;
+            viewer.flyTo(dataSource);
+          }
         })
         .catch((err: any) => {
-          console.error('[VegetationLayer] Error loading zones:', err);
+          if (!cancelled) console.error('[VegetationLayer] Error loading zones:', err);
         });
-      return;
+      return () => { cancelled = true; };
     }
 
     // Tenant-wide view with no parcel picked yet: default to NDVI.
@@ -332,7 +427,7 @@ export const VegetationLayer: React.FC = () => {
       });
       layerRefs.current = [];
     };
-  }, [viewer, selectedIndex, activeJobId, activeRasterPath, selectedEntityId, indexResults, layerScope, layerVisible, t]);
+  }, [viewer, selectedIndex, activeJobId, activeRasterPath, selectedEntityId, indexResults, layerScope, layerVisible, t, zoningReload]);
 
   // Update opacity and visibility without recreating layers
   useEffect(() => {
@@ -373,41 +468,78 @@ export const VegetationLayer: React.FC = () => {
     ? document.querySelector('.cesium-viewer') || document.getElementById('cesiumContainer')
     : null;
 
-  const pctText = zoneCard ? `${zoneCard.pct > 0 ? '+' : ''}${zoneCard.pct} %` : '';
-  const card = zoneCard && typeof document !== 'undefined' ? createPortal(
-    <div className="fixed bottom-24 right-6 z-50 w-64 bg-white rounded-lg shadow-lg border border-slate-200 p-3 text-xs text-slate-700">
-      <div className="flex items-start justify-between gap-2 mb-1">
-        <span className="text-sm font-semibold">
-          {t(`zoning.level.${zoneCard.level}`, zoneCard.level)} {pctText}
-        </span>
-        <button
-          type="button"
-          onClick={() => setZoneCard(null)}
-          className="text-slate-500 hover:text-slate-700"
-          aria-label={t('common.close', 'Close')}
-        >
-          ×
-        </button>
-      </div>
-      {zoneCard.area != null && <p>{zoneCard.area} ha</p>}
-      <p>{t('zoning.relativeVigour', 'Vigour {{pct}} vs parcel mean', { pct: pctText })}</p>
-      {zoneCard.total != null && (
-        <p>{t('zoning.confirmedDates', 'Consistent with its level on {{n}} of {{total}} dates', {
-          n: zoneCard.confirming, total: zoneCard.total,
-        })}</p>
-      )}
-      {zoneCard.level === 'critical' && (
-        <p className="mt-1 font-semibold text-amber-700">{t('zoning.reviewInField', 'Review in the field')}</p>
-      )}
+  const staleZoning = (message: string) => {
+    setZoningNotice(message);
+    setZoneCard(null);
+    setPendingOpen(false);
+    setProposalOutline(null);
+    setZoningReload((n) => n + 1);
+  };
+
+  const notice = zoningNotice && !zoneCard && typeof document !== 'undefined' ? createPortal(
+    <div className="fixed top-24 right-4 z-nkz-modal w-80 bg-nkz-surface rounded-nkz-md shadow-lg border border-nkz-border p-3 text-nkz-xs text-nkz-text-primary flex items-start justify-between gap-2">
+      <span>{zoningNotice}</span>
+      <button
+        type="button"
+        onClick={() => setZoningNotice(null)}
+        className="text-nkz-text-muted hover:text-nkz-text-primary"
+        aria-label={t('common.close', 'Close')}
+      >
+        ×
+      </button>
     </div>,
     document.body,
   ) : null;
 
-  if (!hasLayer || !dateLabel || !cesiumContainer) return card;
+  const card = zoneCard && selectedEntityId && typeof document !== 'undefined' ? createPortal(
+    <ZoneCard
+      key={zoneCard.entityId}
+      parcelId={selectedEntityId}
+      zone={zoneCard}
+      levels={zoneLevels}
+      hasPending={zoningPending}
+      canEdit={canEdit && zoneCard.editable}
+      onChanged={(idsChanged) => {
+        reopenZoneRef.current = idsChanged ? null : zoneCard.entityId;
+        if (idsChanged) {
+          // New zone ids (merge): the card and any pending proposal shown are gone.
+          setZoneCard(null);
+          setPendingOpen(false);
+          setProposalOutline(null);
+        }
+        setZoningReload((n) => n + 1);
+      }}
+      onStale={staleZoning}
+      onOpenPending={() => setPendingOpen(true)}
+      onClose={() => setZoneCard(null)}
+    />,
+    document.body,
+  ) : null;
+
+  const panel = pendingOpen && selectedEntityId && typeof document !== 'undefined' ? createPortal(
+    <PendingPanel
+      parcelId={selectedEntityId}
+      canEdit={canEdit}
+      onPreview={setProposalOutline}
+      onStale={staleZoning}
+      onDone={() => {
+        setPendingOpen(false);
+        setProposalOutline(null);
+        setZoneCard(null);
+        setZoningReload((n) => n + 1);
+      }}
+      onClose={() => { setPendingOpen(false); setProposalOutline(null); }}
+    />,
+    document.body,
+  ) : null;
+
+  if (!hasLayer || !dateLabel || !cesiumContainer) return <>{card}{panel}{notice}</>;
 
   return (
     <>
       {card}
+      {panel}
+      {notice}
       {createPortal(
     <div
       className={`absolute bottom-16 left-1/2 -translate-x-1/2 z-50 pointer-events-none transition-all duration-500 ${

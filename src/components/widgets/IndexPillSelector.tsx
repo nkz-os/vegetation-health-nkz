@@ -59,6 +59,8 @@ interface IndexPillSelectorProps {
   availableIndices?: string[];
   /** Flat row without group labels — for bottom-panel slots */
   compact?: boolean;
+  /** Indices with something waiting for review (a dot on the pill). */
+  badgeIndices?: string[];
   className?: string;
 }
 
@@ -69,6 +71,7 @@ export const IndexPillSelector: React.FC<IndexPillSelectorProps> = ({
   availableIndices,
   compact = false,
   className = '',
+  badgeIndices = [],
 }) => {
   const { t } = useTranslation();
   const [infoModalIndex, setInfoModalIndex] = useState<string | null>(null);
@@ -106,6 +109,12 @@ export const IndexPillSelector: React.FC<IndexPillSelectorProps> = ({
           <span className="inline-block w-1.5 h-1.5 rounded-full bg-white mr-1.5 align-middle" />
         )}
         {shortLabel}
+        {badgeIndices.includes(value) && (
+          <span
+            className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-nkz-warning"
+            aria-label={t('zoning.pending.badge', 'New proposal')}
+          />
+        )}
       </button>
     );
   };
