@@ -21,7 +21,8 @@ def test_merge_publishes_new_accepted_run(api):  # noqa: F811
     assert (rows[A].status, rows[new].status, rows[new].source, rows[new].derived_from) == (
         "superseded", "current", "merge", A)
     assert rows[new].accepted_by == "u-1" and rows[new].accepted_at is not None
-    assert rows[B].status == "pending"  # a proposal waiting for review is not touched
+    # A proposal parked on the old run can no longer be accepted: it is discarded.
+    assert (rows[B].status, rows[B].outcome_reason) == ("discarded", "superseded_by_merge")
 
 
 def test_merge_target_must_be_one_of_ranks(api):  # noqa: F811

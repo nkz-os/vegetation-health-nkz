@@ -94,6 +94,22 @@ def test_record_pending_discards_previous_pending(zoning_db):
     assert v.pending(db, T, P).outcome_reason == "homogeneous"
 
 
+def test_merge_record_discards_pending(zoning_db):
+    from app.jobs.zoning_multidate import versions as v
+    from app.models import ZoningVersion
+    db = zoning_db()
+    with v.parcel_lock(db, T, P):
+        v.record_current(db, T, P, "run-a", _entities("run-a"), source="proposal", index_type="NDVI",
+                         accepted_at=NOW, accepted_by="u1")
+        v.record_pending(db, T, P, "run-b", _entities("run-b"), index_type="NDVI", outcome_reason=None, job_id="j1",
+                         parked_on_run_id="run-a")
+    with v.parcel_lock(db, T, P):
+        v.record_current(db, T, P, "run-c", _entities("run-c"), source="merge", index_type="NDVI",
+                         derived_from="run-a", accepted_at=NOW, accepted_by="u1")
+    assert _statuses(db) == {"run-a": "superseded", "run-b": "discarded", "run-c": "current"}
+    assert db.get(ZoningVersion, "run-b").outcome_reason == "superseded_by_merge"
+
+
 def test_promote_pending_and_mark_accepted(zoning_db):
     from app.jobs.zoning_multidate import versions as v
     db = zoning_db()

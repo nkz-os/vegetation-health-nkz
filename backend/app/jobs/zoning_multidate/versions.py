@@ -106,6 +106,9 @@ def record_current(db, tenant_id: str, parcel_id: str, run_id: str, entities: li
     if source == "proposal":
         # A proposal published directly is newer evidence than any pending one.
         _retire(db, pending(db, tenant_id, parcel_id), "discarded")
+    elif source == "merge":
+        # A proposal parked on the run just merged away can no longer be accepted.
+        discard_pending(db, tenant_id, parcel_id, "superseded_by_merge")
     version = ZoningVersion(
         run_id=run_id, tenant_id=tenant_id, parcel_id=parcel_id, status="current", source=source,
         derived_from=derived_from, index_type=index_type, entities=entities, job_id=job_id,
@@ -113,6 +116,15 @@ def record_current(db, tenant_id: str, parcel_id: str, run_id: str, entities: li
     )
     db.add(version)
     db.flush()
+    return version
+
+
+def discard_pending(db, tenant_id: str, parcel_id: str, reason: str) -> ZoningVersion | None:
+    """The pending proposal is set aside for good; ``reason`` says why."""
+    version = pending(db, tenant_id, parcel_id)
+    if version is not None:
+        version.outcome_reason = reason
+        _retire(db, version, "discarded")
     return version
 
 
