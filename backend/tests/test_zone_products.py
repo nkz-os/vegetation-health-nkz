@@ -53,57 +53,6 @@ class TestZoneStatistics:
         assert stats is not None and stats["pixel_count"] >= 20
 
 
-def _zone_entity(zid, ztype, parcel_attr="hasAgriParcel", parcel=PARCEL, type_key="nkz:zoneType"):
-    return {
-        "id": f"urn:ngsi-ld:AgriParcelZone:acme:p1:{zid}",
-        "type": "AgriParcelZone",
-        type_key: {"type": "Property", "value": ztype},
-        "nkz:zoneId": {"type": "Property", "value": zid},
-        "nkz:zoneVersion": {"type": "Property", "value": 3},
-        "location": {"type": "GeoProperty", "value": {"type": "Polygon", "coordinates": [[[0, 0], [1, 0], [1, 1], [0, 0]]]}},
-        parcel_attr: {"type": "Relationship", "object": parcel},
-    }
-
-
-class TestFetchManagementZones:
-    def _fetch(self, entities):
-        class _Sync:
-            def __init__(self, tenant_id):
-                self.fake = FakeAsyncOrion(tenant_id)
-                self.fake.entities.extend(entities)
-
-            def query_entities(self, **kw):
-                return asyncio.run(self.fake.query_entities(**kw))
-
-        with patch.object(zp, "SyncOrionClient", _Sync):
-            return zp.fetch_management_zones("acme", PARCEL)
-
-    def test_management_only_all_spellings_and_legacy_relationship(self):
-        zones = self._fetch([
-            _zone_entity("z1", "management"),
-            _zone_entity("z2", "management", parcel_attr="refAgriParcel", type_key="zoneType"),
-            _zone_entity("z3", "management", type_key="https://nkz-os.org/ns/zoneType"),
-            _zone_entity("z4", "sampling"),
-            _zone_entity("z5", "management", parcel="urn:ngsi-ld:AgriParcel:acme:other"),
-        ])
-        assert sorted(z["zone_id"] for z in zones) == ["z1", "z2", "z3"]
-        z1 = next(z for z in zones if z["zone_id"] == "z1")
-        assert z1["zone_urn"] == "urn:ngsi-ld:AgriParcelZone:acme:p1:z1"
-        assert z1["zone_version"] == 3
-        assert z1["geometry"]["type"] == "Polygon"
-
-    def test_orion_failure_is_empty_list(self):
-        class _Boom:
-            def __init__(self, tenant_id):
-                pass
-
-            def query_entities(self, *a, **k):
-                raise RuntimeError("down")
-
-        with patch.object(zp, "SyncOrionClient", _Boom):
-            assert zp.fetch_management_zones("acme", PARCEL) == []
-
-
 ZONE = {"zone_id": "z1", "zone_urn": "urn:ngsi-ld:AgriParcelZone:acme:p1:z1",
         "zone_version": 3, "geometry": {"type": "Polygon"}}
 STATS = {"mean": 0.61, "min": 0.4, "max": 0.8, "std": 0.05, "pixel_count": 42, "valid_fraction": 0.9}
@@ -161,17 +110,30 @@ def test_parcel_query_returns_only_parcel_product():
     assert found[0]["id"] == "urn:ngsi-ld:EOProduct:acme:p1:2026-06-01"
 
 
+def _current_entity(n, level):
+    return {
+        "id": f"urn:ngsi-ld:AgriManagementZone:p1:abcdef12:{n}",
+        "type": "AgriManagementZone",
+        "hasAgriParcel": {"type": "Relationship", "object": PARCEL},
+        "nkz:zoningRunId": {"type": "Property", "value": "abcdef12" + "0" * 24},
+        "nkz:zoningMethod": {"type": "Property", "value": "vegetationIndexMultiDate"},
+        "nkz:dateZoned": {"type": "Property", "value": "2026-06-01"},
+        "zoneLevel": {"type": "Property", "value": level},
+        "location": {"type": "GeoProperty", "value": {"type": "Polygon", "coordinates": [[[0, 0], [1, 0], [1, 1], [0, 0]]]}},
+    }
+
+
 def test_fetch_works_inside_running_event_loop():
     class _Sync:
         def __init__(self, tenant_id):
             pass
 
         def query_entities(self, **kw):
-            return [_zone_entity("z1", "management")]
+            return [_current_entity(1, "high")]
 
     async def _go():
         with patch.object(zp, "SyncOrionClient", _Sync):
-            return zp.fetch_management_zones("acme", PARCEL)
+            return zp.fetch_zone_targets("acme", PARCEL)
 
     assert len(asyncio.run(_go())) == 1
 
@@ -184,13 +146,13 @@ def test_delete_zone_products_targets_zone_ids():
             pass
 
         def query_entities(self, **kw):
-            return [_zone_entity("z1", "management"), _zone_entity("z2", "management")]
+            return [_current_entity(1, "high"), _current_entity(2, "low")]
 
     with patch.object(zp, "SyncOrionClient", _Sync), \
             patch.object(fi, "delete_eo_index", lambda t, eid, idx: deleted.append((eid, idx))):
         zp.delete_zone_products("acme", PARCEL, "2026-06-01", "NDVI")
-    assert deleted == [("urn:ngsi-ld:EOProduct:acme:zone:p1:z1:2026-06-01", "NDVI"),
-                       ("urn:ngsi-ld:EOProduct:acme:zone:p1:z2:2026-06-01", "NDVI")]
+    assert sorted(deleted) == [("urn:ngsi-ld:EOProduct:acme:zone:p1:abcdef12-high:2026-06-01", "NDVI"),
+                               ("urn:ngsi-ld:EOProduct:acme:zone:p1:abcdef12-low:2026-06-01", "NDVI")]
 
 
 def test_parcel_series_excludes_zone_rows():

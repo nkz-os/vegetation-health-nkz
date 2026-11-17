@@ -100,12 +100,29 @@ def test_current_zones_orion_failure_is_empty():
         assert fetch_current_zones("acme", P1) == []
 
 
-def test_zone_targets_are_terrain_units_plus_current():
-    unit = {"zone_id": "u1", "relation": "hasAgriParcelZone"}
-    cur = {"zone_id": "abcdef12-high", "relation": "hasAgriManagementZone"}
-    with patch.object(zp, "fetch_management_zones", lambda t, p: [unit]), \
-            patch.object(zp, "fetch_current_zones", lambda t, p: [cur]):
-        assert zp.fetch_zone_targets("acme", P1) == [unit, cur]
+def test_zone_targets_only_current_zoning():
+    """Terrain units (AgriParcelZone) are no longer product targets."""
+    unit = {"id": "urn:ngsi-ld:AgriParcelZone:p1:u1", "type": "AgriParcelZone",
+            "hasAgriParcel": {"type": "Relationship", "object": P1},
+            "nkz:zoneType": {"type": "Property", "value": "management"},
+            "location": {"type": "GeoProperty", "value": SQUARE}}
+    queried = []
+
+    class _Sync:
+        def __init__(self, tenant_id):
+            pass
+
+        def query_entities(self, **kw):
+            queried.append(kw.get("type"))
+            if kw.get("type") == "AgriParcelZone":
+                return [unit]
+            return [_amz(1, RUN, "vegetationIndexMultiDate", "2026-06-01", "high")]
+
+    with patch.object(zp, "SyncOrionClient", _Sync):
+        targets = zp.fetch_zone_targets("acme", P1)
+    assert [t["zone_id"] for t in targets] == ["abcdef12-high"]
+    assert {t["relation"] for t in targets} == {"hasAgriManagementZone"}
+    assert "AgriParcelZone" not in queried
 
 
 def test_zone_entity_relation_and_level():
