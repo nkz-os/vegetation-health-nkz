@@ -94,7 +94,8 @@ def _p(value):
     return {"type": "Property", "value": value}
 
 
-def zone(run_id, rank, level, geom, *, area=1.0, rel=100, mean=0.6, confirming=5, total=6):
+def zone(run_id, rank, level, geom, *, area=1.0, rel=100, mean=0.6, confirming=5, total=6,
+         dates=("2026-04-01", "2026-05-01")):
     """An AgriManagementZone as the multi-date proposal publishes it."""
     return {
         "id": f"urn:ngsi-ld:AgriManagementZone:p1:{run_id[:8]}:L{rank}",
@@ -103,7 +104,7 @@ def zone(run_id, rank, level, geom, *, area=1.0, rel=100, mean=0.6, confirming=5
         "location": {"type": "GeoProperty", "value": geom},
         "zoneId": _p(rank), "zoneRank": _p(rank), "zoneName": _p(level), "zoneLevel": _p(level),
         "relativeVigorPct": _p(rel), "confirmingDates": _p(confirming), "totalDates": _p(total),
-        "sourceDates": _p(["2026-04-01", "2026-05-01"]), "meanValue": _p(mean), "areaHa": _p(area),
+        "sourceDates": _p(list(dates)), "meanValue": _p(mean), "areaHa": _p(area),
         "variableAttribute": _p("NDVI"), "zoningRunId": _p(run_id), "zoningMethod": _p("vegetationIndexMultiDate"),
         "dateZoned": _p({"@type": "DateTime", "@value": "2026-11-16T09:00:00Z"}),
     }

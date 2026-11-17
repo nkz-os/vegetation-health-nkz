@@ -234,13 +234,13 @@ def merge(db, fiware, tenant_id: str, parcel_id: str, run_id: str, ranks: tuple[
     return version
 
 
+def _levels(entities) -> list[dict]:
+    ordered = sorted(entities or [], key=lambda e: _value(e, "zoneRank") or 0)
+    return [{"level": _value(e, "zoneLevel"), "area_ha": _value(e, "areaHa"),
+             "relative_pct": _value(e, "relativeVigorPct")} for e in ordered]
+
+
 def summary(version) -> dict:
-    levels = sorted(
-        ({"rank": _value(e, "zoneRank"), "level": _value(e, "zoneLevel"),
-          "area_ha": _value(e, "areaHa"), "relative_pct": _value(e, "relativeVigorPct")}
-         for e in version.entities or []),
-        key=lambda z: z["rank"] or 0,
-    )
     return {
         "run_id": version.run_id,
         "status": version.status,
@@ -250,5 +250,56 @@ def summary(version) -> dict:
         "outcome_reason": version.outcome_reason,
         "created_at": version.created_at.isoformat() if version.created_at else None,
         "accepted_at": version.accepted_at.isoformat() if version.accepted_at else None,
-        "levels": [{k: z[k] for k in ("level", "area_ha", "relative_pct")} for z in levels],
+        "levels": _levels(version.entities),
+    }
+
+
+def _source_dates(entities) -> list[str]:
+    dates: set[str] = set()
+    for entity in entities or []:
+        dates.update(_value(entity, "sourceDates") or [])
+    return sorted(dates)
+
+
+def pending_comparison(db, tenant_id: str, parcel_id: str) -> dict:
+    """What the pending proposal changes against the current zoning, for the technician to decide."""
+    from app.services.zoning_layer import zone_feature
+    pend = versions.pending(db, tenant_id, parcel_id)
+    if pend is None:
+        raise ZoningNotFound(parcel_id)
+    cur = versions.current(db, tenant_id, parcel_id)
+    cur_entities = (cur.entities or []) if cur is not None else []
+    pend_entities = pend.entities or []
+    notes = versions.notes_of(db, tenant_id, parcel_id)
+
+    def level_map(entities):  # cause -> level of the zone that holds it
+        levels = {e.get("id"): _value(e, "zoneLevel") for e in entities}
+        ranks = {e.get("id"): _value(e, "zoneRank") or 0 for e in entities}
+        placed = sorted(assign_notes(notes, entities).items(), key=lambda kv: ranks.get(kv[0], 0))
+        return {cause: levels.get(zid) for zid, cause in placed}
+
+    before, after = level_map(cur_entities), level_map(pend_entities)
+    causes = [{"cause": c, "from_level": before.get(c), "to_level": after.get(c)}
+              for c in list(before) + [c for c in after if c not in before]]
+    cur_dates, pend_dates = _source_dates(cur_entities), _source_dates(pend_entities)
+    return {
+        "current": None if cur is None else {
+            "run_id": cur.run_id,
+            "accepted_at": cur.accepted_at.isoformat() if cur.accepted_at else None,
+            "source_dates": cur_dates,
+            "levels": _levels(cur_entities),
+        },
+        "pending": {
+            "run_id": pend.run_id,
+            "created_at": pend.created_at.isoformat() if pend.created_at else None,
+            "index_type": pend.index_type,
+            "outcome_reason": pend.outcome_reason,
+            "source_dates": pend_dates,
+            "new_dates": [d for d in pend_dates if d not in set(cur_dates)],
+            "levels": _levels(pend_entities),
+        },
+        "causes": causes,
+        "geojson": {"type": "FeatureCollection",
+                    "features": [zone_feature(pend.run_id, e, None)
+                                 for e in sorted(pend_entities, key=lambda e: _value(e, "zoneRank") or 0)]},
     }

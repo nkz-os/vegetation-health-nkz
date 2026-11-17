@@ -133,3 +133,11 @@ def list_versions(parcel_id: str,
                   db: Session = Depends(get_db_with_tenant)):
     from app.jobs.zoning_multidate import actions
     return [actions.summary(v) for v in versions.history(db, current_user["tenant_id"], parcel_id)]
+
+
+@router.get("/{parcel_id}/pending")
+def pending_proposal(parcel_id: str,
+                     current_user: dict = Depends(require_auth),
+                     db: Session = Depends(get_db_with_tenant)):
+    from app.jobs.zoning_multidate import actions
+    return _run(lambda: actions.pending_comparison(db, current_user["tenant_id"], parcel_id))
