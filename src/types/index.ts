@@ -439,6 +439,48 @@ export interface EntityDataStatus {
     local_cloud_threshold: number | null;
     message: string | null;
   }>;
+  /** A zoning proposal waits for review and can still be accepted. */
+  zoning_pending?: boolean;
+}
+
+/** One level of a zoning version (as the zoning endpoints summarise it). */
+export interface ZoningLevel {
+  level: string;
+  area_ha: number | null;
+  relative_pct: number | null;
+}
+
+export interface ZoningSummary {
+  run_id: string;
+  status: 'current' | 'pending' | 'superseded' | 'discarded';
+  source: 'proposal' | 'merge';
+  derived_from: string | null;
+  index_type: string | null;
+  outcome_reason: string | null;
+  created_at: string | null;
+  accepted_at: string | null;
+  levels: ZoningLevel[];
+}
+
+/** GET /zoning/{parcel}/pending: what a pending proposal changes against the current zoning. */
+export interface PendingZoning {
+  current: {
+    run_id: string;
+    accepted_at: string | null;
+    source_dates: string[];
+    levels: ZoningLevel[];
+  } | null;
+  pending: {
+    run_id: string;
+    created_at: string | null;
+    index_type: string | null;
+    outcome_reason: string | null;
+    source_dates: string[];
+    new_dates: string[];
+    levels: ZoningLevel[];
+  };
+  causes: Array<{ cause: string; from_level: string | null; to_level: string | null }>;
+  geojson: { type: 'FeatureCollection'; features: any[] };
 }
 
 export interface CropSeason {

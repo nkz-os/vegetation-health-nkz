@@ -104,6 +104,51 @@ export class VegetationApiClient {
     return response as any;
   }
 
+  // --- Zoning versions: accept, note, merge, discard, compare ---------------
+
+  private zoningPath(parcelId: string): string {
+    return `/zoning/${encodeURIComponent(parcelId)}`;
+  }
+
+  async acceptZoning(parcelId: string, runId: string): Promise<import('../types').ZoningSummary> {
+    return (await this.client.post(`${this.zoningPath(parcelId)}/accept`, { run_id: runId })) as any;
+  }
+
+  async noteZone(parcelId: string, zoneId: string, cause: string):
+      Promise<{ zone_id: string; run_id: string; cause: string }> {
+    return (await this.client.post(
+      `${this.zoningPath(parcelId)}/zones/${encodeURIComponent(zoneId)}/note`, { cause },
+    )) as any;
+  }
+
+  async removeZoneNote(parcelId: string, zoneId: string):
+      Promise<{ zone_id: string; run_id: string; cause: null }> {
+    return (await this.client.delete(
+      `${this.zoningPath(parcelId)}/zones/${encodeURIComponent(zoneId)}/note`,
+    )) as any;
+  }
+
+  async mergeZoning(parcelId: string, runId: string, ranks: [number, number], targetRank: number):
+      Promise<import('../types').ZoningSummary> {
+    return (await this.client.post(`${this.zoningPath(parcelId)}/merge`, {
+      run_id: runId, ranks, target_rank: targetRank,
+    })) as any;
+  }
+
+  async discardZoning(parcelId: string, runId: string): Promise<import('../types').ZoningSummary> {
+    return (await this.client.post(`${this.zoningPath(parcelId)}/discard`, { run_id: runId })) as any;
+  }
+
+  /** The pending proposal compared with the current zoning; null when there is none. */
+  async getPendingZoning(parcelId: string): Promise<import('../types').PendingZoning | null> {
+    try {
+      return (await this.client.get(`${this.zoningPath(parcelId)}/pending`)) as any;
+    } catch (err: any) {
+      if (err?.response?.status === 404) return null;
+      throw err;
+    }
+  }
+
   /** Single round-trip overview for the parcel detail page. */
   async getParcelOverview(entityId: string): Promise<import('../types').ParcelOverview> {
     const response = await this.client.get(
