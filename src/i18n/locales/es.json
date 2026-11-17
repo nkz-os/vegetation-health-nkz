@@ -207,7 +207,22 @@
       "merge": "Unir"
     },
     "pending": {
-      "badge": "Propuesta nueva"
+      "badge": "Propuesta nueva",
+      "title": "Propuesta nueva de zonificación",
+      "loadFailed": "No se ha podido cargar la propuesta.",
+      "none": "No hay ninguna propuesta pendiente de revisar.",
+      "origin": "Usa {{n}} fechas de imagen ({{index}})",
+      "newDates": "{{n}} nuevas: {{dates}}",
+      "empty": "La propuesta nueva no encuentra zonas diferenciadas.",
+      "level": "Nivel",
+      "current": "Vigente",
+      "proposed": "Propuesta",
+      "causes": "Causas anotadas",
+      "causeMoves": "{{from}} → {{to}}",
+      "causeLost": "se perdería",
+      "preview": "Ver propuesta en el mapa",
+      "accept": "Aceptar propuesta",
+      "discard": "Descartar"
     }
   },
   "setup": {

@@ -211,6 +211,7 @@ const VegetationLayerControl: React.FC = () => {
             onIndexChange={(idx) => setSelectedIndex(idx)}
             customIndexOptions={customIndexOptions}
             availableIndices={entityDataStatus?.available_indices}
+            badgeIndices={entityDataStatus?.zoning_pending ? ['VRA_ZONES'] : []}
           />
           <p className="text-[10px] text-nkz-text-muted">
             {t(

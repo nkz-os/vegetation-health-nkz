@@ -12,11 +12,13 @@ import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 
 import { useViewerOptional, useTranslation } from '@nekazari/sdk';
-import { useVegetationContext } from '../../services/vegetationContext';
+import { syncZoningPendingFlag, useVegetationContext } from '../../services/vegetationContext';
 import { useVegetationApi } from '../../services/api';
 import { API_ORIGIN } from '../../services/apiOrigin';
 import { useAuth } from '../../hooks/useAuth';
 import { ZoneCard, canEditZoning, type ZoneCardLevel, type ZoneCardZone } from '../zoning/ZoneCard';
+import { PendingPanel } from '../zoning/PendingPanel';
+import type { PendingZoning } from '../../types';
 
 /** Card data of a zone feature drawn by the zoning layer (Cesium property bag). */
 function zoneFromProps(props: any): ZoneCardZone | null {
@@ -67,6 +69,9 @@ export const VegetationLayer: React.FC = () => {
   // Zone whose card reopens once the layer is drawn again (an edit that keeps the zone ids).
   const reopenZoneRef = useRef<string | null>(null);
   const zonesFlownToRef = useRef<string | null>(null);
+  const [pendingOpen, setPendingOpen] = useState(false);
+  const [proposalOutline, setProposalOutline] = useState<PendingZoning['geojson'] | null>(null);
+  const outlineRef = useRef<any>(null);
   const { roles } = useAuth();
   const canEdit = canEditZoning(roles);
 
@@ -152,6 +157,52 @@ export const VegetationLayer: React.FC = () => {
     setActiveRasterPath(indexResults[selectedIndex].raster_path ?? null);
   }, [selectedIndex, indexResults, setActiveJobId, setActiveRasterPath]);
 
+  // The pending panel belongs to the zoning of one parcel.
+  useEffect(() => {
+    setPendingOpen(false);
+    setProposalOutline(null);
+  }, [selectedEntityId, selectedIndex]);
+
+  // Outline of a pending proposal over the zoning in force: borders only, never picked as a zone.
+  useEffect(() => {
+    if (!viewer) return;
+    const Cesium = (window as any).Cesium;
+    if (!Cesium) return;
+    let cancelled = false;
+    const drop = () => {
+      if (outlineRef.current && !viewer.isDestroyed()) {
+        try { viewer.dataSources.remove(outlineRef.current, true); } catch { /* destroyed */ }
+      }
+      outlineRef.current = null;
+    };
+    drop();
+    if (proposalOutline && proposalOutline.features.length > 0) {
+      const outline = new Cesium.CustomDataSource('zoning-proposal-outline');
+      Cesium.GeoJsonDataSource.load(proposalOutline, { clampToGround: true })
+        .then((loaded: any) => {
+          if (cancelled || viewer.isDestroyed()) return;
+          for (const entity of loaded.entities.values) {
+            const ring = entity.polygon?.hierarchy?.getValue?.(Cesium.JulianDate.now())?.positions;
+            if (!ring || ring.length < 2) continue;
+            outline.entities.add({
+              polyline: {
+                positions: [...ring, ring[0]],
+                clampToGround: true,
+                width: 3,
+                material: new Cesium.PolylineDashMaterialProperty({
+                  color: Cesium.Color.YELLOW, gapColor: Cesium.Color.BLACK.withAlpha(0.6), dashLength: 12,
+                }),
+              },
+            });
+          }
+          viewer.dataSources.add(outline);
+          outlineRef.current = outline;
+        })
+        .catch((err: any) => console.error('[VegetationLayer] Error drawing the proposal:', err));
+    }
+    return () => { cancelled = true; drop(); };
+  }, [viewer, proposalOutline]);
+
   // Cesium layer management
   useEffect(() => {
     if (!viewer) return;
@@ -184,6 +235,7 @@ export const VegetationLayer: React.FC = () => {
         })
         .then((geojson: any) => {
           setZoningPending(geojson?.has_pending === true);
+          syncZoningPendingFlag(geojson?.has_pending === true);
           return Cesium.GeoJsonDataSource.load(geojson, { clampToGround: true });
         })
         .then((dataSource: any) => {
@@ -420,17 +472,34 @@ export const VegetationLayer: React.FC = () => {
         if (idsChanged) setZoneCard(null);
         setZoningReload((n) => n + 1);
       }}
-      onOpenPending={() => { /* pending panel: next task */ }}
+      onOpenPending={() => setPendingOpen(true)}
       onClose={() => setZoneCard(null)}
     />,
     document.body,
   ) : null;
 
-  if (!hasLayer || !dateLabel || !cesiumContainer) return card;
+  const panel = pendingOpen && selectedEntityId && typeof document !== 'undefined' ? createPortal(
+    <PendingPanel
+      parcelId={selectedEntityId}
+      canEdit={canEdit}
+      onPreview={setProposalOutline}
+      onDone={() => {
+        setPendingOpen(false);
+        setProposalOutline(null);
+        setZoneCard(null);
+        setZoningReload((n) => n + 1);
+      }}
+      onClose={() => { setPendingOpen(false); setProposalOutline(null); }}
+    />,
+    document.body,
+  ) : null;
+
+  if (!hasLayer || !dateLabel || !cesiumContainer) return <>{card}{panel}</>;
 
   return (
     <>
       {card}
+      {panel}
       {createPortal(
     <div
       className={`absolute bottom-16 left-1/2 -translate-x-1/2 z-50 pointer-events-none transition-all duration-500 ${

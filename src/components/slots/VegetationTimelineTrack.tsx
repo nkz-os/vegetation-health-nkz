@@ -461,6 +461,7 @@ export const VegetationTimelineTrack: React.FC<TimelineTrackProps> = ({ entityId
           onIndexChange={(idx: string) => setSelectedIndex(idx)}
           customIndexOptions={customIndexOptions}
           availableIndices={availableIndices}
+          badgeIndices={entityDataStatus?.zoning_pending ? ['VRA_ZONES'] : []}
           compact
         />
         <div className="flex items-center gap-nkz-inline text-nkz-xs text-nkz-text-muted">

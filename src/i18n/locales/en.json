@@ -207,7 +207,22 @@
       "merge": "Merge"
     },
     "pending": {
-      "badge": "New proposal"
+      "badge": "New proposal",
+      "title": "New zoning proposal",
+      "loadFailed": "The proposal could not be loaded.",
+      "none": "There is no proposal waiting for review.",
+      "origin": "Uses {{n}} image dates ({{index}})",
+      "newDates": "{{n}} new: {{dates}}",
+      "empty": "The new proposal finds no distinct zones.",
+      "level": "Level",
+      "current": "Current",
+      "proposed": "Proposal",
+      "causes": "Noted causes",
+      "causeMoves": "{{from}} → {{to}}",
+      "causeLost": "would be lost",
+      "preview": "Show proposal on the map",
+      "accept": "Accept proposal",
+      "discard": "Discard"
     }
   },
   "setup": {

@@ -160,6 +160,14 @@ interface VegetationContextType {
 
 const VegetationContext = createContext<VegetationContextType | undefined>(undefined);
 
+/** Keep the pill's "proposal waiting" dot in step with the zoning layer just drawn. */
+export function syncZoningPendingFlag(pending: boolean): void {
+  const status = getStoreSnapshot().entityDataStatus;
+  if (status && status.zoning_pending !== pending) {
+    updateStore({ entityDataStatus: { ...status, zoning_pending: pending } });
+  }
+}
+
 export const VegetationProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   // Read shared state from the global store (reactive across all provider instances)
   const sharedState = useSyncExternalStore(subscribeStore, getStoreSnapshot);
