@@ -1,6 +1,8 @@
 """A new proposal never replaces a zoning the technician accepted (real Postgres, fake broker)."""
 from datetime import datetime, timezone
 
+import pytest
+
 from tests.test_zoning_md_run import (NOW, PARCEL_URN, TODAY, _fiware, _row, _sources,
                                       _tif)
 
@@ -8,6 +10,12 @@ T = "acme"
 ACCEPTED = datetime(2026, 11, 10, 8, 0, tzinfo=timezone.utc)
 OLD = {"id": "urn:ngsi-ld:AgriManagementZone:acme-p1:aaaaaaaa:L1", "zoningMethod": "vegetationIndexMultiDate",
        "zoningRunId": "aaaaaaaa", "hasAgriParcel": PARCEL_URN}
+
+
+@pytest.fixture(autouse=True)
+def _no_celery_enqueue(monkeypatch):
+    from app.jobs.zoning_multidate import actions
+    monkeypatch.setattr(actions, "_enqueue_backfill", lambda tenant_id, parcel_id: None)  # no Celery broker here
 
 
 def _store(db):

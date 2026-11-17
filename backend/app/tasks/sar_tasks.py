@@ -164,12 +164,14 @@ def _calibrated_parcel(band_path: str, calibration_path: str, parcel_geom, workd
     return stats, parcel_path
 
 
-def _zone_sigma0_stats(parcel_raster_path: str, zone_geom) -> Optional[Dict[str, Any]]:
+def _zone_sigma0_stats(parcel_raster_path: str, zone_geom, exact: bool = False) -> Optional[Dict[str, Any]]:
     """sigma0 dB statistics of one zone, read from the already calibrated parcel raster.
 
     Reuses the parcel's calibrated, georeferenced dB window (no per-zone
     calibration or warp). None when the zone has fewer than MIN_ZONE_PIXELS
     valid pixels or its valid fraction is under MIN_VALID_FRACTION.
+    ``exact`` (current-zoning zones) takes only pixels whose centre is inside the
+    zone, so nested or adjacent levels share none; terrain units keep all_touched.
     """
     import rasterio
     from rasterio.features import geometry_mask
@@ -179,7 +181,7 @@ def _zone_sigma0_stats(parcel_raster_path: str, zone_geom) -> Optional[Dict[str,
 
     with rasterio.open(parcel_raster_path) as src:
         inside = ~geometry_mask([zone_geom.__geo_interface__], out_shape=(src.height, src.width),
-                                transform=src.transform, all_touched=True)
+                                transform=src.transform, all_touched=not exact)
         values = src.read(1)
     zone_pixels = int(inside.sum())
     if zone_pixels == 0:
@@ -202,15 +204,16 @@ def _publish_zone_sar_products(tenant_id: str, entity_id: str, calibrated_paths:
     from shapely.geometry import shape as shapely_shape
 
     from app.services.fiware_integration import upsert_eo_zone_product
-    from app.services.zone_products import fetch_management_zones
+    from app.services.zone_products import CURRENT_ZONE_RELATION, fetch_zone_targets
 
     published = 0
     parcel_short = entity_id.split(":")[-1][:10]
-    for zone in fetch_management_zones(tenant_id, entity_id):
+    for zone in fetch_zone_targets(tenant_id, entity_id):
         try:
             zone_geom = shapely_shape(zone["geometry"])
-            vv = _zone_sigma0_stats(calibrated_paths["VV"], zone_geom)
-            vh = _zone_sigma0_stats(calibrated_paths["VH"], zone_geom)
+            exact = zone.get("relation") == CURRENT_ZONE_RELATION
+            vv = _zone_sigma0_stats(calibrated_paths["VV"], zone_geom, exact=exact)
+            vh = _zone_sigma0_stats(calibrated_paths["VH"], zone_geom, exact=exact)
             if vv is None or vh is None:
                 logger.info("SAR zone %s skipped (too few valid pixels)", zone["zone_id"])
                 continue

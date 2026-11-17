@@ -33,6 +33,21 @@ ARROW_MIME = "application/vnd.apache.arrow.stream"
 # ---------------------------------------------------------------------------
 
 
+_ZONE_RELATION_KEYS = (
+    "hasAgriParcelZone",
+    "nkz:hasAgriParcelZone",
+    "https://nkz-os.org/ns/hasAgriParcelZone",
+    "hasAgriManagementZone",
+    "nkz:hasAgriManagementZone",
+    "https://nkz-os.org/ns/hasAgriManagementZone",
+)
+
+
+def _is_zone_product(payload: dict) -> bool:
+    """True for per-zone EOProducts, which never belong to the parcel series."""
+    return any(k in payload for k in _ZONE_RELATION_KEYS)
+
+
 def _get_telemetry_events_url() -> str:
     """TimescaleDB connection for telemetry_events (may differ from legacy telemetry table)."""
     return os.getenv("TELEMETRY_EVENTS_DATABASE_URL") or os.getenv("TIMESERIES_DATABASE_URL") or os.getenv("DATABASE_URL", "")
@@ -131,7 +146,7 @@ async def _history_from_telemetry_events(
         if isinstance(payload, str):
             payload = json_mod.loads(payload)
 
-        if "hasAgriParcelZone" in payload:
+        if _is_zone_product(payload):
             continue  # per-zone product, never part of the parcel series
 
         idx = payload.get(index_key) or {}
@@ -254,7 +269,7 @@ async def get_timeseries_data(
         if isinstance(payload, str):
             payload = json_mod.loads(payload)
 
-        if "hasAgriParcelZone" in payload:
+        if _is_zone_product(payload):
             continue  # per-zone product, never part of the parcel series
 
         idx = payload.get(index_key) or {}

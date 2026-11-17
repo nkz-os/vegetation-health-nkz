@@ -131,6 +131,8 @@ def _publish_zones(fiware, parcel_urn: str, run_id: str, entities: list[dict], r
         retired = retire_quietly(fiware, parcel_urn, keep_run_id=run_id)
         versions.record_current(db, tenant, parcel_urn, run_id, entities, source="proposal",
                                 index_type=result.index, job_id=store.job_id)
+    from app.jobs.zoning_multidate.actions import _enqueue_backfill
+    _enqueue_backfill(tenant, parcel_urn)  # the new current zoning starts with its latest zone products
     logger.info("zoning %s: %d zones published (run %s); %d older automatic zones retired",
                 parcel_urn, len(entities), run_id, retired)
     return entities
