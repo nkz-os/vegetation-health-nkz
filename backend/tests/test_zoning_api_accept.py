@@ -25,10 +25,17 @@ def api(zoning_db, monkeypatch):
     def _db():
         yield zoning_db()
 
-    app.dependency_overrides[require_auth] = lambda: {"tenant_id": TENANT, "user_id": "u-1", "roles": []}
+    as_roles(["TechnicalConsultant"])
     app.dependency_overrides[get_db_with_tenant] = _db
     yield TestClient(app), broker, zoning_db
     app.dependency_overrides.clear()
+
+
+def as_roles(roles):
+    """Make the test user carry ``roles`` (the gateway sends them in X-User-Roles)."""
+    from app.main import app
+    from app.middleware.auth import require_auth
+    app.dependency_overrides[require_auth] = lambda: {"tenant_id": TENANT, "user_id": "u-1", "roles": roles}
 
 
 def _seed(db_factory, *, current=None, accepted=False, pendings=()):

@@ -7,6 +7,7 @@ The zoning in force is the parcel's current version (published to the broker).
 A parcel with no recorded versions (zoned before versions existed) falls back
 to its latest completed VRA_ZONES job.
 """
+from datetime import datetime
 from typing import Any, Optional
 
 from sqlalchemy import text
@@ -48,7 +49,7 @@ def _v(entity: dict, name: str) -> Any:
     return attr.get("value") if isinstance(attr, dict) else attr
 
 
-def _feature(run_id: str, entity: dict, accepted: bool) -> dict:
+def zone_feature(run_id: str, entity: dict, accepted_at: Optional[datetime]) -> dict:
     from shapely.geometry import shape
 
     from app.jobs.zoning_multidate.run import prescription_rate
@@ -77,7 +78,8 @@ def _feature(run_id: str, entity: dict, accepted: bool) -> dict:
             # Versions.
             "entity_id": entity.get("id"),
             "run_id": run_id,
-            "accepted": accepted,
+            "accepted": accepted_at is not None,
+            "accepted_at": accepted_at.isoformat() if accepted_at is not None else None,
             "technician_cause": _v(entity, "technicianCause"),
         },
     }
@@ -89,7 +91,17 @@ def zoning_features(db, tenant_id: str, entity_id: str) -> list[dict]:
     cur = versions.current(db, tenant_id, entity_id)
     if cur is not None:
         entities = sorted(cur.entities or [], key=lambda e: _v(e, "zoneRank") or 0)
-        return [_feature(cur.run_id, e, cur.accepted_at is not None) for e in entities]
+        return [zone_feature(cur.run_id, e, cur.accepted_at) for e in entities]
     if versions.has_versions(db, tenant_id, entity_id):
         return []  # the last zoning was withdrawn (no zones); older jobs are not in force
     return _job_features(latest_zoning_job(db, tenant_id, entity_id))
+
+
+def zoning_pending(db, tenant_id: str, entity_id: str) -> bool:
+    """A proposal waits for review and can still be accepted (parked on the zoning in force)."""
+    from app.jobs.zoning_multidate import versions
+    pend = versions.pending(db, tenant_id, entity_id)
+    if pend is None:
+        return False
+    cur = versions.current(db, tenant_id, entity_id)
+    return pend.parked_on_run_id == (cur.run_id if cur is not None else None)

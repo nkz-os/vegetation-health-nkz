@@ -95,3 +95,22 @@ def test_layer_falls_back_to_the_latest_job_without_versions(zoning_db, monkeypa
     job = _job({"geojson": {"type": "FeatureCollection", "features": [feature]}})
     monkeypatch.setattr(zoning_layer, "latest_zoning_job", lambda *a: job)
     assert zoning_layer.zoning_features(zoning_db(), TENANT, PARCEL) == [feature]
+
+
+def test_pending_flag(zoning_db):
+    from app.services import zoning_layer
+    from tests.zoning_fakes import PARCEL, TENANT
+    db = _seed_versions(zoning_db, current="a" * 32, pending="b" * 32)
+    assert zoning_layer.zoning_pending(db, TENANT, PARCEL) is True
+    assert zoning_layer.zoning_pending(db, "tenant-b", PARCEL) is False
+    assert zoning_layer.zoning_pending(_seed_versions(zoning_db, current=None), TENANT, "urn:x") is False
+
+
+def test_stale_pending_flag_false(zoning_db):
+    from app.jobs.zoning_multidate import versions as v
+    from app.services import zoning_layer
+    from tests.zoning_fakes import PARCEL, TENANT
+    db = _seed_versions(zoning_db, current="a" * 32, pending="b" * 32)
+    v.pending(db, TENANT, PARCEL).parked_on_run_id = "c" * 32  # parked on a run no longer current
+    db.flush()
+    assert zoning_layer.zoning_pending(db, TENANT, PARCEL) is False

@@ -41,19 +41,19 @@ def _location(entity: dict) -> dict | None:
     return loc if isinstance(loc, dict) else None
 
 
-def assign_notes(notes: Iterable[Any], entities: list[dict]) -> dict[str, str]:
-    """``zone id -> cause`` for the zones that receive a note (rules in the module docstring)."""
+def _placements(notes: Iterable[Any], entities: list[dict]) -> list[tuple[Any, str | None]]:
+    """Each note, oldest first, with the zone it lands on (None below ``MIN_OVERLAP``)."""
     zones = [(e["id"], _geometry(loc)) for e in entities if (loc := _location(e)) and e.get("id")]
     zones = [(zid, g) for zid, g in zones if g is not None]
     if not zones:
-        return {}
+        return []
     # Areas in metres: one UTM zone for the parcel (zones of one parcel are a few km at most).
     anchor = zones[0][1].representative_point()
     to_utm = Transformer.from_crs("EPSG:4326", f"EPSG:{_utm_epsg(anchor.x, anchor.y)}", always_xy=True).transform
     zones_m = [(zid, shp_transform(to_utm, g)) for zid, g in zones]
 
-    assigned: dict[str, str] = {}
-    for note in sorted(notes, key=lambda n: n.created_at):  # later notes overwrite earlier ones
+    placed: list[tuple[Any, str | None]] = []
+    for note in sorted(notes, key=lambda n: n.created_at):
         geom = _geometry(note.geometry or {})
         if geom is None:
             continue
@@ -65,9 +65,22 @@ def assign_notes(notes: Iterable[Any], entities: list[dict]) -> dict[str, str]:
             share = note_m.intersection(zone_m).area / note_m.area
             if share > best_share:
                 best_id, best_share = zid, share
-        if best_id is not None and best_share >= MIN_OVERLAP:
-            assigned[best_id] = note.cause
+        placed.append((note, best_id if best_id is not None and best_share >= MIN_OVERLAP else None))
+    return placed
+
+
+def assign_notes(notes: Iterable[Any], entities: list[dict]) -> dict[str, str]:
+    """``zone id -> cause`` for the zones that receive a note (rules in the module docstring)."""
+    assigned: dict[str, str] = {}
+    for note, zone_id in _placements(notes, entities):  # later notes overwrite earlier ones
+        if zone_id is not None:
+            assigned[zone_id] = note.cause
     return assigned
+
+
+def notes_on_zone(notes: Iterable[Any], entities: list[dict], zone_id: str) -> list:
+    """The notes that land on ``zone_id`` (same rule as ``assign_notes``), oldest first."""
+    return [note for note, zid in _placements(notes, entities) if zid == zone_id]
 
 
 def with_causes(entities: list[dict], causes: dict[str, str]) -> list[dict]:

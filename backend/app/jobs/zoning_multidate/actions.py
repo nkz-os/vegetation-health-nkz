@@ -7,6 +7,7 @@ block rolls back) and the previous current zoning in force.
 from __future__ import annotations
 
 import copy
+import logging
 from datetime import datetime
 from typing import Any
 from urllib.parse import quote
@@ -14,11 +15,14 @@ from urllib.parse import quote
 from app.jobs.zoning_multidate import versions
 from app.jobs.zoning_multidate.errors import (BrokerUnavailable, ZoningConflict, ZoningInvalid,
                                               ZoningNotFound)
-from app.jobs.zoning_multidate.notes import assign_notes, with_causes
+from app.jobs.zoning_multidate.notes import assign_notes, notes_on_zone, with_causes
 from app.jobs.zoning_multidate.publish import METHOD, ZONE_TYPE, publish, retire_quietly
 
 _NKZ = "https://nkz-os.org/ns/"
 _RANKS = (1, 2, 3, 4)
+
+
+logger = logging.getLogger(__name__)
 
 
 def _stamp(at: datetime) -> dict:
@@ -127,6 +131,20 @@ def accept(db, fiware, tenant_id: str, parcel_id: str, run_id: str, user_id: str
         raise ZoningNotFound(run_id)
 
 
+def discard(db, tenant_id: str, parcel_id: str, run_id: str, user_id: str):
+    """Set the pending proposal aside; the current zoning and the broker are untouched."""
+    with versions.parcel_lock(db, tenant_id, parcel_id):
+        pend = versions.pending(db, tenant_id, parcel_id)
+        if pend is not None and pend.run_id == run_id:
+            versions.discard_pending(db, tenant_id, parcel_id, "discarded_by_user")
+            logger.info("zoning proposal discarded tenant=%s parcel=%s run=%s user=%s",
+                        tenant_id, parcel_id, run_id, user_id)
+            return pend
+        if versions.by_run(db, tenant_id, parcel_id, run_id) is not None:
+            raise ZoningConflict("only the pending proposal can be discarded")
+        raise ZoningNotFound(run_id)
+
+
 def _run_of_zone(fiware, parcel_id: str, zone_id: str) -> str | None:
     response = fiware.session.get(
         f"{fiware.context_broker_url}/ngsi-ld/v1/entities/{quote(zone_id, safe='')}",
@@ -168,6 +186,51 @@ def note(db, fiware, tenant_id: str, parcel_id: str, zone_id: str, cause: str, u
     return {"zone_id": zone_id, "run_id": cur.run_id, "cause": cause}
 
 
+def _broker_cause(fiware, zone_id: str):
+    """The cause the broker holds on a zone, whatever name form it comes back under."""
+    response = fiware.session.get(
+        f"{fiware.context_broker_url}/ngsi-ld/v1/entities/{quote(zone_id, safe='')}",
+        headers={"Accept": "application/json", "Content-Type": None},
+        timeout=10,
+    )
+    if response.status_code == 404:
+        return None
+    try:
+        response.raise_for_status()
+    except Exception as exc:
+        raise BrokerUnavailable(str(exc)) from exc
+    return _value(_normalise(response.json()), "technicianCause")
+
+
+def remove_note(db, fiware, tenant_id: str, parcel_id: str, zone_id: str, user_id: str):
+    """Remove the cause of a zone of the current zoning, and every note that would bring it back."""
+    with versions.parcel_lock(db, tenant_id, parcel_id):
+        cur = versions.current(db, tenant_id, parcel_id)
+        if cur is None:
+            run_id = _run_of_zone(fiware, parcel_id, zone_id)
+            if run_id is None or versions.by_run(db, tenant_id, parcel_id, run_id) is not None:
+                raise ZoningNotFound(zone_id)
+            cur = _backfill(db, fiware, tenant_id, parcel_id, run_id)
+        if not any(e.get("id") == zone_id for e in cur.entities):
+            raise ZoningNotFound(zone_id)
+        try:
+            removed = fiware.delete_attr(zone_id, "technicianCause")
+        except Exception as exc:
+            raise BrokerUnavailable(str(exc)) from exc
+        # A 404 can also mean another expanded name: only a re-read proves the cause is gone.
+        if not removed or _broker_cause(fiware, zone_id) is not None:
+            raise BrokerUnavailable(f"broker kept technicianCause on {zone_id}")
+        stale = notes_on_zone(versions.notes_of(db, tenant_id, parcel_id), cur.entities, zone_id)
+        for note_row in stale:
+            db.delete(note_row)
+        logger.info("zoning cause removed tenant=%s parcel=%s zone=%s user=%s notes_deleted=%d",
+                    tenant_id, parcel_id, zone_id, user_id, len(stale))
+        cur.entities = [{k: v for k, v in copy.deepcopy(e).items() if k != "technicianCause"}
+                        if e.get("id") == zone_id else copy.deepcopy(e) for e in cur.entities]
+        db.flush()
+    return {"zone_id": zone_id, "run_id": cur.run_id, "cause": None}
+
+
 def merge(db, fiware, tenant_id: str, parcel_id: str, run_id: str, ranks: tuple[int, int],
           target_rank: int, user_id: str, now: datetime):
     """Publish a new accepted run where two levels of the current zoning are one."""
@@ -197,13 +260,13 @@ def merge(db, fiware, tenant_id: str, parcel_id: str, run_id: str, ranks: tuple[
     return version
 
 
+def _levels(entities) -> list[dict]:
+    ordered = sorted(entities or [], key=lambda e: _value(e, "zoneRank") or 0)
+    return [{"level": _value(e, "zoneLevel"), "area_ha": _value(e, "areaHa"),
+             "relative_pct": _value(e, "relativeVigorPct")} for e in ordered]
+
+
 def summary(version) -> dict:
-    levels = sorted(
-        ({"rank": _value(e, "zoneRank"), "level": _value(e, "zoneLevel"),
-          "area_ha": _value(e, "areaHa"), "relative_pct": _value(e, "relativeVigorPct")}
-         for e in version.entities or []),
-        key=lambda z: z["rank"] or 0,
-    )
     return {
         "run_id": version.run_id,
         "status": version.status,
@@ -213,5 +276,57 @@ def summary(version) -> dict:
         "outcome_reason": version.outcome_reason,
         "created_at": version.created_at.isoformat() if version.created_at else None,
         "accepted_at": version.accepted_at.isoformat() if version.accepted_at else None,
-        "levels": [{k: z[k] for k in ("level", "area_ha", "relative_pct")} for z in levels],
+        "levels": _levels(version.entities),
+    }
+
+
+def _source_dates(entities) -> list[str]:
+    dates: set[str] = set()
+    for entity in entities or []:
+        value = _value(entity, "sourceDates") or []
+        dates.update([value] if isinstance(value, str) else value)  # one-item lists may come compacted
+    return sorted(dates)
+
+
+def pending_comparison(db, tenant_id: str, parcel_id: str) -> dict:
+    """What the pending proposal changes against the current zoning, for the technician to decide."""
+    from app.services.zoning_layer import zone_feature
+    pend = versions.pending(db, tenant_id, parcel_id)
+    if pend is None:
+        raise ZoningNotFound(parcel_id)
+    cur = versions.current(db, tenant_id, parcel_id)
+    cur_entities = (cur.entities or []) if cur is not None else []
+    pend_entities = pend.entities or []
+    notes = versions.notes_of(db, tenant_id, parcel_id)
+
+    def level_map(entities):  # cause -> level of the zone that holds it
+        levels = {e.get("id"): _value(e, "zoneLevel") for e in entities}
+        ranks = {e.get("id"): _value(e, "zoneRank") or 0 for e in entities}
+        placed = sorted(assign_notes(notes, entities).items(), key=lambda kv: ranks.get(kv[0], 0))
+        return {cause: levels.get(zid) for zid, cause in placed}
+
+    before, after = level_map(cur_entities), level_map(pend_entities)
+    causes = [{"cause": c, "from_level": before.get(c), "to_level": after.get(c)}
+              for c in list(before) + [c for c in after if c not in before]]
+    cur_dates, pend_dates = _source_dates(cur_entities), _source_dates(pend_entities)
+    return {
+        "current": None if cur is None else {
+            "run_id": cur.run_id,
+            "accepted_at": cur.accepted_at.isoformat() if cur.accepted_at else None,
+            "source_dates": cur_dates,
+            "levels": _levels(cur_entities),
+        },
+        "pending": {
+            "run_id": pend.run_id,
+            "created_at": pend.created_at.isoformat() if pend.created_at else None,
+            "index_type": pend.index_type,
+            "outcome_reason": pend.outcome_reason,
+            "source_dates": pend_dates,
+            "new_dates": [d for d in pend_dates if d not in set(cur_dates)],
+            "levels": _levels(pend_entities),
+        },
+        "causes": causes,
+        "geojson": {"type": "FeatureCollection",
+                    "features": [zone_feature(pend.run_id, e, None)
+                                 for e in sorted(pend_entities, key=lambda e: _value(e, "zoneRank") or 0)]},
     }

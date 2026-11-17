@@ -11,7 +11,7 @@ import logging
 from app.database import get_db_with_tenant
 from app.middleware.auth import require_auth
 from app.models import VegetationScene, VegetationIndexCache, VegetationJob, VegetationCropSeason
-from app.services.zoning_layer import zoning_features
+from app.services.zoning_layer import zoning_features, zoning_pending
 from nkz_platform_sdk import OrionClient
 
 router = APIRouter(prefix="/api/vegetation/entities", tags=["entities"])
@@ -233,6 +233,7 @@ async def get_entity_data_status(
         "active_crop_seasons": active_crop_seasons,
         "active_jobs_count": active_jobs_count,
         "recent_cloud_skips": recent_cloud_skips,
+        "zoning_pending": zoning_pending(db, tenant_id, entity_id),
     }
 
 

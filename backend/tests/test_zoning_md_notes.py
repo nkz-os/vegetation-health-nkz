@@ -52,3 +52,14 @@ def test_with_causes_sets_the_attribute_only_on_matched_zones():
     assert out[1]["technicianCause"] == {"type": "Property", "value": "waterlogging"}
     assert "technicianCause" not in out[0]
     assert "technicianCause" not in zones[1]  # inputs untouched
+
+
+def test_notes_on_zone_picks_overlapping_notes():
+    from app.jobs.zoning_multidate.notes import assign_notes, notes_on_zone
+    old = _note(_shifted(WEST, -0.0002), "old run cause", 0)  # written on an older, shifted zone
+    new = _note(WEST, "current cause", 1)
+    east = _note(EAST, "stones", 2)
+    zones = [_zone("z:L1", WEST), _zone("z:L3", EAST)]
+    assert notes_on_zone([old, new, east], zones, "z:L1") == [old, new]
+    assert notes_on_zone([old, new, east], zones, "z:L3") == [east]
+    assert assign_notes([old, new, east], zones) == {"z:L1": "current cause", "z:L3": "stones"}
