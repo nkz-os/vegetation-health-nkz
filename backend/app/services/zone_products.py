@@ -1,8 +1,8 @@
 """Per-management-zone statistics and EOProduct ids.
 
-Targets are the weather-map terrain units (``AgriParcelZone``, relation
-``hasAgriParcelZone``) and the current multi-date zoning of the parcel
-(``AgriManagementZone``, relation ``hasAgriManagementZone``). Zone products never
+Targets are the zones of the current multi-date zoning of the parcel
+(``AgriManagementZone``, relation ``hasAgriManagementZone``). Products already
+stored for weather-map terrain units (``hasAgriParcelZone``) stay as history. Zone products never
 carry ``hasAgriParcel``, so every existing parcel-level query keeps returning the
 same entities.
 """
@@ -25,7 +25,6 @@ _ZONE_VERSION_KEYS = ("nkz:zoneVersion", "zoneVersion", "https://nkz-os.org/ns/z
 _ZONE_LEVEL_KEYS = ("zoneLevel", "nkz:zoneLevel", "https://nkz-os.org/ns/zoneLevel")
 _MULTIDATE_METHOD = "vegetationIndexMultiDate"
 CURRENT_ZONE_RELATION = "hasAgriManagementZone"
-TERRAIN_ZONE_RELATION = "hasAgriParcelZone"
 
 
 def _unwrap(attr: Any) -> Any:
@@ -56,45 +55,6 @@ def zone_eo_product_id(tenant: str, parcel_short: str, zone_id: str, sensing_dat
     date_str = sensing_date.strftime("%Y-%m-%d") if hasattr(sensing_date, "strftime") else str(sensing_date)[:10]
     mid = "GRD:" if grd else ""
     return f"urn:ngsi-ld:EOProduct:{tenant}:zone:{parcel_short}:{zone_id}:{mid}{date_str}"
-
-
-def fetch_management_zones(tenant_id: str, parcel_urn: str) -> List[Dict[str, Any]]:
-    """Management zones of a parcel as ``{zone_id, zone_urn, zone_version, geometry}``.
-
-    Fail-safe: any Orion error returns ``[]`` (zone products are additive).
-    """
-    try:
-        # Sync client: callable from sync Celery tasks and async endpoints alike
-        # (no event loop bridge).
-        entities = SyncOrionClient(tenant_id).query_entities(
-            type="AgriParcelZone",
-            q=f'hasAgriParcel=="{parcel_urn}"|refAgriParcel=="{parcel_urn}"',
-            limit=1000,
-        )
-    except Exception as exc:
-        logger.warning("Zone lookup failed for %s: %s", parcel_urn, exc)
-        return []
-
-    zones: List[Dict[str, Any]] = []
-    for e in entities if isinstance(entities, list) else []:
-        if _first(e, _ZONE_TYPE_KEYS) != "management":
-            continue
-        rel = _unwrap(e.get("hasAgriParcel")) or _unwrap(e.get("refAgriParcel"))
-        if rel != parcel_urn:
-            continue
-        geometry = _unwrap(e.get("location"))
-        if not isinstance(geometry, dict) or "coordinates" not in geometry:
-            logger.warning("Zone %s has no usable geometry, skipped", e.get("id"))
-            continue
-        zone_id = _first(e, _ZONE_ID_KEYS) or str(e.get("id", "")).split(":")[-1]
-        zones.append({
-            "zone_id": str(zone_id),
-            "zone_urn": e["id"],
-            "zone_version": _first(e, _ZONE_VERSION_KEYS),
-            "geometry": geometry,
-            "relation": TERRAIN_ZONE_RELATION,
-        })
-    return zones
 
 
 def fetch_current_zones(tenant_id: str, parcel_urn: str) -> List[Dict[str, Any]]:
@@ -150,8 +110,8 @@ def fetch_current_zones(tenant_id: str, parcel_urn: str) -> List[Dict[str, Any]]
 
 
 def fetch_zone_targets(tenant_id: str, parcel_urn: str) -> List[Dict[str, Any]]:
-    """Terrain units plus the current zoning's zones: every zone that gets products."""
-    return fetch_management_zones(tenant_id, parcel_urn) + fetch_current_zones(tenant_id, parcel_urn)
+    """Zones that get products: only the parcel's current zoning (terrain units no longer)."""
+    return fetch_current_zones(tenant_id, parcel_urn)
 
 
 def zone_mask(geometry: dict, transform, shape, crs=None) -> np.ndarray:
