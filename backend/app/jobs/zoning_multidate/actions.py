@@ -127,6 +127,18 @@ def accept(db, fiware, tenant_id: str, parcel_id: str, run_id: str, user_id: str
         raise ZoningNotFound(run_id)
 
 
+def discard(db, tenant_id: str, parcel_id: str, run_id: str):
+    """Set the pending proposal aside; the current zoning and the broker are untouched."""
+    with versions.parcel_lock(db, tenant_id, parcel_id):
+        pend = versions.pending(db, tenant_id, parcel_id)
+        if pend is not None and pend.run_id == run_id:
+            versions.discard_pending(db, tenant_id, parcel_id, "discarded_by_user")
+            return pend
+        if versions.by_run(db, tenant_id, parcel_id, run_id) is not None:
+            raise ZoningConflict("only the pending proposal can be discarded")
+        raise ZoningNotFound(run_id)
+
+
 def _run_of_zone(fiware, parcel_id: str, zone_id: str) -> str | None:
     response = fiware.session.get(
         f"{fiware.context_broker_url}/ngsi-ld/v1/entities/{quote(zone_id, safe='')}",

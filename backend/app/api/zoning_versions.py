@@ -66,6 +66,16 @@ def accept_zoning(parcel_id: str, body: AcceptRequest,
     return actions.summary(version)
 
 
+@router.post("/{parcel_id}/discard")
+def discard_proposal(parcel_id: str, body: AcceptRequest,
+                     current_user: dict = Depends(require_auth),
+                     db: Session = Depends(get_db_with_tenant)):
+    require_editor(current_user)
+    from app.jobs.zoning_multidate import actions
+    version = _run(lambda: actions.discard(db, current_user["tenant_id"], parcel_id, body.run_id))
+    return actions.summary(version)
+
+
 class NoteRequest(BaseModel):
     # Free text written by the technician: user data, stored as given (trimmed).
     cause: str = Field(min_length=1, max_length=500)
