@@ -474,6 +474,8 @@ def test_client_delete_attr():
     c = _client()
     c.session.delete.return_value = _Resp(204)
     assert c.delete_attr(f"{PREFIX}0", "technicianCause") is True
+    # No body: application/json + the session Link, like the other attribute calls.
+    assert c.session.delete.call_args.kwargs["headers"]["Content-Type"] == "application/json"
     assert c.session.delete.call_args.args[0].endswith(
         "/ngsi-ld/v1/entities/urn%3Angsi-ld%3AAgriManagementZone%3Ap1%3AZ0/attrs/technicianCause")
     c.session.delete.return_value = _Resp(404)  # already absent

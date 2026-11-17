@@ -71,3 +71,11 @@ def test_layer_flags_the_pending(api):  # noqa: F811
     assert layer.status_code == 200 and layer.json()["has_pending"] is True
     client.post(f"{URL}/discard", json={"run_id": B})
     assert client.get(f"/api/vegetation/jobs/zoning/{PARCEL}/geojson").json()["has_pending"] is False
+
+
+def test_single_date_as_scalar(api):  # noqa: F811
+    client, broker, dbf = api
+    one = zone(B, 1, "high", WEST)
+    one["sourceDates"] = {"type": "Property", "value": "2026-06-01"}  # a one-item list compacted by the broker
+    _seed(dbf, current=A, accepted=True, pendings=[(B, [one], None)])
+    assert client.get(f"{URL}/pending").json()["pending"]["source_dates"] == ["2026-06-01"]

@@ -82,3 +82,39 @@ def test_farmer_cannot_remove_cause(api):  # noqa: F811
     as_roles(["Farmer"])
     assert client.delete(_note_url(high)).status_code == 403
     assert _causes(dbf) == ["waterlogging"]
+
+
+def test_remove_cause_kept_by_broker_is_502(api):  # noqa: F811
+    client, broker, dbf = api
+    broker.store.update({e["id"]: e for e in run(A)})
+    _seed(dbf, current=A, accepted=True)
+    high = run(A)[0]["id"]
+    assert client.post(_note_url(high), json={"cause": "waterlogging"}).status_code == 201
+    broker.ignore_delete_attr = True
+    assert client.delete(_note_url(high)).status_code == 502
+    assert _causes(dbf) == ["waterlogging"]
+
+
+def test_removed_cause_not_back_on_accepted_proposal(api):  # noqa: F811
+    from tests.test_zoning_api_accept import B
+    client, broker, dbf = api
+    broker.store.update({e["id"]: e for e in run(A)})
+    _seed(dbf, current=A, accepted=True, pendings=[(B, run(B), None)])
+    high = run(A)[0]["id"]
+    assert client.post(_note_url(high), json={"cause": "waterlogging"}).status_code == 201
+    assert client.delete(_note_url(high)).status_code == 200
+    assert client.post(f"{URL}/accept", json={"run_id": B}).status_code == 200
+    assert all("technicianCause" not in e for e in broker.store.values())
+
+
+def test_remove_cause_is_logged(api, caplog):  # noqa: F811
+    import logging
+    client, broker, dbf = api
+    broker.store.update({e["id"]: e for e in run(A)})
+    _seed(dbf, current=A, accepted=True)
+    high = run(A)[0]["id"]
+    assert client.post(_note_url(high), json={"cause": "waterlogging"}).status_code == 201
+    with caplog.at_level(logging.INFO):
+        assert client.delete(_note_url(high)).status_code == 200
+    msg = " ".join(r.getMessage() for r in caplog.records)
+    assert "cause removed" in msg and TENANT in msg and high in msg and "u-1" in msg and "notes_deleted=1" in msg

@@ -35,6 +35,7 @@ class FakeBroker:
         self.refuse_create = False
         self.refuse_append = False
         self.refuse_delete_attr = False
+        self.ignore_delete_attr = False  # answers 204 but keeps the attribute (e.g. another expanded name)
         self.created, self.deleted, self.appended = [], [], []
 
     # --- session.get
@@ -74,7 +75,8 @@ class FakeBroker:
     def delete_attr(self, entity_id, attr):
         if self.refuse_delete_attr:
             return False
-        self.store.get(entity_id, {}).pop(attr, None)
+        if not self.ignore_delete_attr:
+            self.store.get(entity_id, {}).pop(attr, None)
         return True
 
     def run_ids(self):

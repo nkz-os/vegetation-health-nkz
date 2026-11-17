@@ -72,7 +72,8 @@ def discard_proposal(parcel_id: str, body: AcceptRequest,
                      db: Session = Depends(get_db_with_tenant)):
     require_editor(current_user)
     from app.jobs.zoning_multidate import actions
-    version = _run(lambda: actions.discard(db, current_user["tenant_id"], parcel_id, body.run_id))
+    version = _run(lambda: actions.discard(db, current_user["tenant_id"], parcel_id, body.run_id,
+                                           current_user["user_id"]))
     return actions.summary(version)
 
 
@@ -104,7 +105,8 @@ def remove_zone_note(parcel_id: str, zone_id: str,
     require_editor(current_user)
     from app.jobs.zoning_multidate import actions
     tenant = current_user["tenant_id"]
-    return _run(lambda: actions.remove_note(db, broker_for(tenant), tenant, parcel_id, zone_id))
+    return _run(lambda: actions.remove_note(db, broker_for(tenant), tenant, parcel_id, zone_id,
+                                            current_user["user_id"]))
 
 
 class MergeRequest(BaseModel):

@@ -40,3 +40,14 @@ def test_farmer_cannot_discard(api):  # noqa: F811
     as_roles(["Farmer"])
     assert _discard(client, B).status_code == 403
     assert _rows(dbf)[B].status == "pending"
+
+
+def test_discard_is_logged(api, caplog):  # noqa: F811
+    import logging
+    from tests.zoning_fakes import TENANT
+    client, broker, dbf = api
+    _seed(dbf, current=A, accepted=True, pendings=[(B, run(B), None)])
+    with caplog.at_level(logging.INFO):
+        assert _discard(client, B).status_code == 200
+    msg = " ".join(r.getMessage() for r in caplog.records)
+    assert "proposal discarded" in msg and TENANT in msg and B in msg and "u-1" in msg

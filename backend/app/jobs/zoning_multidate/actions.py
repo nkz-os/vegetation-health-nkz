@@ -7,6 +7,7 @@ block rolls back) and the previous current zoning in force.
 from __future__ import annotations
 
 import copy
+import logging
 from datetime import datetime
 from typing import Any
 from urllib.parse import quote
@@ -19,6 +20,9 @@ from app.jobs.zoning_multidate.publish import METHOD, ZONE_TYPE, publish, retire
 
 _NKZ = "https://nkz-os.org/ns/"
 _RANKS = (1, 2, 3, 4)
+
+
+logger = logging.getLogger(__name__)
 
 
 def _stamp(at: datetime) -> dict:
@@ -127,12 +131,14 @@ def accept(db, fiware, tenant_id: str, parcel_id: str, run_id: str, user_id: str
         raise ZoningNotFound(run_id)
 
 
-def discard(db, tenant_id: str, parcel_id: str, run_id: str):
+def discard(db, tenant_id: str, parcel_id: str, run_id: str, user_id: str):
     """Set the pending proposal aside; the current zoning and the broker are untouched."""
     with versions.parcel_lock(db, tenant_id, parcel_id):
         pend = versions.pending(db, tenant_id, parcel_id)
         if pend is not None and pend.run_id == run_id:
             versions.discard_pending(db, tenant_id, parcel_id, "discarded_by_user")
+            logger.info("zoning proposal discarded tenant=%s parcel=%s run=%s user=%s",
+                        tenant_id, parcel_id, run_id, user_id)
             return pend
         if versions.by_run(db, tenant_id, parcel_id, run_id) is not None:
             raise ZoningConflict("only the pending proposal can be discarded")
@@ -180,7 +186,23 @@ def note(db, fiware, tenant_id: str, parcel_id: str, zone_id: str, cause: str, u
     return {"zone_id": zone_id, "run_id": cur.run_id, "cause": cause}
 
 
-def remove_note(db, fiware, tenant_id: str, parcel_id: str, zone_id: str):
+def _broker_cause(fiware, zone_id: str):
+    """The cause the broker holds on a zone, whatever name form it comes back under."""
+    response = fiware.session.get(
+        f"{fiware.context_broker_url}/ngsi-ld/v1/entities/{quote(zone_id, safe='')}",
+        headers={"Accept": "application/json", "Content-Type": None},
+        timeout=10,
+    )
+    if response.status_code == 404:
+        return None
+    try:
+        response.raise_for_status()
+    except Exception as exc:
+        raise BrokerUnavailable(str(exc)) from exc
+    return _value(_normalise(response.json()), "technicianCause")
+
+
+def remove_note(db, fiware, tenant_id: str, parcel_id: str, zone_id: str, user_id: str):
     """Remove the cause of a zone of the current zoning, and every note that would bring it back."""
     with versions.parcel_lock(db, tenant_id, parcel_id):
         cur = versions.current(db, tenant_id, parcel_id)
@@ -195,10 +217,14 @@ def remove_note(db, fiware, tenant_id: str, parcel_id: str, zone_id: str):
             removed = fiware.delete_attr(zone_id, "technicianCause")
         except Exception as exc:
             raise BrokerUnavailable(str(exc)) from exc
-        if not removed:
+        # A 404 can also mean another expanded name: only a re-read proves the cause is gone.
+        if not removed or _broker_cause(fiware, zone_id) is not None:
             raise BrokerUnavailable(f"broker kept technicianCause on {zone_id}")
-        for stale in notes_on_zone(versions.notes_of(db, tenant_id, parcel_id), cur.entities, zone_id):
-            db.delete(stale)
+        stale = notes_on_zone(versions.notes_of(db, tenant_id, parcel_id), cur.entities, zone_id)
+        for note_row in stale:
+            db.delete(note_row)
+        logger.info("zoning cause removed tenant=%s parcel=%s zone=%s user=%s notes_deleted=%d",
+                    tenant_id, parcel_id, zone_id, user_id, len(stale))
         cur.entities = [{k: v for k, v in copy.deepcopy(e).items() if k != "technicianCause"}
                         if e.get("id") == zone_id else copy.deepcopy(e) for e in cur.entities]
         db.flush()
@@ -257,7 +283,8 @@ def summary(version) -> dict:
 def _source_dates(entities) -> list[str]:
     dates: set[str] = set()
     for entity in entities or []:
-        dates.update(_value(entity, "sourceDates") or [])
+        value = _value(entity, "sourceDates") or []
+        dates.update([value] if isinstance(value, str) else value)  # one-item lists may come compacted
     return sorted(dates)
 
 

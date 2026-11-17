@@ -648,7 +648,8 @@ class FIWAREClient:
     def delete_attr(self, entity_id: str, attr: str) -> bool:
         """Remove one attribute; True when it is gone (204, or 404 when it was already absent)."""
         url = f"{self.context_broker_url}/ngsi-ld/v1/entities/{quote(entity_id, safe='')}/attrs/{attr}"
-        response = self.session.delete(url, timeout=10)
+        # No body: application/json + the session Link header, like the other attribute calls.
+        response = self.session.delete(url, headers={"Content-Type": "application/json"}, timeout=10)
         if response.status_code in (204, 404):
             return True
         response.raise_for_status()
