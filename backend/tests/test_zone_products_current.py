@@ -141,6 +141,25 @@ def test_parcel_series_skips_management_zone_products():
     assert [p["mean"] for p in pts] == [0.7]
 
 
+def test_parcel_series_skips_terrain_zone_products_all_forms():
+    from app.api import timeseries_adapter as ts
+
+    when = datetime(2026, 6, 1, tzinfo=timezone.utc)
+    rel = {"type": "Relationship", "object": "urn:z"}
+    rows = [{"observed_at": when, "payload": {"ndvi": {"value": 0.7}}}] + [
+        {"observed_at": when, "payload": {"ndvi": {"value": 0.2}, key: rel}}
+        for key in ("hasAgriParcelZone", "nkz:hasAgriParcelZone",
+                    "https://nkz-os.org/ns/hasAgriParcelZone")
+    ]
+    cur = MagicMock(); cur.fetchall.return_value = rows
+    conn = MagicMock(); conn.cursor.return_value = cur
+    with patch("psycopg2.connect", return_value=conn):
+        pts = asyncio.run(ts._history_from_telemetry_events(
+            "acme", "urn:ngsi-ld:AgriParcel:acme:p1", "NDVI",
+            datetime(2026, 1, 1, tzinfo=timezone.utc), datetime(2027, 1, 1, tzinfo=timezone.utc)))
+    assert [p["mean"] for p in pts] == [0.7]
+
+
 class _GridProc(VegetationIndexProcessor):
     """Real create_geometry_mask / calculate_statistics on a synthetic 1-degree grid."""
 

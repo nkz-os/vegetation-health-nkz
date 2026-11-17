@@ -35,6 +35,8 @@ ARROW_MIME = "application/vnd.apache.arrow.stream"
 
 _ZONE_RELATION_KEYS = (
     "hasAgriParcelZone",
+    "nkz:hasAgriParcelZone",
+    "https://nkz-os.org/ns/hasAgriParcelZone",
     "hasAgriManagementZone",
     "nkz:hasAgriManagementZone",
     "https://nkz-os.org/ns/hasAgriManagementZone",
