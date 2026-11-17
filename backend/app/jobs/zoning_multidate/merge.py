@@ -21,6 +21,11 @@ from app.jobs.zoning_multidate.notes import _utm_epsg
 from app.jobs.zoning_multidate.publish import ZONE_TYPE, _round_coords
 
 
+# Levels from most to least vigorous; only neighbours may be merged (owner, 2026-11-17):
+# joining distant levels would label, say, a waterlogged low area as high.
+LEVEL_ORDER = ("high", "medium", "low", "critical")
+
+
 def _p(value):
     return {"type": "Property", "value": value}
 
@@ -45,6 +50,9 @@ def merge_levels(entities: list[dict], ranks: tuple[int, int], target_rank: int,
     by_rank = {_v(e, "zoneRank"): e for e in entities}
     if a not in by_rank or b not in by_rank:
         raise ValueError("both levels must exist in the zoning")
+    la, lb = _v(by_rank[a], "zoneLevel"), _v(by_rank[b], "zoneLevel")
+    if la not in LEVEL_ORDER or lb not in LEVEL_ORDER or abs(LEVEL_ORDER.index(la) - LEVEL_ORDER.index(lb)) != 1:
+        raise ValueError("only neighbouring levels can be merged")
     dropped_rank = b if target_rank == a else a
     target, other = by_rank[target_rank], by_rank[dropped_rank]
 

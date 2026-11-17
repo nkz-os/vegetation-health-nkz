@@ -38,12 +38,13 @@ def as_roles(roles):
     app.dependency_overrides[require_auth] = lambda: {"tenant_id": TENANT, "user_id": "u-1", "roles": roles}
 
 
-def _seed(db_factory, *, current=None, accepted=False, pendings=()):
+def _seed(db_factory, *, current=None, accepted=False, pendings=(), current_entities=None):
     from app.jobs.zoning_multidate import versions as v
     db = db_factory()
     with v.parcel_lock(db, TENANT, PARCEL):
         if current:
-            v.record_current(db, TENANT, PARCEL, current, run(current), source="proposal", index_type="NDVI",
+            entities = current_entities if current_entities is not None else run(current)
+            v.record_current(db, TENANT, PARCEL, current, entities, source="proposal", index_type="NDVI",
                              accepted_at=ACCEPTED if accepted else None, accepted_by="u0" if accepted else None)
         for run_id, entities, reason in pendings:
             v.record_pending(db, TENANT, PARCEL, run_id, entities, index_type="NDVI",

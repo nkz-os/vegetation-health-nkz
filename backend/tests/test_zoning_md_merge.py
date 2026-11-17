@@ -87,3 +87,12 @@ def test_merge_keeps_area_sum():
     before = sum(e["areaHa"]["value"] for e in src)
     after = sum(e["areaHa"]["value"] for e in out)
     assert after == pytest.approx(before, abs=0.02)
+
+
+def test_merge_only_neighbour_levels():
+    """High and low are not neighbours: merging them would label a waterlogged low area as high."""
+    from app.jobs.zoning_multidate.merge import merge_levels
+    with pytest.raises(ValueError):
+        merge_levels(_zones(), (1, 3), 1, NEW, OLD, NOW)
+    with pytest.raises(ValueError):
+        merge_levels(_zones(), (3, 1), 3, NEW, OLD, NOW)

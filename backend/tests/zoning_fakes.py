@@ -112,6 +112,11 @@ def zone(run_id, rank, level, geom, *, area=1.0, rel=100, mean=0.6, confirming=5
     }
 
 
+def run_neighbours(run_id):
+    """Two neighbouring levels: high on the west half, medium on the east half."""
+    return [zone(run_id, 1, "high", WEST, rel=112, mean=0.7), zone(run_id, 2, "medium", EAST, rel=96, mean=0.55)]
+
+
 def run(run_id):
     """Two zones: high on the west half, low on the east half."""
     return [zone(run_id, 1, "high", WEST, rel=112, mean=0.7), zone(run_id, 3, "low", EAST, rel=88, mean=0.5)]
