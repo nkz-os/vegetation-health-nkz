@@ -183,7 +183,32 @@
       "homogeneous": "No zones: the parcel is homogeneous; vigour varies too little between areas.",
       "single_level": "No zones: the whole parcel falls in a single level."
     },
-    "noZones": "No zones generated"
+    "noZones": "No zones generated",
+    "edit": {
+      "changed": "The zoning has changed; open the zone again.",
+      "forbidden": "You are not allowed to edit the zoning.",
+      "failed": "The change could not be saved. Try again.",
+      "acceptedOn": "Accepted on {{date}}",
+      "accepted": "Accepted",
+      "notAccepted": "Proposed by the platform, not accepted",
+      "cause": "Cause",
+      "accept": "Accept zoning",
+      "editCause": "Edit cause",
+      "addCause": "Note cause",
+      "removeCause": "Remove cause",
+      "mergeWith": "Merge with…",
+      "causePlaceholder": "E.g. waterlogging in spring",
+      "save": "Save",
+      "cancel": "Cancel",
+      "mergeOther": "Level to merge with",
+      "mergeResult": "Resulting level",
+      "continue": "Continue",
+      "mergeConfirm": "A new zoning is created. FaST doses and GIS-routing prescriptions made on the current one stop applying.",
+      "merge": "Merge"
+    },
+    "pending": {
+      "badge": "New proposal"
+    }
   },
   "setup": {
     "configureMonitoring": "Configure Monitoring: {{name}}",
