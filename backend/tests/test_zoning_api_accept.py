@@ -15,12 +15,14 @@ def api(zoning_db, monkeypatch):
     from fastapi.testclient import TestClient
 
     from app.api import zoning_versions
+    from app.jobs.zoning_multidate import actions
     from app.database import get_db_with_tenant
     from app.main import app
     from app.middleware.auth import require_auth
 
     broker = FakeBroker()
     monkeypatch.setattr(zoning_versions, "broker_for", lambda tenant_id: broker)
+    monkeypatch.setattr(actions, "_enqueue_backfill", lambda tenant_id, parcel_id: None)  # no Celery broker here
 
     def _db():
         yield zoning_db()

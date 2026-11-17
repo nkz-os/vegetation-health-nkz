@@ -85,13 +85,33 @@ def _backfill(db, fiware, tenant_id: str, parcel_id: str, run_id: str):
                                    index_type=_value(entities[0], "variableAttribute"))
 
 
+def _enqueue_backfill(tenant_id: str, parcel_id: str) -> None:
+    """Ask for the zone products of the new current zoning; the zoning change never depends on it."""
+    try:
+        from app.tasks.processing_tasks import backfill_current_zone_products_task
+        backfill_current_zone_products_task.delay(tenant_id, parcel_id)
+    except Exception:
+        logger.exception("zone backfill not queued tenant=%s parcel=%s", tenant_id, parcel_id)
+
+
 def _append(fiware, entity_id: str, attrs: dict) -> None:
     if not fiware.append_attrs(entity_id, attrs):
         raise BrokerUnavailable(f"broker refused attributes on {entity_id}")
 
 
 def accept(db, fiware, tenant_id: str, parcel_id: str, run_id: str, user_id: str, now: datetime):
-    """Accept the current zoning (same ids) or publish the pending proposal as the accepted current one."""
+    """Accept the current zoning (same ids) or publish the pending proposal as the accepted current one.
+
+    The zone products are filled only when the current run changes.
+    """
+    version, changed = _accept(db, fiware, tenant_id, parcel_id, run_id, user_id, now)
+    if changed:
+        _enqueue_backfill(tenant_id, parcel_id)
+    return version
+
+
+def _accept(db, fiware, tenant_id: str, parcel_id: str, run_id: str, user_id: str, now: datetime):
+    """``(version, changed)``: ``changed`` is True when a pending proposal became the current zoning."""
     with versions.parcel_lock(db, tenant_id, parcel_id):
         cur = versions.current(db, tenant_id, parcel_id)
         if cur is None and versions.by_run(db, tenant_id, parcel_id, run_id) is None:
@@ -105,7 +125,7 @@ def accept(db, fiware, tenant_id: str, parcel_id: str, run_id: str, user_id: str
                 cur.entities = [{**copy.deepcopy(e), "acceptedAt": stamp} for e in cur.entities]
                 versions.mark_accepted(db, cur, user_id, now)
             retire_quietly(fiware, parcel_id, keep_run_id=cur.run_id)  # leftovers of a failed retire
-            return cur
+            return cur, False
 
         pend = versions.pending(db, tenant_id, parcel_id)
         if pend is not None and pend.run_id == run_id:
@@ -124,7 +144,7 @@ def accept(db, fiware, tenant_id: str, parcel_id: str, run_id: str, user_id: str
             retire_quietly(fiware, parcel_id, keep_run_id=run_id)
             pend.entities = entities
             versions.promote_pending(db, pend, accepted_by=user_id, accepted_at=now)
-            return pend
+            return pend, True
 
         if versions.by_run(db, tenant_id, parcel_id, run_id) is not None:
             raise ZoningConflict("this zoning is no longer the current one nor the pending proposal")
@@ -257,6 +277,7 @@ def merge(db, fiware, tenant_id: str, parcel_id: str, run_id: str, ranks: tuple[
         version = versions.record_current(db, tenant_id, parcel_id, new_run_id, entities, source="merge",
                                           derived_from=run_id, index_type=cur.index_type,
                                           accepted_at=now, accepted_by=user_id)
+    _enqueue_backfill(tenant_id, parcel_id)
     return version
 
 

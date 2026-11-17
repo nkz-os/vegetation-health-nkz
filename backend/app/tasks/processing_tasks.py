@@ -751,3 +751,15 @@ def process_index_job(self, job_id: str):
 
     finally:
         db.close()
+
+
+@celery_app.task(name="vegetation.backfill_current_zone_products", max_retries=0, soft_time_limit=600)
+def backfill_current_zone_products_task(tenant_id: str, parcel_urn: str) -> int:
+    """Publish the NDVI zone products of the parcel's current zoning for its latest dates."""
+    from app.services.zone_backfill import backfill_current_zone_products
+
+    db = next(get_db_session())
+    try:
+        return backfill_current_zone_products(db, tenant_id, parcel_urn)
+    finally:
+        db.close()
