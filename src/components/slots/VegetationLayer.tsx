@@ -99,7 +99,9 @@ export const VegetationLayer: React.FC = () => {
 
         const idx =
           selectedIndex && data.indices![selectedIndex] ? selectedIndex : keys[0];
-        if (!selectedIndex || !data.indices![selectedIndex]) {
+        // Zones are not a per-date raster, so they never appear in the results:
+        // keep them selected across dates (data-status drops them if absent).
+        if (selectedIndex !== 'VRA_ZONES' && (!selectedIndex || !data.indices![selectedIndex])) {
           setSelectedIndex(idx);
         }
         setActiveJobId(data.indices![idx].job_id);

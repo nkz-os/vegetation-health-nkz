@@ -312,6 +312,12 @@ export const VegetationProvider: React.FC<{ children: ReactNode }> = ({ children
           entityName: status.name || null,
         });
 
+        // Zones selected on another parcel: fall back if this one has none.
+        if (getStoreSnapshot().selectedIndex === 'VRA_ZONES'
+            && !status.available_indices.includes('VRA_ZONES')) {
+          updateStore({ selectedIndex: status.available_indices[0] ?? null });
+        }
+
         // Auto-select defaults if data exists and nothing is selected yet
         if (status.has_any_data) {
           const snapshot = getStoreSnapshot();
