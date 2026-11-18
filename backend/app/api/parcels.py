@@ -6,17 +6,25 @@ quota fetches with a single per-parcel overview that the new UI consumes in
 one call. Also owns the hard-delete cascade for jobs.
 """
 
+import asyncio
 import logging
 import os
+import re
 import uuid as uuid_mod
+from datetime import date
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy import desc, func, or_
 from sqlalchemy.orm import Session
 
-from app.api.scenes import _dispatch_analyze_for_parcel, _resolve_custom_formula_specs
+from app.api.scenes import (
+    _TREE_KEYWORDS,
+    _dispatch_analyze_for_parcel,
+    _get_crop_species_from_orion,
+    _resolve_custom_formula_specs,
+)
 from app.celery_app import celery_app
 from app.database import get_db_with_tenant
 from app.middleware.auth import require_auth
@@ -26,6 +34,7 @@ from app.models import (
     VegetationJob,
     VegetationScene,
 )
+from app.services.observation_series import SUPPORTED_INDICES, BrokerUnavailable, observation_series
 from app.services.storage import create_storage_service, generate_tenant_bucket_name
 from nkz_platform_sdk import SyncOrionClient
 
@@ -145,6 +154,37 @@ async def default_indices_for_parcel(tenant_id: str, entity_id: str) -> List[str
 
 
 # ── Endpoint ────────────────────────────────────────────────────────────
+
+
+def parcel_urn_of(entity_id: str) -> str:
+    return entity_id if entity_id.startswith("urn:ngsi-ld:AgriParcel:") else f"urn:ngsi-ld:AgriParcel:{entity_id}"
+
+
+async def observations_response(tenant_id: str, entity_id: str, index: str,
+                                start: Optional[date], end: Optional[date]) -> Dict[str, Any]:
+    """Series for one parcel and index, shared by the user and the internal route."""
+    if index.upper() not in SUPPORTED_INDICES:
+        raise HTTPException(status_code=400, detail=f"Unsupported index; use one of {', '.join(SUPPORTED_INDICES)}")
+    parcel_urn = parcel_urn_of(entity_id)
+    species = await _get_crop_species_from_orion(tenant_id, parcel_urn)
+    woody = bool(species and set(re.findall(r"[^\W\d_]+", species.lower())) & _TREE_KEYWORDS)
+    try:
+        return await asyncio.to_thread(observation_series, tenant_id, parcel_urn, index.upper(), start, end,
+                                       woody=woody)
+    except BrokerUnavailable:
+        raise HTTPException(status_code=502, detail="Context broker unavailable; observations could not be read")
+
+
+@router.get("/{entity_id}/observations")
+async def parcel_observations(
+    entity_id: str,
+    index: str = Query("NDVI"),
+    start: Optional[date] = Query(None),
+    end: Optional[date] = Query(None),
+    current_user: dict = Depends(require_auth),
+):
+    """Observation series (interior measure and quality per date) for the caller's tenant."""
+    return await observations_response(current_user["tenant_id"], entity_id, index, start, end)
 
 
 @router.get("/{entity_id}/overview")
