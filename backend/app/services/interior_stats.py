@@ -7,7 +7,7 @@ edge pixels that mix crop with tracks or the neighbouring field.
 from typing import Optional, Tuple
 
 import numpy as np
-from pyproj import Transformer
+from pyproj import CRS, Transformer
 from rasterio.features import rasterize
 from shapely.geometry import shape as shp
 from shapely.ops import transform
@@ -34,6 +34,23 @@ def _projected_parcel(band_meta: dict, parcel_geojson: dict):
         transformer = Transformer.from_crs('EPSG:4326', raster_crs, always_xy=True)
         geom = transform(transformer.transform, geom)
     return geom
+
+
+def _shrink_metres(geom, raster_crs, metres: float):
+    """``geom`` (in the raster CRS) shrunk by ``metres``.
+
+    Saved index rasters are geographic (EPSG:4326): buffering there would use
+    degrees, so the shrink is done in the local UTM zone and projected back.
+    """
+    crs = CRS.from_user_input(raster_crs) if raster_crs else CRS.from_epsg(4326)
+    if crs.is_projected:
+        return geom.buffer(-metres)
+    centroid = transform(Transformer.from_crs(crs, 'EPSG:4326', always_xy=True).transform, geom).centroid
+    zone = int((centroid.x + 180.0) // 6.0) + 1
+    utm = CRS.from_epsg((32600 if centroid.y >= 0 else 32700) + zone)
+    to_utm = Transformer.from_crs(crs, utm, always_xy=True)
+    back = Transformer.from_crs(utm, crs, always_xy=True)
+    return transform(back.transform, transform(to_utm.transform, geom).buffer(-metres))
 
 
 def _inside(band_meta: dict, geom, shape: Tuple[int, int]) -> np.ndarray:
@@ -64,7 +81,7 @@ def interior_mask(band_meta: dict, parcel_geojson: dict,
     fewer than ``MIN_CORE_PIXELS`` pixels on the index grid.
     """
     geom = _projected_parcel(band_meta, parcel_geojson)
-    core = _inside(band_meta, geom.buffer(-CORE_BUFFER_M), shape)
+    core = _inside(band_meta, _shrink_metres(geom, band_meta.get('crs'), CORE_BUFFER_M), shape)
     if int(core.sum()) >= MIN_CORE_PIXELS:
         return core, "core"
     return _inside(band_meta, geom, shape), "parcel"

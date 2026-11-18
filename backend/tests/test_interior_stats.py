@@ -89,3 +89,19 @@ def test_cloud_fraction_classes():
     assert ist.cloud_fraction(scl, inside) == 4 / 5
     assert ist.cloud_fraction(None, inside) is None
     assert ist.cloud_fraction(scl, np.zeros((2, 5), dtype=bool)) is None
+
+
+def test_core_on_geographic_grid_shrinks_in_metres():
+    # Saved index rasters are in EPSG:4326: the 10 m shrink must be metric, not 10 degrees.
+    res = 0.0001  # ~8-11 m at 42.6 N
+    lon0, lat0 = -2.0, 42.6
+    meta = {"crs": "EPSG:4326", "transform": from_origin(lon0, lat0, res, res), "width": 40, "height": 40}
+    parcel = {"type": "Polygon", "coordinates": [[
+        [lon0 + 5 * res, lat0 - 5 * res], [lon0 + 35 * res, lat0 - 5 * res],
+        [lon0 + 35 * res, lat0 - 35 * res], [lon0 + 5 * res, lat0 - 35 * res],
+        [lon0 + 5 * res, lat0 - 5 * res]]]}
+    inside, name = ist.interior_mask(meta, parcel, (40, 40))
+    full = ist.parcel_mask(meta, parcel, (40, 40))
+    assert name == "core"
+    assert 20 <= int(inside.sum()) < int(full.sum())
+    assert not inside[5, 5:35].any()  # the parcel's first row is border
