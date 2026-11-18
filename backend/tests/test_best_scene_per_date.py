@@ -168,3 +168,30 @@ def test_reader_failure_fails_open():
     upsert.assert_called_once()
     zones.assert_called_once()
     assert job.mark_completed.call_args.args[0]["published"] is True
+
+
+def test_losing_scene_result_hides_its_raster():
+    job, *_ = _run(existing=(0.9, URL_A), valid_fraction=0.5)
+    result = job.mark_completed.call_args.args[0]
+    assert result["raster_path"] is None
+    assert result["superseded_raster_path"] == f"{TENANT}/entities/{PARCEL}/scenes/{uuid.UUID(int=0x22222222222222222222222222222222)}/NDVI.tif"
+    assert "raster_pending" not in result
+
+
+def test_date_readers_pick_the_winner_over_a_newer_loser():
+    from types import SimpleNamespace
+    from datetime import datetime
+    from app.jobs.zoning_multidate.dates import raster_rows_from_jobs, select_dates
+    from app.services.zone_backfill import _latest_ready_rows
+
+    job, *_ = _run(existing=(0.9, URL_A), valid_fraction=0.5)
+    loser = job.mark_completed.call_args.args[0]
+    winner = {"index_type": "NDVI", "sensing_date": DAY.isoformat(), "is_composite": False,
+              "raster_path": "winner/NDVI.tif"}
+    jobs = [
+        SimpleNamespace(id="w", result=winner, created_at=datetime(2026, 6, 22, 10)),
+        SimpleNamespace(id="l", result=loser, created_at=datetime(2026, 6, 23, 10)),
+    ]
+    rows = raster_rows_from_jobs(jobs)
+    assert [r.job_id for r in select_dates(rows, today=date(2026, 7, 1), years_back=1)] == ["w"]
+    assert [r.job_id for r in _latest_ready_rows(rows, 3)] == ["w"]

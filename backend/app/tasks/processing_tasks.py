@@ -830,6 +830,10 @@ def calculate_vegetation_index(
             job_result['skip_reason'] = 'no_valid_pixels'
         elif better_scene_published:
             job_result['skip_reason'] = 'better_scene_same_date'
+            # Readers pick "the job with a raster" per date; the losing scene must not look
+            # like a ready raster for a date whose published product is another scene's.
+            job_result['superseded_raster_path'] = job_result['raster_path']
+            job_result['raster_path'] = None
         if interior is not None:
             job_result['interior'] = interior
         if parcel_cloud_fraction is not None:
