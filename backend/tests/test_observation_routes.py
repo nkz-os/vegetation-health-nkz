@@ -6,7 +6,9 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.api import internal, parcels
+import httpx
+
+from app.api import internal, parcels, scenes
 from app.services.observation_series import BrokerUnavailable
 
 SHORT = "0123456789abcdef"
@@ -34,7 +36,7 @@ def series():
 
 @pytest.fixture
 def species():
-    with patch.object(parcels, "_get_crop_species_from_orion", AsyncMock(return_value=None)) as m:
+    with patch.object(parcels, "_get_crop_species_strict", AsyncMock(return_value=None)) as m:
         yield m
 
 
@@ -66,7 +68,7 @@ def test_short_entity_id_is_completed(client, series, species):
 
 @pytest.mark.parametrize("name,woody", [("Olea europaea", True), ("Triticum aestivum", False), (None, False)])
 def test_woody_comes_from_the_crop_species(client, series, name, woody):
-    with patch.object(parcels, "_get_crop_species_from_orion", AsyncMock(return_value=name)):
+    with patch.object(parcels, "_get_crop_species_strict", AsyncMock(return_value=name)):
         client.get(USER_URL, headers=USER)
     assert series.call_args.kwargs["woody"] is woody
 
@@ -113,3 +115,78 @@ def test_broker_down_502(client, species):
 def test_new_subscription_includes_ndmi():
     assert "NDMI" in internal.SUBSCRIPTION_INDEX_TYPES
     assert internal.SUBSCRIPTION_INDEX_TYPES == ("NDVI", "EVI", "SAVI", "NDRE", "GNDVI", "NDMI")
+
+
+class FakeOrion:
+    """Orion read level: entities by id; an Exception value is raised as the broker failure."""
+
+    def __init__(self, entities):
+        self.entities = entities
+
+    async def get_entity(self, entity_id, options=None):
+        value = self.entities[entity_id]
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+    async def close(self):
+        pass
+
+
+def _orion_with_crop(species):
+    return FakeOrion({
+        URN: {"hasAgriCrop": {"type": "Relationship", "object": "urn:ngsi-ld:AgriCrop:c1"}},
+        "urn:ngsi-ld:AgriCrop:c1": {"cropSpecies": {"type": "Property", "value": species}},
+    })
+
+
+def _real_series(entity_points=None):
+    product = {
+        "id": "urn:ngsi-ld:EOProduct:acme:0123456789:2026-05-01", "type": "EOProduct",
+        "hasAgriParcel": {"type": "Relationship", "object": URN},
+        "sensingDate": {"type": "Property", "value": "2026-05-01"},
+        "ndvi": {"type": "Property", "value": 0.4,
+                 "interiorValidFraction": {"type": "Property", "value": 0.9},
+                 "interiorPixelCount": {"type": "Property", "value": 50},
+                 "interiorMask": {"type": "Property", "value": "core"},
+                 "interiorMedian": {"type": "Property", "value": 0.5}},
+    }
+    return patch("app.services.observation_series.fetch_parcel_products", return_value=[product])
+
+
+@pytest.mark.parametrize("species,basis", [("Olea europaea", "parcel_interior"), ("Triticum aestivum", None)])
+def test_woody_end_to_end_from_the_broker_read(client, species, basis):
+    with patch.object(scenes, "OrionClient", return_value=_orion_with_crop(species)), _real_series():
+        r = client.get(USER_URL, headers=USER)
+    assert r.status_code == 200
+    assert r.json().get("canopy_basis") == basis
+    assert r.json()["points"][0]["quality"] == "ok"
+
+
+def test_parcel_without_crop_is_not_woody(client):
+    orion = FakeOrion({URN: {"id": URN}})
+    with patch.object(scenes, "OrionClient", return_value=orion), _real_series():
+        r = client.get(USER_URL, headers=USER)
+    assert r.status_code == 200 and "canopy_basis" not in r.json()
+
+
+def test_crop_lookup_failure_is_502_not_a_silent_non_woody_series(client):
+    orion = FakeOrion({URN: RuntimeError("connection refused")})
+    with patch.object(scenes, "OrionClient", return_value=orion), _real_series():
+        r = client.get(USER_URL, headers=USER)
+        r2 = client.get(INTERNAL_URL, params={"tenant_id": "acme"}, headers=SECRET)
+    assert r.status_code == 502 and r2.status_code == 502
+
+
+def test_crop_lookup_http_500_is_502(client):
+    response = httpx.Response(500, request=httpx.Request("GET", "http://orion"))
+    orion = FakeOrion({URN: httpx.HTTPStatusError("boom", request=response.request, response=response)})
+    with patch.object(scenes, "OrionClient", return_value=orion), _real_series():
+        assert client.get(USER_URL, headers=USER).status_code == 502
+
+
+def test_non_ascii_secret_header_is_401(client, series, species):
+    r = client.get(INTERNAL_URL, params={"tenant_id": "acme"},
+                   headers={"X-Internal-Service-Secret": "s\u00e9cret".encode("latin-1")})
+    assert r.status_code == 401
+    series.assert_not_called()

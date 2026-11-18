@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 MIN_VALID_FRACTION = 0.7
 PAGE_SIZE = 1000
+MAX_PAGES = 50
 SUPPORTED_INDICES = ("NDVI", "EVI", "SAVI", "OSAVI", "GNDVI", "NDRE", "NDMI")
 
 _PARCEL_RELATIONSHIPS = ("hasAgriParcel", "refAgriParcel")
@@ -30,16 +31,29 @@ class BrokerUnavailable(Exception):
 
 
 def _sensing_date(entity: dict) -> Optional[str]:
+    """ISO date of the acquisition (``sensingDate``, else the id suffix); None when invalid."""
     value = _property_value(_attr_by_name(entity, "sensingDate"))
-    if isinstance(value, str) and _ID_DATE.fullmatch(value[:10]):
-        return value[:10]
-    match = _ID_DATE.search(str(entity.get("id", "")))
-    return match.group(1) if match else None
+    if isinstance(value, str):
+        candidate = value[:10]
+    else:
+        match = _ID_DATE.search(str(entity.get("id", "")))
+        candidate = match.group(1) if match else None
+    try:
+        return date.fromisoformat(candidate).isoformat() if candidate else None
+    except ValueError:
+        logger.warning("EOProduct %s skipped: invalid sensing date %r", entity.get("id"), candidate)
+        return None
 
 
 def _number(prop) -> Optional[float]:
     value = _property_value(prop)
-    return float(value) if value is not None else None
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        logger.warning("non-numeric observation value %r read as null", value)
+        return None
 
 
 def quality_of(point: dict) -> str:
@@ -58,7 +72,7 @@ def point_from_product(entity: dict, index: str) -> Optional[dict]:
     sensing = _sensing_date(entity)
     if not isinstance(attr, dict) or sensing is None:
         return None
-    count = _property_value(_attr_by_name(attr, "interiorPixelCount"))
+    count = _number(_attr_by_name(attr, "interiorPixelCount"))
     point = {
         "date": sensing,
         "median": _number(_attr_by_name(attr, "interiorMedian")),
@@ -102,25 +116,48 @@ def build_series(entities: List[dict], parcel_urn: str, index: str,
     return [best[d] for d in sorted(best)]
 
 
+def _list_page(client: SyncOrionClient, id_pattern: str, offset: int) -> List[dict]:
+    """One page of EOProducts whose id matches ``idPattern``.
+
+    ``SyncOrionClient.query_entities`` cannot pass ``idPattern``, so the request goes
+    through the client's own session with its own headers (NGSILD-Tenant,
+    Fiware-Service and the context Link), never a bare request.
+    """
+    response = client._session.get(
+        client._url("/ngsi-ld/v1/entities"),
+        params={"type": "EOProduct", "idPattern": id_pattern, "limit": PAGE_SIZE, "offset": offset},
+        headers=client._headers("application/json"),
+        timeout=client.timeout,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
 def fetch_parcel_products(tenant_id: str, parcel_urn: str) -> List[dict]:
     """The tenant's EOProducts whose id belongs to the parcel's 10-character prefix.
 
-    The SDK client has no ``idPattern``: every EOProduct of the tenant is paged
-    (``limit=1000``) and filtered by id here. The prefix can collide between parcels;
-    ``build_series`` filters by relationship.
+    Listed with ``idPattern`` and paged until an empty page; a series that would need
+    more than ``MAX_PAGES`` pages raises rather than answering partially. The prefix
+    can collide between parcels, so ids are re-checked and ``build_series`` filters by
+    relationship.
     """
     short = parcel_urn.split(":")[-1][:10]
-    pattern = re.compile(rf"^urn:ngsi-ld:EOProduct:{re.escape(tenant_id)}:{re.escape(short)}:\d{{4}}-\d{{2}}-\d{{2}}$")
+    prefix = f"urn:ngsi-ld:EOProduct:{re.escape(tenant_id)}:{re.escape(short)}:"
+    exact = re.compile(rf"^{prefix}\d{{4}}-\d{{2}}-\d{{2}}$")
     found: List[dict] = []
     try:
         client = SyncOrionClient(tenant_id)
         offset = 0
-        while True:
-            page = client.query_entities(type="EOProduct", limit=PAGE_SIZE, offset=offset)
-            found.extend(e for e in page if pattern.match(str(e.get("id", ""))))
-            if len(page) < PAGE_SIZE:
+        for _ in range(MAX_PAGES):
+            page = _list_page(client, f"^{prefix}", offset)
+            if not page:
                 break
-            offset += PAGE_SIZE
+            found.extend(e for e in page if exact.match(str(e.get("id", ""))))
+            offset += len(page)
+        else:
+            raise BrokerUnavailable("series truncated")
+    except BrokerUnavailable:
+        raise
     except Exception as exc:
         logger.warning("broker read failed for parcel %s tenant %s: %s", parcel_urn, tenant_id, exc)
         raise BrokerUnavailable(str(exc)) from exc

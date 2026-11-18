@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 from app.api.scenes import (
     _TREE_KEYWORDS,
     _dispatch_analyze_for_parcel,
-    _get_crop_species_from_orion,
+    _get_crop_species_strict,
     _resolve_custom_formula_specs,
 )
 from app.celery_app import celery_app
@@ -166,9 +166,9 @@ async def observations_response(tenant_id: str, entity_id: str, index: str,
     if index.upper() not in SUPPORTED_INDICES:
         raise HTTPException(status_code=400, detail=f"Unsupported index; use one of {', '.join(SUPPORTED_INDICES)}")
     parcel_urn = parcel_urn_of(entity_id)
-    species = await _get_crop_species_from_orion(tenant_id, parcel_urn)
-    woody = bool(species and set(re.findall(r"[^\W\d_]+", species.lower())) & _TREE_KEYWORDS)
     try:
+        species = await _get_crop_species_strict(tenant_id, parcel_urn)
+        woody = bool(species and set(re.findall(r"[^\W\d_]+", species.lower())) & _TREE_KEYWORDS)
         return await asyncio.to_thread(observation_series, tenant_id, parcel_urn, index.upper(), start, end,
                                        woody=woody)
     except BrokerUnavailable:

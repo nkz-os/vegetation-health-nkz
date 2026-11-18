@@ -137,29 +137,93 @@ def test_woody_adds_canopy_basis():
     assert len(plain["points"]) == 1
 
 
+class FakeResponse:
+    def __init__(self, body, status=200):
+        self.body, self.status = body, status
+
+    def raise_for_status(self):
+        if self.status >= 400:
+            raise RuntimeError(f"HTTP {self.status}")
+
+    def json(self):
+        return self.body
+
+
 def _client(pages):
+    """SDK client double: real header/url helpers shape, the session answers pages in order."""
     client = MagicMock()
-    client.query_entities.side_effect = pages
+    client._url.side_effect = lambda path: "http://orion" + path
+    client._headers.return_value = {"NGSILD-Tenant": TENANT, "Fiware-Service": TENANT, "Link": "<ctx>"}
+    client.timeout = 5
+    client._session.get.side_effect = [p if isinstance(p, Exception) else FakeResponse(p) for p in pages]
     return client
 
 
-def test_fetch_pages_and_keeps_only_the_parcel_prefix():
+def test_fetch_uses_id_pattern_with_sdk_headers_and_keeps_only_the_parcel_prefix():
     mine = product("2026-05-01")
     grd = dict(mine, id=f"urn:ngsi-ld:EOProduct:{TENANT}:{PARCEL_UUID[:10]}:GRD:2026-05-01")
     other_tenant = dict(mine, id=f"urn:ngsi-ld:EOProduct:tenant-a:{PARCEL_UUID[:10]}:2026-05-02")
-    full = [mine] * 1000
-    client = _client([full, [grd, other_tenant, product("2026-05-03")]])
+    client = _client([[mine] * 1000, [grd, other_tenant, product("2026-05-03")], []])
     with patch.object(obs, "SyncOrionClient", return_value=client) as ctor:
         out = obs.fetch_parcel_products(TENANT, PARCEL)
     ctor.assert_called_once_with(TENANT)
-    assert len(out) == 1001 and client.query_entities.call_count == 2
-    assert client.query_entities.call_args_list[1].kwargs["offset"] == 1000
-    assert client.query_entities.call_args.kwargs["type"] == "EOProduct"
+    assert len(out) == 1001
+    calls = client._session.get.call_args_list
+    assert len(calls) == 3
+    first = calls[0]
+    assert first.args[0] == "http://orion/ngsi-ld/v1/entities"
+    assert first.kwargs["headers"]["NGSILD-Tenant"] == TENANT and "Link" in first.kwargs["headers"]
+    params = first.kwargs["params"]
+    assert params["type"] == "EOProduct" and params["limit"] == 1000 and params["offset"] == 0
+    assert params["idPattern"] == r"^urn:ngsi-ld:EOProduct:acme:0123456789:"
+    assert "attrs" not in params
+    assert calls[1].kwargs["params"]["offset"] == 1000
+    assert calls[2].kwargs["params"]["offset"] == 1000 + 3
+
+
+def test_paging_advances_by_what_was_returned_and_stops_only_on_empty():
+    client = _client([[product("2026-05-01")] * 100, [product("2026-05-02")] * 7, []])
+    with patch.object(obs, "SyncOrionClient", return_value=client):
+        out = obs.fetch_parcel_products(TENANT, PARCEL)
+    assert len(out) == 107
+    assert [c.kwargs["params"]["offset"] for c in client._session.get.call_args_list] == [0, 100, 107]
+
+
+def test_page_cap_raises_instead_of_a_partial_series():
+    client = _client([[product("2026-05-01")]] * 60)
+    with patch.object(obs, "SyncOrionClient", return_value=client):
+        with pytest.raises(obs.BrokerUnavailable, match="series truncated"):
+            obs.fetch_parcel_products(TENANT, PARCEL)
+    assert client._session.get.call_count == 50
 
 
 def test_fetch_raises_broker_unavailable_on_error():
-    client = MagicMock()
-    client.query_entities.side_effect = RuntimeError("connection refused")
-    with patch.object(obs, "SyncOrionClient", return_value=client):
-        with pytest.raises(obs.BrokerUnavailable):
-            obs.fetch_parcel_products(TENANT, PARCEL)
+    for failure in (RuntimeError("connection refused"), FakeResponse([], status=503)):
+        client = _client([failure])
+        with patch.object(obs, "SyncOrionClient", return_value=client):
+            with pytest.raises(obs.BrokerUnavailable):
+                obs.fetch_parcel_products(TENANT, PARCEL)
+
+
+def test_relationship_key_as_full_iri_is_matched():
+    e = product("2026-05-01", rel="https://nkz-os.org/ns/hasAgriParcel")
+    assert len(obs.build_series([e], PARCEL, "NDVI", None, None)) == 1
+
+
+def test_invalid_sensing_date_skips_the_product(caplog):
+    bad = product("2026-13-45")
+    good = product("2026-05-01")
+    with caplog.at_level("WARNING"):
+        pts = obs.build_series([bad, good], PARCEL, "NDVI", None, None)
+    assert [p["date"] for p in pts] == ["2026-05-01"]
+    assert any("2026-13-45" in r.getMessage() for r in caplog.records)
+
+
+def test_non_numeric_interior_value_becomes_null(caplog):
+    e = product("2026-05-01")
+    e["ndvi"]["interiorMedian"] = {"type": "Property", "value": "n/a"}
+    e["ndvi"]["interiorPixelCount"] = {"type": "Property", "value": "many"}
+    with caplog.at_level("WARNING"):
+        (p,) = obs.build_series([e], PARCEL, "NDVI", None, None)
+    assert p["median"] is None and p["pixel_count"] is None and p["valid_fraction"] == 0.9
+    assert caplog.records

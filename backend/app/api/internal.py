@@ -394,7 +394,8 @@ async def internal_parcel_observations(
     explicit because no user identity travels with the call.
     """
     secret = request.headers.get("X-Internal-Service-Secret", "")
-    if not INTERNAL_SECRET or not hmac.compare_digest(secret, INTERNAL_SECRET):
+    # Bytes, so a non-ASCII header is a 401 and not a TypeError (500).
+    if not INTERNAL_SECRET or not hmac.compare_digest(secret.encode("utf-8"), INTERNAL_SECRET.encode("utf-8")):
         logger.warning("Unauthorized internal observations call from %s", request.client)
         raise HTTPException(status_code=401, detail="Unauthorized")
     if not tenant_id:
