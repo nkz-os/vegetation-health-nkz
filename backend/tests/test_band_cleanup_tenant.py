@@ -127,3 +127,15 @@ def test_missing_counter_never_deletes_bucket(env, tmp_path, caplog):
     assert "counter missing" in caplog.text
     assert "vegetation:bandclean:acme:S1" not in r.kv   # DECR must not have created -1
     assert not d.exists()                               # local dir is still freed
+
+
+def test_download_task_builds_copy_paths_with_band_copy_prefix():
+    """Writer, deleter and CLI must share band_copy_prefix; for the production value the keys are unchanged."""
+    from pathlib import Path
+    src = Path(dt.__file__).read_text()
+    assert "{storage_path}scenes/" not in src
+    for scene, band in (("S1A_MSIL2A_X", "B04"), ("S2", "SCL")):
+        old = f"vegetation-prime/scenes/{scene}/{band}.tif"
+        assert f"{dt.band_copy_prefix('vegetation-prime/', scene)}{band}.tif" == old
+        assert f"{dt.band_copy_prefix('vegetation-prime', scene)}{band}.tif" == old
+    assert dt.band_copy_prefix("vegetation-prime/", "S2") == "vegetation-prime/scenes/S2/"

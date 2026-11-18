@@ -29,13 +29,14 @@ class FakeS3:
 @pytest.fixture
 def world(monkeypatch):
     """Two tenants with copies; helpers return configurable busy/pending sets."""
-    state = {"busy": {}, "pending": {}}
+    state = {"busy": {}, "pending": {}, "composite": {}}
     monkeypatch.setattr(bcc, "_tenant_paths", lambda db, tenants: {
         t: p for t, p in {"acme": "vegetation-prime/", "tenant-a": "vegetation-prime"}.items()
         if not tenants or t in tenants
     })
     monkeypatch.setattr(bcc, "_tenant_context", lambda db, t: None)
     monkeypatch.setattr(bcc, "_in_progress_scenes", lambda db, t: state["busy"].get(t, set()))
+    monkeypatch.setattr(bcc, "_composite_scenes", lambda db, t: state["composite"].get(t, set()))
     monkeypatch.setattr(bcc, "_fresh_pending_scenes", lambda db, t, now: state["pending"].get(t, set()))
     b_acme = generate_tenant_bucket_name("acme")
     b_a = generate_tenant_bucket_name("tenant-a")
@@ -108,14 +109,46 @@ def test_delete_only_eligible(world):
     assert "DELETED\t2 scenes" in out.getvalue()
 
 
-def test_delete_rechecks_eligibility_at_delete_time(world):
-    """A scene that became busy after an earlier listing is not deleted: --delete re-lists."""
+def test_composite_job_scenes_not_eligible(world):
+    state, s3, *_ = world
+    state["composite"]["acme"] = {"S2"}
+    got = {(e.tenant_id, e.scene_id): (e.eligible, e.reason) for e in bcc.list_copies(None, s3, now=NOW)}
+    assert got[("acme", "S2")] == (False, "in_progress_composite")
+    assert got[("acme", "S1")] == (True, "calculated")
+
+
+def test_scene_flipped_busy_between_list_and_delete_is_not_deleted(world):
+    state, s3, b_acme, b_a = world
+    entries = bcc.list_copies(None, s3, now=NOW)
+    assert all(e.eligible for e in entries)
+    state["busy"]["acme"] = {"S1"}  # a job starts AFTER listing
+    skipped = []
+    scenes, _ = bcc.delete_copies(
+        s3, entries,
+        recheck=lambda e: bcc.busy_scenes(None, e.tenant_id, NOW).get(e.scene_id),
+        skipped=skipped,
+    )
+    assert (b_acme, "vegetation-prime/scenes/S1/") not in s3.deleted
+    assert (b_acme, "vegetation-prime/scenes/S2/") in s3.deleted
+    assert scenes == 2
+    assert [(e.scene_id, r) for e, r in skipped] == [("S1", "in_progress")]
+
+
+def test_main_delete_rechecks_each_scene_and_reports_skip(world, monkeypatch):
     state, s3, b_acme, _ = world
-    first = bcc.list_copies(None, s3, now=NOW)
-    assert all(e.eligible for e in first)
-    state["busy"]["acme"] = {"S1", "S2"}
-    bcc.main(["--delete", "--tenant", "acme"], db=MagicMock(), s3=s3, out=io.StringIO())
-    assert s3.deleted == []
+    calls = {"n": 0}
+
+    def flipping(db, t):
+        calls["n"] += 1
+        # the first call belongs to the listing; afterwards acme/S1 becomes busy
+        return {"S1"} if t == "acme" and calls["n"] > 1 else set()
+
+    monkeypatch.setattr(bcc, "_in_progress_scenes", flipping)
+    out = io.StringIO()
+    bcc.main(["--delete", "--tenant", "acme"], db=MagicMock(), s3=s3, out=out)
+    assert (b_acme, "vegetation-prime/scenes/S1/") not in s3.deleted
+    assert (b_acme, "vegetation-prime/scenes/S2/") in s3.deleted
+    assert "SKIPPED\tacme\tS1\tin_progress" in out.getvalue()
 
 
 def test_delete_copies_skips_ineligible_entries():
@@ -147,14 +180,32 @@ def test_sql_helpers_against_postgres():
         conn.exec_driver_sql("DROP TABLE IF EXISTS vegetation_parcel_scenes, vegetation_jobs, vegetation_scenes")
         conn.exec_driver_sql(
             "CREATE TABLE vegetation_jobs (id uuid PRIMARY KEY, tenant_id text, entity_id text, "
-            "job_type text, status text, parameters jsonb)"
+            "job_type text, status text, parameters jsonb, start_date date, end_date date)"
         )
-        conn.exec_driver_sql("CREATE TABLE vegetation_scenes (id uuid PRIMARY KEY, tenant_id text, scene_id text)")
+        conn.exec_driver_sql(
+            "CREATE TABLE vegetation_scenes (id uuid PRIMARY KEY, tenant_id text, scene_id text, sensing_date date)"
+        )
         conn.exec_driver_sql(
             "CREATE TABLE vegetation_parcel_scenes (tenant_id text, entity_id text, scene_id text, "
             "status text, updated_at timestamptz)"
         )
-        conn.exec_driver_sql("INSERT INTO vegetation_scenes VALUES (%s, 'acme', 'S2')", (scene_uuid,))
+        conn.exec_driver_sql("INSERT INTO vegetation_scenes VALUES (%s, 'acme', 'S2', '2026-01-01')", (scene_uuid,))
+        for sid, tenant, day in [("C1", "acme", "2026-03-05"), ("C2", "acme", "2026-03-20"),
+                                 ("C3", "acme", "2026-05-01"), ("C4", "tenant-a", "2026-03-10"),
+                                 ("C5", "acme", "2026-06-10")]:
+            conn.exec_driver_sql(
+                "INSERT INTO vegetation_scenes VALUES (%s, %s, %s, %s)", (str(uuid.uuid4()), tenant, sid, day),
+            )
+        # composite by job columns (C1, C2) and by parameters (C5); done composite blocks nothing
+        conn.exec_driver_sql(
+            "INSERT INTO vegetation_jobs VALUES (%s, 'acme', 'p', 'calculate_index', 'running', '{}'::jsonb, "
+            "'2026-03-01', '2026-03-31')", (str(uuid.uuid4()),))
+        conn.exec_driver_sql(
+            "INSERT INTO vegetation_jobs VALUES (%s, 'acme', 'p', 'calculate_index', 'pending', %s::jsonb, NULL, NULL)",
+            (str(uuid.uuid4()), json.dumps({"start_date": "2026-06-01", "end_date": "2026-06-30"})))
+        conn.exec_driver_sql(
+            "INSERT INTO vegetation_jobs VALUES (%s, 'acme', 'p', 'calculate_index', 'completed', '{}'::jsonb, "
+            "'2026-05-01', '2026-05-31')", (str(uuid.uuid4()),))
         for tenant, jtype, status, sid in [
             ("acme", "download", "running", "S1"),
             ("acme", "calculate_index", "pending", scene_uuid),
@@ -163,7 +214,7 @@ def test_sql_helpers_against_postgres():
             ("tenant-a", "download", "running", "S5"),
         ]:
             conn.exec_driver_sql(
-                "INSERT INTO vegetation_jobs VALUES (%s, %s, 'p', %s, %s, %s::jsonb)",
+                "INSERT INTO vegetation_jobs VALUES (%s, %s, 'p', %s, %s, %s::jsonb, NULL, NULL)",
                 (str(uuid.uuid4()), tenant, jtype, status, json.dumps({"scene_id": sid})),
             )
         for tenant, sid, status, age in [
@@ -179,6 +230,9 @@ def test_sql_helpers_against_postgres():
     session = sessionmaker(bind=engine)()
     try:
         assert bcc._in_progress_scenes(session, "acme") == {"S1", "S2"}
+        assert bcc._composite_scenes(session, "acme") == {"C1", "C2", "C5"}
+        assert bcc._composite_scenes(session, "tenant-a") == set()
+        assert bcc.busy_scenes(session, "acme", NOW)["C1"] == "in_progress_composite"
         assert bcc._fresh_pending_scenes(session, "acme", NOW) == {"P1"}
     finally:
         session.close()

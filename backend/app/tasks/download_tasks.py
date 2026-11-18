@@ -354,7 +354,7 @@ def download_sentinel2_scene(self, job_id: str, tenant_id: str, parameters: Dict
                 storage_band_paths = {}
                 for band in required_bands:
                     global_band_path = global_cache_entry.get_band_path(band)
-                    tenant_band_path = f"{storage_path}scenes/{scene_id}/{band}.tif"
+                    tenant_band_path = f"{band_copy_prefix(storage_path, scene_id)}{band}.tif"
                     
                     # Copy file from global to tenant bucket
                     tenant_storage.copy_file(
@@ -457,7 +457,7 @@ def download_sentinel2_scene(self, job_id: str, tenant_id: str, parameters: Dict
             storage_band_paths = {}
             for band in required_bands:
                 global_band_path = global_band_paths[band]
-                tenant_band_path = f"{storage_path}scenes/{scene_id}/{band}.tif"
+                tenant_band_path = f"{band_copy_prefix(storage_path, scene_id)}{band}.tif"
                 
                 # Copy file from global to tenant bucket
                 tenant_storage.copy_file(
@@ -527,7 +527,7 @@ def download_sentinel2_scene(self, job_id: str, tenant_id: str, parameters: Dict
                 footprint=footprint,
                 centroid=centroid,
                 cloud_coverage=str(best_scene['cloud_cover']),
-                storage_path=f"{storage_path}scenes/{scene_id}/",
+                storage_path=band_copy_prefix(storage_path, scene_id),
                 storage_bucket=tenant_bucket_name,
                 bands=storage_band_paths,
                 job_id=job.id,
