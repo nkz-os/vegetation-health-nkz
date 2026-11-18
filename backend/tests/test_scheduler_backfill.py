@@ -210,9 +210,54 @@ def test_process_subscriptions_lookback_env_and_start_date_floor(monkeypatch):
     assert task.delay.call_args.kwargs["start_date"] == "2026-04-01"  # never before start_date
 
 
+# ---- SAR window and duplicates ---------------------------------------------
+
+def _run_sar(sub, existing_sar_ids, s1_scenes, start="2026-08-27"):
+    client = _client(_catalog(5))
+    client.search_s1_scenes.return_value = s1_scenes
+
+    def query(*args):
+        q = MagicMock()
+        q.filter.return_value = q
+        text = str(args[0]) if args else ""
+        if args and args[0] is sched.VegetationSubscription:
+            q.first.return_value = sub
+        elif "vegetation_jobs" in text:
+            q.all.return_value = [(i,) for i in existing_sar_ids]
+        else:
+            q.all.return_value = []
+        return q
+
+    with _planner(sub, client, budget=lambda: 2) as (db, record, download), \
+         patch("app.tasks.sar_tasks.download_sentinel1_scene") as sar_dl:
+        db.query.side_effect = query
+        sched.check_and_process_entity.run(str(sub.id), start, TODAY.isoformat())
+    return client, sar_dl, db
+
+
+def test_s1_window_starts_at_the_cursor_not_the_s2_lookback():
+    sub = _sub(last_run_at=datetime(2026, 9, 1))
+    client, _, _ = _run_sar(sub, [], [])
+    assert client.search_s1_scenes.call_args.kwargs["start_date"] == date(2026, 9, 1)
+
+
+def test_s1_window_without_cursor_uses_passed_start():
+    sub = _sub()
+    client, _, _ = _run_sar(sub, [], [], start="2026-04-01")
+    assert client.search_s1_scenes.call_args.kwargs["start_date"] == date(2026, 4, 1)
+
+
+def test_s1_skips_scenes_with_an_existing_download_sar_job():
+    sub = _sub(last_run_at=datetime(2026, 9, 1))
+    s1 = [{"id": "s1-old", "sensing_date": "2026-09-02"}, {"id": "s1-new", "sensing_date": "2026-09-03"}]
+    _, sar_dl, _ = _run_sar(sub, ["s1-old"], s1)
+    assert sar_dl.delay.call_count == 1
+    assert sar_dl.delay.call_args.kwargs["parameters"]["scene_id"] == "s1-new"
+
+
 # ---- download brake --------------------------------------------------------
 
-def test_download_raises_low_disk_before_copernicus():
+def test_download_low_disk_fails_job_refunds_attempt_and_returns():
     job = MagicMock()
     job.id = uuid.uuid4()
     params = {"scene_id": SCENE, "bbox": [-1.6, 42.8, -1.5, 42.9], "bounds": GEOM,
@@ -237,8 +282,10 @@ def test_download_raises_low_disk_before_copernicus():
          patch.object(dt.acquisition_guard, "disk_ok", return_value=(False, 30.0, 40.0)), \
          patch.object(dt.parcel_scenes, "record") as record, \
          patch.object(dt.download_sentinel2_scene, "update_state"):
-        with pytest.raises(dt.acquisition_guard.LowDiskSpace, match="Low disk space"):
-            dt.download_sentinel2_scene.run(str(job.id), TENANT, params)
+        dt.download_sentinel2_scene.run(str(job.id), TENANT, params)  # returns: no Celery autoretry loop
     client.download_scene_bands.assert_not_called()
     job.mark_failed.assert_called_once()
-    record.assert_called_once_with(TENANT, PARCEL, SCENE, parcel_scenes.FAILED, job_id=job.id)
+    assert "Low disk space" in job.mark_failed.call_args.args[0]
+    record.assert_called_once_with(
+        TENANT, PARCEL, SCENE, parcel_scenes.FAILED, job_id=job.id, refund_attempt=True,
+    )

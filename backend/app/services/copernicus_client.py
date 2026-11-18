@@ -199,7 +199,7 @@ class CopernicusDataSpaceClient:
                     break
                 if pages >= max_pages:
                     raise Exception(f"Scene search truncated after {pages} pages")
-                body = next_link['body']
+                body = {**body, **next_link['body']} if next_link.get('merge') else next_link['body']
             logger.info(f"Found {len(scenes)} scenes matching criteria in {pages} page(s)")
             return scenes
         except requests.RequestException as e:
@@ -210,13 +210,15 @@ class CopernicusDataSpaceClient:
         """POST one STAC search page; retry 429/502/503/504 with 5/10/20 s backoff (max 4 attempts)."""
         max_attempts = 4
         for attempt in range(1, max_attempts + 1):
-            response = requests.post(f"{self.CATALOG_URL}/search", json=body, headers=headers)
+            response = requests.post(
+                f"{self.CATALOG_URL}/search", json=body, headers=headers, timeout=60,
+            )
             if response.status_code in (429, 502, 503, 504) and attempt < max_attempts:
                 delay = 5 * 2 ** (attempt - 1)
                 retry_after = (response.headers or {}).get('Retry-After')
                 try:
                     if retry_after is not None:
-                        delay = int(retry_after)
+                        delay = min(int(retry_after), 60)
                 except (TypeError, ValueError):
                     pass
                 logger.warning(

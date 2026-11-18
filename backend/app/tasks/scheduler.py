@@ -128,6 +128,9 @@ def check_and_process_entity(self, subscription_id, start_date, end_date):
         if not sub:
             logger.error("Subscription %s not found", subscription_id)
             return
+
+        # S1 keeps its original window (the cursor as it was when this task started), not the S2 lookback
+        sar_start = sub.last_run_at.date() if sub.last_run_at else datetime.fromisoformat(start_date).date()
             
         # Disk brake: below the threshold nothing is searched or enqueued and the cursor stays put
         disk_is_ok, free_gb, threshold_gb = acquisition_guard.disk_ok()
@@ -288,7 +291,7 @@ def check_and_process_entity(self, subscription_id, start_date, end_date):
         try:
             s1_scenes = client.search_s1_scenes(
                 intersects=intersects_geojson,
-                start_date=start,
+                start_date=sar_start,
                 end_date=end,
                 limit=10,
             )
@@ -298,6 +301,15 @@ def check_and_process_entity(self, subscription_id, start_date, end_date):
                     VegetationScene.tenant_id == sub.tenant_id,
                 ).all()
                 s1_existing_ids = {r[0] for r in s1_existing}
+                # a scene that already has a live or finished SAR job for this parcel is not queued twice
+                s1_jobs = db.query(VegetationJob.parameters['scene_id'].astext).filter(
+                    VegetationJob.tenant_id == sub.tenant_id,
+                    VegetationJob.entity_id == sub.entity_id,
+                    VegetationJob.job_type == 'download_sar',
+                    VegetationJob.status.in_(['pending', 'running', 'completed']),
+                    VegetationJob.parameters['scene_id'].astext.in_([s["id"] for s in s1_scenes]),
+                ).all()
+                s1_existing_ids |= {r[0] for r in s1_jobs}
 
                 s1_triggered = 0
                 for s1_scene in s1_scenes:

@@ -128,3 +128,36 @@ def test_429_exhausted_raises():
             _search()
     assert post.call_count == 4
     assert [c.args[0] for c in sleep.call_args_list] == [5, 10, 20]
+
+
+def test_retry_after_capped_at_60_and_non_integer_ignored():
+    with patch.object(cc.time, "sleep") as sleep, patch.object(cc.requests, "post", side_effect=[
+        _resp(None, status=429, headers={"Retry-After": "9999"}), _resp(_page(range(1))),
+    ]):
+        _search()
+    sleep.assert_called_once_with(60)
+    with patch.object(cc.time, "sleep") as sleep, patch.object(cc.requests, "post", side_effect=[
+        _resp(None, status=503, headers={"Retry-After": "Wed, 21 Oct 2026 07:28:00 GMT"}), _resp(_page(range(1))),
+    ]):
+        _search()
+    sleep.assert_called_once_with(5)
+
+
+def test_every_search_page_has_a_timeout():
+    nxt = {"token": "t"}
+    with patch.object(cc.requests, "post", side_effect=[
+        _resp(_page(range(2), nxt)), _resp(_page(range(2, 4))),
+    ]) as post:
+        _search()
+    assert [c.kwargs.get("timeout") for c in post.call_args_list] == [60, 60]
+
+
+def test_merge_link_keeps_previous_query():
+    link = {"rel": "next", "method": "POST", "merge": True, "body": {"token": "next:abc"}}
+    first = {"features": [_feature(1)], "links": [link]}
+    with patch.object(cc.requests, "post", side_effect=[_resp(first), _resp(_page([2]))]) as post:
+        scenes = _search()
+    assert len(scenes) == 2
+    body2 = post.call_args_list[1].kwargs["json"]
+    assert body2["token"] == "next:abc"
+    assert body2["intersects"] == GEOM and "datetime" in body2 and "query" in body2

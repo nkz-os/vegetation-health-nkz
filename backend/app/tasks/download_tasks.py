@@ -678,6 +678,22 @@ def download_sentinel2_scene(self, job_id: str, tenant_id: str, parameters: Dict
         
         logger.info(f"Job {job_id} completed successfully - Scene {scene_id}")
         
+    except acquisition_guard.LowDiskSpace as e:
+        # Not the scene's fault: fail the job, give the attempt back and do NOT re-raise
+        # (Celery autoretry would only loop on a full disk). The planner retries next pass.
+        logger.error("Download job %s stopped: %s", job_id, e)
+        if job:
+            job.mark_failed(str(e), str(e.__traceback__))
+            db.commit()
+        try:
+            if parameters.get('entity_id') and parameters.get('scene_id'):
+                parcel_scenes.record(
+                    tenant_id, parameters['entity_id'], parameters['scene_id'], parcel_scenes.FAILED,
+                    job_id=job.id if job else None, refund_attempt=True,
+                )
+        except Exception as record_exc:
+            logger.warning("Could not record failed scene status: %s", record_exc)
+        return
     except Exception as e:
         logger.error(f"Error in download task: {str(e)}", exc_info=True)
         if job:
