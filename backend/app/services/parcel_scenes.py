@@ -6,11 +6,13 @@ so a failure never aborts the caller's transaction.
 import logging
 from datetime import date, datetime, timedelta, timezone
 
-from sqlalchemy import text
+from sqlalchemy import exists, func, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app import database
+from app.models.jobs import VegetationJob
 from app.models.parcel_scenes import VegetationParcelScene
+from app.models.scenes import VegetationScene
 
 logger = logging.getLogger(__name__)
 
@@ -111,3 +113,22 @@ def record(
             except Exception:  # closing must never raise either
                 pass
 
+
+def downloaded_for_entity(tenant_id: str, entity_id: str, *, completed_only: bool = False):
+    """Filter for VegetationScene: the scene was downloaded by a job of this parcel.
+
+    `VegetationScene.job_id` only keeps the LAST downloader, so the link goes
+    through the download job's scene id instead (correlates with the outer scene).
+    """
+    clauses = [
+        VegetationJob.tenant_id == tenant_id,
+        VegetationJob.entity_id == entity_id,
+        VegetationJob.job_type == "download",
+        VegetationScene.scene_id == func.coalesce(
+            VegetationJob.parameters["scene_id"].astext,
+            VegetationJob.result["scene_product_id"].astext,
+        ),
+    ]
+    if completed_only:
+        clauses.append(VegetationJob.status == "completed")
+    return exists().where(*clauses)

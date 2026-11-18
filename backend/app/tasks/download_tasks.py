@@ -16,6 +16,7 @@ from app.services.storage import create_storage_service, generate_tenant_bucket_
 from app.services.copernicus_client import CopernicusDataSpaceClient
 from app.services.platform_credentials import get_copernicus_credentials_with_fallback
 from app.database import get_db_session
+from app.services import parcel_scenes
 
 logger = logging.getLogger(__name__)
 
@@ -193,22 +194,34 @@ def download_sentinel2_scene(self, job_id: str, tenant_id: str, parameters: Dict
                                     acquisition_dt = acquisition_dt.replace(tzinfo=timezone.utc)
                             except (ValueError, TypeError):
                                 pass
-                        skipped_scene = VegetationScene(
-                            tenant_id=tenant_id,
-                            scene_id=scene_id,
-                            sensing_date=date.fromisoformat(best_scene['sensing_date']),
-                            acquisition_datetime=acquisition_dt,
-                            footprint=footprint,
-                            cloud_coverage=str(best_scene.get('cloud_cover', '')),
-                            storage_path='',
-                            storage_bucket=None,
-                            bands=None,
-                            is_valid=False,
-                            quality_flags={'skipped_due_to_clouds': True, 'local_cloud_pct': round(local_cloud_pct, 2)},
-                            job_id=job.id,
-                        )
-                        db.add(skipped_scene)
+                        # Another parcel may already hold this scene (valid, with bands): leave it alone.
+                        existing_scene = db.query(VegetationScene).filter(
+                            VegetationScene.tenant_id == tenant_id,
+                            VegetationScene.scene_id == scene_id,
+                        ).first()
+                        if existing_scene is None:
+                            skipped_scene = VegetationScene(
+                                tenant_id=tenant_id,
+                                scene_id=scene_id,
+                                sensing_date=date.fromisoformat(best_scene['sensing_date']),
+                                acquisition_datetime=acquisition_dt,
+                                footprint=footprint,
+                                cloud_coverage=str(best_scene.get('cloud_cover', '')),
+                                storage_path='',
+                                storage_bucket=None,
+                                bands=None,
+                                is_valid=False,
+                                quality_flags={'skipped_due_to_clouds': True, 'local_cloud_pct': round(local_cloud_pct, 2)},
+                                job_id=job.id,
+                            )
+                            db.add(skipped_scene)
                         db.commit()
+                        if parameters.get('entity_id'):
+                            parcel_scenes.record(
+                                tenant_id, parameters['entity_id'], scene_id, parcel_scenes.CLOUD_SKIPPED,
+                                sensing_date=date.fromisoformat(best_scene['sensing_date']),
+                                parcel_cloud_pct=round(local_cloud_pct, 2), job_id=job.id,
+                            )
                         job.mark_completed({
                             'skipped_due_to_clouds': True,
                             'local_cloud_pct': round(local_cloud_pct, 2),
@@ -509,6 +522,11 @@ def download_sentinel2_scene(self, job_id: str, tenant_id: str, parameters: Dict
             'message': f'Scene {cache_status} successfully'
         })
         db.commit()
+        if parameters.get('entity_id'):
+            # Undo a "failed" left by an earlier attempt; the calculation sets "done".
+            parcel_scenes.record(
+                tenant_id, parameters['entity_id'], scene_id, parcel_scenes.PENDING, job_id=job.id,
+            )
         
         # Update job status in usage stats
         from app.services.usage_tracker import UsageTracker
@@ -659,6 +677,14 @@ def download_sentinel2_scene(self, job_id: str, tenant_id: str, parameters: Dict
             # Update job status in usage stats
             from app.services.usage_tracker import UsageTracker
             UsageTracker.update_job_status(db, tenant_id, str(job.id), 'failed')
+        try:
+            if parameters.get('entity_id') and parameters.get('scene_id'):
+                parcel_scenes.record(
+                    tenant_id, parameters['entity_id'], parameters['scene_id'], parcel_scenes.FAILED,
+                    job_id=job.id if job else None,
+                )
+        except Exception as record_exc:
+            logger.warning("Could not record failed scene status: %s", record_exc)
         raise
     finally:
         db.close()
