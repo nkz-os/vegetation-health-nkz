@@ -20,7 +20,7 @@ from app.services.processor import VegetationIndexProcessor
 from app.services.radiometry import l2a_radiometry
 from app.services.storage import create_storage_service, generate_tenant_bucket_name
 from app.database import get_db_session
-from app.services.fiware_integration import upsert_eo_index
+from app.services.fiware_integration import has_valid_pixels, upsert_eo_index
 
 logger = logging.getLogger(__name__)
 
@@ -170,18 +170,25 @@ def _persist_results(
     statistics: Dict[str, Any],
     remote_raster_path: str,
     primary_scene: VegetationScene,
-) -> None:
+) -> bool:
     """Persist analysis results to Orion-LD as an EOProduct entity.
+
+    Returns True when published, False when not (no entity, custom index,
+    no valid pixels, or upsert failure).
 
     Orion-LD is the source of truth. TimescaleDB is populated automatically
     via the NGSI-LD subscription from Orion-LD to telemetry-worker.
     """
     if not job.entity_id:
         logger.warning("No entity_id on job %s — cannot upsert EOProduct", job.id)
-        return
+        return False
     if index_type == 'CUSTOM':
         logger.info("CUSTOM index %s not persisted to EOProduct (skipped)", formula)
-        return
+        return False
+    if not has_valid_pixels(statistics):
+        logger.info("EOProduct %s not published for %s on %s: no valid pixels",
+                    index_type.lower(), job.entity_id, primary_scene.sensing_date)
+        return False
 
     bucket_used = os.getenv("VEGETATION_COG_BUCKET") or generate_tenant_bucket_name(tenant_id)
     raster_url = f"s3://{bucket_used}/{remote_raster_path}"
@@ -200,6 +207,7 @@ def _persist_results(
         logger.info("EOProduct upserted: %s (%s)", eid, index_type)
     else:
         logger.error("Failed to upsert EOProduct for %s/%s", job.entity_id, index_type)
+    return bool(eid)
 
 
 _LOCAL_BANDS = {
@@ -635,7 +643,7 @@ def calculate_vegetation_index(
         storage.upload_file(upload_path, remote_raster_path, bucket_name)
 
         # Persist results to Orion-LD
-        _persist_results(
+        published = _persist_results(
             tenant_id=tenant_id,
             job=job,
             index_type=index_type,
@@ -675,6 +683,10 @@ def calculate_vegetation_index(
             'scene_id': str(primary_scene.id),
             'sensing_date': primary_scene.sensing_date.isoformat() if primary_scene.sensing_date else None,
         }
+
+        job_result['published'] = bool(published)
+        if not has_valid_pixels(statistics):
+            job_result['skip_reason'] = 'no_valid_pixels'
 
         if is_temporal_composite:
             job_result['date_range'] = {'start': start_date, 'end': end_date}

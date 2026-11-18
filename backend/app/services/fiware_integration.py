@@ -107,14 +107,26 @@ def _index_attribute(index_type: str, statistics: dict, observed_at: str,
     return attr
 
 
+def has_valid_pixels(statistics: dict) -> bool:
+    """True when the statistics were computed over at least one valid pixel."""
+    try:
+        return int((statistics or {}).get("pixel_count") or 0) > 0
+    except (TypeError, ValueError):
+        return False
+
+
 def upsert_eo_index(tenant_id, parcel_id, index_type, statistics, sensing_date,
                     raster_url=None, preview_url=None, cloud_cover=None):
     """Approach A: one EOProduct per (parcel, sensingDate); merge one named index Property."""
     sensing_date_str = sensing_date.isoformat()
+    index_key = index_type.lower()
+    if not has_valid_pixels(statistics):
+        logger.info("EOProduct %s not published for %s on %s: no valid pixels",
+                    index_key, parcel_id, sensing_date_str)
+        return None
     entity_id = _entity_id_for_acquisition(tenant_id, parcel_id, sensing_date_str)
     observed_at = datetime(sensing_date.year, sensing_date.month, sensing_date.day,
                            10, 50, 0, tzinfo=timezone.utc).isoformat().replace("+00:00", "Z")
-    index_key = index_type.lower()
     index_attr = _index_attribute(index_type, statistics, observed_at, raster_url, preview_url)
 
     # NOTE: pixelCount/source (and sensingDate) are top-level, per-acquisition attrs.
