@@ -5,6 +5,7 @@ SOTA Implementation: Uses STAC for discovery and S3 (boto3) for high-performance
 
 import logging
 import os
+import time
 from typing import List, Dict, Any, Optional
 from datetime import timezone,  date, datetime, timedelta
 from pathlib import Path
@@ -127,9 +128,17 @@ class CopernicusDataSpaceClient:
         cloud_cover_max: Optional[float] = None,
         cloud_cover_lte: Optional[float] = None,
         product_type: str = "S2MSI2A",
-        limit: int = 100
+        limit: int = 100,
+        max_pages: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
-        """Search for Sentinel-2 scenes using STAC API (public, no auth required)."""
+        """Search for Sentinel-2 scenes using STAC API (public, no auth required).
+
+        Follows the STAC `next` link (POST + body) through the whole window. Reaching
+        `max_pages` (default env VEG_SEARCH_MAX_PAGES, 50) with a page still pending
+        raises: a partial list is never returned silently.
+        """
+        if max_pages is None:
+            max_pages = int(os.getenv("VEG_SEARCH_MAX_PAGES", "50"))
         start_date = start_date or date.today() - timedelta(days=30)
         end_date = end_date or date.today()
         
@@ -160,27 +169,64 @@ class CopernicusDataSpaceClient:
 
         try:
             headers = self._get_optional_auth_headers()
-            response = requests.post(f"{self.CATALOG_URL}/search", json=query, headers=headers)
-            response.raise_for_status()
-            results = response.json()
-            scenes = []
-            for feature in results.get('features', []):
-                dt_raw = feature['properties'].get('datetime') or ''
-                scene = {
-                    'id': feature['id'],
-                    'sensing_date': dt_raw.split('T')[0] if dt_raw else '',
-                    'datetime': dt_raw if dt_raw else None,
-                    'cloud_cover': feature['properties'].get('eo:cloud_cover', 0),
-                    'geometry': feature.get('geometry'),
-                    'assets': feature.get('assets', {}),
-                    'links': feature.get('links', [])
-                }
-                scenes.append(scene)
-            logger.info(f"Found {len(scenes)} scenes matching criteria")
+            scenes: List[Dict[str, Any]] = []
+            seen_ids = set()
+            body = query
+            pages = 0
+            while True:
+                response = self._post_search_page(body, headers)
+                pages += 1
+                results = response.json()
+                for feature in results.get('features', []):
+                    if feature['id'] in seen_ids:
+                        continue
+                    seen_ids.add(feature['id'])
+                    dt_raw = feature['properties'].get('datetime') or ''
+                    scenes.append({
+                        'id': feature['id'],
+                        'sensing_date': dt_raw.split('T')[0] if dt_raw else '',
+                        'datetime': dt_raw if dt_raw else None,
+                        'cloud_cover': feature['properties'].get('eo:cloud_cover', 0),
+                        'geometry': feature.get('geometry'),
+                        'assets': feature.get('assets', {}),
+                        'links': feature.get('links', [])
+                    })
+                next_link = next(
+                    (l for l in results.get('links', []) if l.get('rel') == 'next' and l.get('body')),
+                    None,
+                )
+                if not next_link:
+                    break
+                if pages >= max_pages:
+                    raise Exception(f"Scene search truncated after {pages} pages")
+                body = next_link['body']
+            logger.info(f"Found {len(scenes)} scenes matching criteria in {pages} page(s)")
             return scenes
         except requests.RequestException as e:
             logger.error(f"Failed to search scenes: {str(e)}")
             raise Exception(f"Scene search failed: {str(e)}")
+
+    def _post_search_page(self, body: Dict[str, Any], headers: Dict[str, str]):
+        """POST one STAC search page; retry 429/502/503/504 with 5/10/20 s backoff (max 4 attempts)."""
+        max_attempts = 4
+        for attempt in range(1, max_attempts + 1):
+            response = requests.post(f"{self.CATALOG_URL}/search", json=body, headers=headers)
+            if response.status_code in (429, 502, 503, 504) and attempt < max_attempts:
+                delay = 5 * 2 ** (attempt - 1)
+                retry_after = (response.headers or {}).get('Retry-After')
+                try:
+                    if retry_after is not None:
+                        delay = int(retry_after)
+                except (TypeError, ValueError):
+                    pass
+                logger.warning(
+                    "STAC search returned %s, retry %d/%d in %ss",
+                    response.status_code, attempt, max_attempts - 1, delay,
+                )
+                time.sleep(delay)
+                continue
+            response.raise_for_status()
+            return response
 
     def search_s1_scenes(
         self,
