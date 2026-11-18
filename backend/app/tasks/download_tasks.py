@@ -16,7 +16,7 @@ from app.services.storage import create_storage_service, generate_tenant_bucket_
 from app.services.copernicus_client import CopernicusDataSpaceClient
 from app.services.platform_credentials import get_copernicus_credentials_with_fallback
 from app.database import get_db_session
-from app.services import parcel_scenes
+from app.services import acquisition_guard, parcel_scenes
 
 logger = logging.getLogger(__name__)
 
@@ -366,7 +366,16 @@ def download_sentinel2_scene(self, job_id: str, tenant_id: str, parameters: Dict
             logger.info(f"Scene {scene_id} not in cache - downloading from Copernicus")
             self.update_state(state='PROGRESS', meta={'progress': 40, 'message': 'Downloading from Copernicus'})
             scene_downloaded_from_copernicus = True
-            
+
+            # Disk brake: refuse to pull a new tile when the store is nearly full
+            disk_is_ok, free_gb, threshold_gb = acquisition_guard.disk_ok()
+            if not disk_is_ok:
+                low_disk = acquisition_guard.LowDiskSpace(free_gb, threshold_gb, acquisition_guard.check_path())
+                logger.error(
+                    "Download of scene %s refused for job %s: %s", scene_id, job_id, low_disk,
+                )
+                raise low_disk
+
             # Create temporary directory for downloads
             temp_dir = Path(f"/tmp/vegetation_downloads/{tenant_id}/{job_id}")
             temp_dir.mkdir(parents=True, exist_ok=True)
