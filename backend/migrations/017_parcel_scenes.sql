@@ -66,25 +66,32 @@ INSERT INTO vegetation_parcel_scenes
     (tenant_id, entity_id, scene_id, sensing_date, status, parcel_cloud_pct, job_id, attempts, updated_at)
 SELECT DISTINCT ON (c.tenant_id, c.entity_id, c.scene_id)
     c.tenant_id, c.entity_id, c.scene_id, c.sensing_date, c.status, c.parcel_cloud_pct, c.job_id, 0,
-    CASE WHEN c.status IN ('pending', 'failed') THEN now() - interval '7 days' ELSE now() END
+    CASE WHEN c.abandoned THEN now() - interval '7 days' ELSE now() END
 FROM (
+    -- Finished calculations: done (also those skipped by the idempotency guard).
+    -- Manual API jobs carry the scene UUID in parameters.scene_id: map it to the product id.
     SELECT j.tenant_id, j.entity_id,
-           j.parameters->>'scene_id' AS scene_id,
-           pg_temp.safe_date(COALESCE(j.parameters->>'date', j.parameters->>'sensing_date')) AS sensing_date,
+           COALESCE(vs.scene_id, j.parameters->>'scene_id') AS scene_id,
+           pg_temp.safe_date(COALESCE(j.parameters->>'date', j.parameters->>'sensing_date',
+                                      j.result->>'sensing_date')) AS sensing_date,
            'done'::text AS status,
            NULL::numeric AS parcel_cloud_pct,
            j.id AS job_id,
-           j.created_at
+           j.created_at,
+           false AS abandoned
     FROM vegetation_jobs j
+    LEFT JOIN vegetation_scenes vs
+           ON vs.id::text = j.parameters->>'scene_id' AND vs.tenant_id = j.tenant_id
     WHERE j.job_type = 'calculate_index'
       AND j.status = 'completed'
       AND j.entity_id IS NOT NULL
       AND j.parameters->>'scene_id' IS NOT NULL
-      AND j.result->>'raster_path' IS NOT NULL
+      AND (j.result->>'raster_path' IS NOT NULL OR j.result->>'skipped' = 'true')
     UNION ALL
     SELECT j.tenant_id, j.entity_id,
            COALESCE(j.parameters->>'scene_id', j.result->>'scene_product_id') AS scene_id,
-           pg_temp.safe_date(COALESCE(j.parameters->>'date', j.parameters->>'sensing_date')) AS sensing_date,
+           pg_temp.safe_date(COALESCE(j.parameters->>'date', j.parameters->>'sensing_date',
+                                      j.result->>'sensing_date')) AS sensing_date,
            CASE
                WHEN j.status = 'completed' AND j.result->>'skipped_due_to_clouds' = 'true' THEN 'cloud_skipped'
                WHEN j.status = 'failed' THEN 'failed'
@@ -93,7 +100,11 @@ FROM (
            CASE WHEN j.status = 'completed' AND j.result->>'skipped_due_to_clouds' = 'true'
                 THEN pg_temp.safe_pct(j.result->>'local_cloud_pct') END AS parcel_cloud_pct,
            j.id AS job_id,
-           j.created_at
+           j.created_at,
+           -- abandoned: failed, or a completed download that never produced a calculation.
+           -- In-flight (pending/running) downloads keep a fresh timestamp.
+           (j.status = 'failed'
+            OR (j.status = 'completed' AND COALESCE(j.result->>'skipped_due_to_clouds', '') <> 'true')) AS abandoned
     FROM vegetation_jobs j
     WHERE j.job_type = 'download'
       AND j.entity_id IS NOT NULL

@@ -124,6 +124,8 @@ def downloaded_for_entity(tenant_id: str, entity_id: str, *, completed_only: boo
         VegetationJob.tenant_id == tenant_id,
         VegetationJob.entity_id == entity_id,
         VegetationJob.job_type == "download",
+        # a parcel that was clouded out never computed the scene, even if another parcel's row is valid
+        func.coalesce(VegetationJob.result["skipped_due_to_clouds"].astext, "false") != "true",
         VegetationScene.scene_id == func.coalesce(
             VegetationJob.parameters["scene_id"].astext,
             VegetationJob.result["scene_product_id"].astext,

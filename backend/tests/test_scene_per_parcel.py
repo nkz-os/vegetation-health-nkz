@@ -237,6 +237,9 @@ def test_entity_scene_filter_survives_job_id_overwrite():
                 "INSERT INTO vegetation_jobs VALUES (%s, 'acme', 'parcel-a', 'download', 'completed', "
                 "'{\"scene_id\": \"S1\"}', NULL), (%s, 'acme', 'parcel-b', 'download', 'completed', "
                 "NULL, '{\"scene_product_id\": \"S1\"}')", (job_a, job_b))
+            conn.exec_driver_sql(
+                "INSERT INTO vegetation_jobs VALUES (%s, 'acme', 'parcel-d', 'download', 'completed', "
+                "'{\"scene_id\": \"S1\"}', '{\"skipped_due_to_clouds\": true}')", (str(uuid.uuid4()),))
             # S1.job_id was overwritten by parcel-b's download
             conn.exec_driver_sql(
                 "INSERT INTO vegetation_scenes VALUES (%s, 'acme', 'S1', true, %s)",
@@ -251,6 +254,7 @@ def test_entity_scene_filter_survives_job_id_overwrite():
             assert len(ids("parcel-a")) == 1
             assert len(ids("parcel-b")) == 1
             assert len(ids("parcel-c")) == 0
+            assert len(ids("parcel-d")) == 0  # clouded for parcel-d: never computed there
         finally:
             session.close()
     finally:
@@ -283,3 +287,27 @@ def test_calc_marks_done_or_no_valid_pixels():
     _verdict(True, ok, composite=True).assert_not_called()
     _verdict(True, ok, index="CUSTOM").assert_not_called()
     _verdict(True, ok, entity=None).assert_not_called()
+
+
+def test_calc_idempotency_exit_records_done():
+    job = MagicMock()
+    job.id = uuid.uuid4()
+    job.entity_id = PARCEL_B
+    job.parameters = {"index_type": "NDVI", "scene_id": SCENE}
+    job.start_date = None
+    job.end_date = None
+    scene = MagicMock()
+    scene.id = uuid.uuid4()
+    scene.scene_id = SCENE
+    scene.sensing_date = date(2026, 11, 1)
+    db = MagicMock()
+    db.query.side_effect = _query_stub({VegetationJob: job, VegetationScene: scene})
+    with patch.object(pt, "get_db_session", return_value=iter([db])), \
+         patch.object(pt, "_check_idempotency", return_value=True), \
+         patch.object(pt, "_decrement_and_cleanup_bands"), \
+         patch.object(pt.parcel_scenes, "record") as record, \
+         patch.object(pt.calculate_vegetation_index, "update_state"):
+        pt.calculate_vegetation_index.run(str(job.id), TENANT, SCENE, "NDVI", None, None, None)
+    record.assert_called_once_with(
+        TENANT, PARCEL_B, SCENE, parcel_scenes.DONE, sensing_date=date(2026, 11, 1),
+    )

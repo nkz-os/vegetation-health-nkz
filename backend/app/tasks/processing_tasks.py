@@ -488,6 +488,12 @@ def calculate_vegetation_index(
                     "skipped": True,
                 })
                 db.commit()
+                # Same parcel and date already computed (e.g. from the other tile of the day): covered.
+                if job.entity_id and index_type != 'CUSTOM':
+                    parcel_scenes.record(
+                        tenant_id, job.entity_id, scene.scene_id, parcel_scenes.DONE,
+                        sensing_date=scene.sensing_date,
+                    )
                 _decrement_and_cleanup_bands(
                     scene.scene_id,
                     local_processing_dir=Path(f"/tmp/vegetation_processing/{tenant_id}/{scene.id}"),
