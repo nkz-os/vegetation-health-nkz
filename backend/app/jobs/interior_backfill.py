@@ -2,6 +2,7 @@
 
     python -m app.jobs.interior_backfill --tenant T [--parcel URN] [--apply]
 
+Index attributes published as 0 with pixelCount 0 are deleted (never set to null).
 Without --apply nothing is written: it counts and logs what it would change.
 Nothing is downloaded from Copernicus: the raster each calculation saved is read
 back and measured over the parcel interior (``interior_stats``). The parcel cloud
@@ -28,6 +29,8 @@ from app.services.interior_stats import interior_mask, interior_statistics
 logger = logging.getLogger(__name__)
 
 FRACTION_TOLERANCE = 1e-4
+INDEX_ATTRIBUTES = ("ndvi", "evi", "savi", "ndre", "gndvi", "osavi", "ndmi")
+PRODUCT_PAGE = 1000
 
 
 @dataclass
@@ -89,6 +92,25 @@ def pick_job_for_date(jobs: List[dict], published_value: Optional[float],
     return max(usable, key=lambda j: _fraction(interiors[j["raster_path"]]))
 
 
+def zero_index_attributes(entity: dict) -> List[str]:
+    """Index attributes (short names) published with value 0 on a product with ``pixelCount`` 0.
+
+    A zero with no valid pixel behind it is not a measurement. Attribute names may be short or IRIs.
+    """
+    pixel_count = fi._property_value(fi._attr_by_name(entity, "pixelCount"))
+    try:
+        if pixel_count is None or int(pixel_count) != 0:
+            return []
+    except (TypeError, ValueError):
+        return []
+    zeros = []
+    for name in INDEX_ATTRIBUTES:
+        value = fi._property_value(fi._attr_by_name(entity, name))
+        if isinstance(value, (int, float)) and not isinstance(value, bool) and value == 0:
+            zeros.append(name)
+    return zeros
+
+
 def _load_jobs(db, tenant_id: str, parcel: Optional[str] = None) -> List[dict]:
     """Completed single-scene standard-index calculations of the tenant that kept a raster."""
     from app.models import VegetationJob
@@ -138,6 +160,20 @@ class OrionBroker:
                 return None
             raise
 
+    def list_products(self, tenant_id: str):
+        """Every EOProduct of the tenant, paged."""
+        client = fi.SyncOrionClient(tenant_id)
+        offset = 0
+        while True:
+            page = client.query_entities(type="EOProduct", limit=PRODUCT_PAGE, offset=offset)
+            yield from page
+            if len(page) < PRODUCT_PAGE:
+                return
+            offset += PRODUCT_PAGE
+
+    def delete_attr(self, tenant_id: str, entity_id: str, attr: str) -> bool:
+        return fi.delete_eo_attribute(tenant_id, entity_id, attr)
+
     def upsert(self, tenant_id: str, parcel_id: str, index_type: str, **kwargs) -> Optional[str]:
         return fi.upsert_eo_index(tenant_id, parcel_id, index_type, **kwargs)
 
@@ -177,10 +213,12 @@ def _group_jobs(jobs: List[dict]) -> Dict[tuple, List[dict]]:
 
 
 def backfill_tenant(db, tenant_id: str, *, parcel: Optional[str] = None, apply: bool = False,
-                    reader: Optional[Callable[[str], bytes]] = None, broker=None) -> BackfillReport:
+                    reader: Optional[Callable[[str], bytes]] = None, broker=None,
+                    retire_zeros: bool = True) -> BackfillReport:
     """Recompute the interior measure of the tenant's published EOProducts from stored rasters.
 
-    With ``apply`` False nothing is written and ``updated`` counts what would be.
+    With ``apply`` False nothing is written and ``updated``/``zeros_retired`` count what would be.
+    ``retire_zeros`` also deletes the index attributes published as 0 with no valid pixel.
     """
     report = BackfillReport()
     broker = broker or OrionBroker()
@@ -249,7 +287,27 @@ def backfill_tenant(db, tenant_id: str, *, parcel: Optional[str] = None, apply: 
         except Exception as exc:
             report.errors += 1
             logger.error("%s %s %s failed: %s", parcel_urn, index_type, day, exc, exc_info=True)
+    if retire_zeros:
+        _retire_zeros(tenant_id, broker, apply, report)
     return report
+
+
+def _retire_zeros(tenant_id: str, broker, apply: bool, report: BackfillReport) -> None:
+    """Delete the zero-pixel index attributes of the tenant's products (only those attributes)."""
+    try:
+        for entity in broker.list_products(tenant_id):
+            for attr in zero_index_attributes(entity):
+                if not apply:
+                    logger.info("%s: would delete %s (value 0, pixelCount 0)", entity.get("id"), attr)
+                    report.zeros_retired += 1
+                elif broker.delete_attr(tenant_id, entity["id"], attr):
+                    logger.info("%s: deleted %s (value 0, pixelCount 0)", entity.get("id"), attr)
+                    report.zeros_retired += 1
+                else:
+                    report.errors += 1
+    except Exception as exc:
+        report.errors += 1
+        logger.error("zero retirement for tenant %s aborted: %s", tenant_id, exc, exc_info=True)
 
 
 def _tenant_bucket(tenant_id: str) -> str:
@@ -261,6 +319,8 @@ def main(argv=None, db=None, out=None) -> int:
     parser = argparse.ArgumentParser(description="Recompute interior statistics of published EOProducts.")
     parser.add_argument("--tenant", required=True)
     parser.add_argument("--parcel", help="limit to this parcel URN")
+    parser.add_argument("--no-retire-zeros", action="store_true",
+                        help="do not delete zero-pixel index attributes")
     parser.add_argument("--apply", action="store_true", help="write to the broker (default: dry run)")
     args = parser.parse_args(argv)
     out = out or sys.stdout
@@ -271,7 +331,8 @@ def main(argv=None, db=None, out=None) -> int:
         from app import database  # imported late: needs DATABASE_URL, which tests do not set
         db = database.SessionLocal()
     try:
-        report = backfill_tenant(db, args.tenant, parcel=args.parcel, apply=args.apply)
+        report = backfill_tenant(db, args.tenant, parcel=args.parcel, apply=args.apply,
+                                 retire_zeros=not args.no_retire_zeros)
     finally:
         if own_db:
             db.close()

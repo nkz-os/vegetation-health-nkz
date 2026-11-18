@@ -81,6 +81,9 @@ class FakeBroker:
             raise ValueError(f"parcel {parcel_urn} has no geometry")
         return self.geometry
 
+    def list_products(self, tenant_id):
+        return []
+
     def get_product(self, tenant_id, entity_id):
         return self.products.get(entity_id)
 
