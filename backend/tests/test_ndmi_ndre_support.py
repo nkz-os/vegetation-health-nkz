@@ -145,8 +145,8 @@ def test_float_raster_requests_only_the_index_bands():
 def test_skipped_scene_releases_every_local_index(monkeypatch):
     from app.tasks import processing_tasks as pt
     released = []
-    monkeypatch.setattr(pt, "_release_idempotency", lambda t, p, i, d: released.append(i))
-    pt.release_scene_idempotency("tenant-one", "urn:ngsi-ld:AgriParcel:p1", "2026-06-01")
+    monkeypatch.setattr(pt, "_release_idempotency", lambda t, p, i, d, s: released.append(i))
+    pt.release_scene_idempotency("tenant-one", "urn:ngsi-ld:AgriParcel:p1", "2026-06-01", "S2A_TEST")
     assert set(released) == set(pt._LOCAL_CALCULATORS)
     assert {"OSAVI", "NDMI"} <= set(released)
 

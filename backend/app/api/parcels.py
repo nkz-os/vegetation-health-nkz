@@ -408,10 +408,15 @@ def _hard_delete_one(db: Session, tenant_id: str, job: VegetationJob) -> int:
         # immediately. Without this, deleting a calc_index job and
         # relaunching would surface 'skipped' for up to 24h.
         sensing = result.get("sensing_date") or (job.parameters or {}).get("sensing_date")
-        if idx_type and sensing and job.entity_id:
+        if idx_type and sensing and job.entity_id and scene_uuid:
             try:
                 from app.tasks.processing_tasks import _release_idempotency
-                _release_idempotency(tenant_id, job.entity_id, idx_type, sensing)
+                scene_row = db.query(VegetationScene).filter(
+                    VegetationScene.tenant_id == tenant_id,
+                    VegetationScene.id == uuid_mod.UUID(scene_uuid),
+                ).first()
+                if scene_row is not None:
+                    _release_idempotency(tenant_id, job.entity_id, idx_type, sensing, scene_row.scene_id)
             except Exception as exc:
                 logger.debug("Idempotency lock release failed (non-fatal): %s", exc)
 

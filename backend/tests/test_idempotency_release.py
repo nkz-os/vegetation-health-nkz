@@ -76,6 +76,6 @@ def test_release_idempotency_on_failure_uses_claimed_key():
             )
 
     # Claimed with (tenant, entity, idempotency_key=index_type, sensing_date)
-    claim.assert_called_once_with("acmefarm", entity, "NDVI", "2026-06-21")
+    claim.assert_called_once_with("acmefarm", entity, "NDVI", "2026-06-21", "S2B_TEST")
     # Released with the SAME key on failure
-    release.assert_called_once_with("acmefarm", entity, "NDVI", "2026-06-21")
+    release.assert_called_once_with("acmefarm", entity, "NDVI", "2026-06-21", "S2B_TEST")
