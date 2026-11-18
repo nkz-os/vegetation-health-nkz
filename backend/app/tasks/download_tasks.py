@@ -42,11 +42,27 @@ def _is_raw_cache_entry(entry) -> bool:
     return not flags.get("sen2res_applied")
 
 
-def _set_band_cleanup_counter(scene_product_id: str, tenant_id: str, tenant_bucket: str, storage_prefix: str, total: int) -> None:
-    """Set Redis counter for band cleanup after all index calculations complete.
+BAND_CLEANUP_TTL_SECONDS = 259200  # 72 h: auto-expiry if calc jobs never complete (the one-off cleanup picks those up)
 
-    Each calculate_vegetation_index job decrements the counter after success.
-    The last job (counter=0) deletes raw band files from the tenant bucket.
+
+def band_cleanup_key(tenant_id: str, scene_product_id: str) -> str:
+    """Redis key of the pending-calculations counter: one per tenant and scene."""
+    return f"vegetation:bandclean:{tenant_id}:{scene_product_id}"
+
+
+def band_copy_prefix(storage_path: str, scene_product_id: str) -> str:
+    """Bucket prefix of a tenant's band copy; same with or without a trailing slash in storage_path."""
+    base = (storage_path or "").rstrip("/")
+    scenes = f"scenes/{scene_product_id}/" if scene_product_id else "scenes/"
+    return f"{base}/{scenes}" if base else scenes
+
+
+def _set_band_cleanup_counter(scene_product_id: str, tenant_id: str, tenant_bucket: str, storage_prefix: str, total: int) -> None:
+    """Add `total` expected calculations to the tenant's counter for this scene.
+
+    Several parcels of the same tenant can share a scene, so the counter is
+    incremented (INCRBY), never overwritten. Each calculate_vegetation_index job
+    decrements it after success; the last one deletes the tenant's band copy.
     Global cache retains the bands for reuse.
     """
     if total <= 0:
@@ -56,20 +72,21 @@ def _set_band_cleanup_counter(scene_product_id: str, tenant_id: str, tenant_buck
         import redis
         redis_url = os.getenv('CELERY_BROKER_URL', 'redis://localhost:6379/0')
         r = redis.from_url(redis_url, decode_responses=True)
-        key = f"vegetation:bandclean:{scene_product_id}"
+        key = band_cleanup_key(tenant_id, scene_product_id)
         pipeline = r.pipeline()
-        pipeline.set(key, total)
-        pipeline.expire(key, 86400)  # 24h TTL — auto-cleanup if calc jobs never complete
+        pipeline.incrby(key, total)
+        pipeline.expire(key, BAND_CLEANUP_TTL_SECONDS)
+        # Same tenant -> same bucket and prefix, so overwriting the meta is harmless.
         pipeline.hset(key + ":meta", mapping={
             "tenant_id": tenant_id,
             "bucket": tenant_bucket,
             "prefix": storage_prefix,
         })
-        pipeline.expire(key + ":meta", 86400)
+        pipeline.expire(key + ":meta", BAND_CLEANUP_TTL_SECONDS)
         pipeline.execute()
-        logger.info("Band cleanup counter set for scene %s: %d expected calculations", scene_product_id, total)
+        logger.info("Band cleanup counter raised for scene %s tenant %s: +%d expected calculations", scene_product_id, tenant_id, total)
     except Exception as e:
-        logger.warning("Failed to set band cleanup counter for scene %s: %s", scene_product_id, e)
+        logger.warning("Failed to set band cleanup counter for scene %s tenant %s: %s", scene_product_id, tenant_id, e)
 
 
 @celery_app.task(
@@ -337,7 +354,7 @@ def download_sentinel2_scene(self, job_id: str, tenant_id: str, parameters: Dict
                 storage_band_paths = {}
                 for band in required_bands:
                     global_band_path = global_cache_entry.get_band_path(band)
-                    tenant_band_path = f"{storage_path}scenes/{scene_id}/{band}.tif"
+                    tenant_band_path = f"{band_copy_prefix(storage_path, scene_id)}{band}.tif"
                     
                     # Copy file from global to tenant bucket
                     tenant_storage.copy_file(
@@ -440,7 +457,7 @@ def download_sentinel2_scene(self, job_id: str, tenant_id: str, parameters: Dict
             storage_band_paths = {}
             for band in required_bands:
                 global_band_path = global_band_paths[band]
-                tenant_band_path = f"{storage_path}scenes/{scene_id}/{band}.tif"
+                tenant_band_path = f"{band_copy_prefix(storage_path, scene_id)}{band}.tif"
                 
                 # Copy file from global to tenant bucket
                 tenant_storage.copy_file(
@@ -510,7 +527,7 @@ def download_sentinel2_scene(self, job_id: str, tenant_id: str, parameters: Dict
                 footprint=footprint,
                 centroid=centroid,
                 cloud_coverage=str(best_scene['cloud_cover']),
-                storage_path=f"{storage_path}scenes/{scene_id}/",
+                storage_path=band_copy_prefix(storage_path, scene_id),
                 storage_bucket=tenant_bucket_name,
                 bands=storage_band_paths,
                 job_id=job.id,

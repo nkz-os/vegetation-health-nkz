@@ -8,6 +8,7 @@ by the telemetry-worker subscription on Orion-LD.
 
 import logging
 import os
+import shutil
 from typing import Dict, Any, List, Optional
 from datetime import datetime, date, timezone
 import uuid
@@ -21,6 +22,7 @@ from app.services.processor import VegetationIndexProcessor
 from app.services.radiometry import l2a_radiometry
 from app.services.storage import create_storage_service, generate_tenant_bucket_name
 from app.database import get_db_session
+from app.tasks.download_tasks import band_cleanup_key, band_copy_prefix
 from app.services.fiware_integration import has_valid_pixels, upsert_eo_index
 
 logger = logging.getLogger(__name__)
@@ -38,8 +40,17 @@ def _get_redis():
     return _redis_client
 
 
-def _decrement_and_cleanup_bands(scene_product_id: str, local_processing_dir=None) -> bool:
-    """Decrement Redis counter and cleanup tenant band files if this is the last calculation.
+def _free_local_processing_dir(local_processing_dir) -> None:
+    if local_processing_dir is not None and os.path.isdir(str(local_processing_dir)):
+        try:
+            shutil.rmtree(str(local_processing_dir), ignore_errors=True)
+            logger.info("Freed local processing dir %s", local_processing_dir)
+        except Exception as fs_err:
+            logger.debug("Local processing dir cleanup failed %s: %s", local_processing_dir, fs_err)
+
+
+def _decrement_and_cleanup_bands(tenant_id: str, scene_product_id: str, local_processing_dir=None) -> bool:
+    """Decrement the tenant's Redis counter and delete its band copy after the last calculation.
 
     When this is the last index calculation for the scene, also frees the local
     Sen2Res/band working dir (``/tmp/vegetation_processing/<tenant>/<scene>``).
@@ -47,19 +58,37 @@ def _decrement_and_cleanup_bands(scene_product_id: str, local_processing_dir=Non
     still needs the shared bands. (Child recycling via max_tasks_per_child does
     NOT free pod /tmp, so without this the dir grows unbounded -> disk pressure.)
 
+    A missing or expired counter never deletes anything from the bucket: the
+    one-off band_copy_cleanup job collects those copies.
+
     Returns True if bands were cleaned up, False otherwise.
     """
-    import shutil
     try:
-        key = f"vegetation:bandclean:{scene_product_id}"
+        key = band_cleanup_key(tenant_id, scene_product_id)
         r = _get_redis()
+        if not r.exists(key):
+            logger.warning(
+                "Band cleanup counter missing for scene %s tenant %s (expired?): bucket copy kept",
+                scene_product_id, tenant_id,
+            )
+            _free_local_processing_dir(local_processing_dir)
+            return False
         remaining = r.decr(key)
-        if remaining is not None and remaining <= 0:
+        if remaining is not None and remaining < 0:
+            # The key expired between EXISTS and DECR: DECR recreated it at -1.
+            logger.warning(
+                "Band cleanup counter went negative for scene %s tenant %s: bucket copy kept",
+                scene_product_id, tenant_id,
+            )
+            r.delete(key, key + ":meta")
+            _free_local_processing_dir(local_processing_dir)
+            return False
+        if remaining is not None and remaining == 0:
             meta = r.hgetall(key + ":meta")
             tenant_bucket = meta.get("bucket") if meta else None
-            storage_prefix = meta.get("prefix", "").rstrip("/") if meta else ""
-            if tenant_bucket and storage_prefix:
-                band_prefix = f"{storage_prefix}scenes/{scene_product_id}/"
+            storage_path = meta.get("prefix", "") if meta else ""
+            if tenant_bucket:
+                band_prefix = band_copy_prefix(storage_path, scene_product_id)
                 storage = create_storage_service(
                     storage_type=os.getenv('STORAGE_TYPE', 's3'),
                     default_bucket=tenant_bucket,
@@ -69,20 +98,17 @@ def _decrement_and_cleanup_bands(scene_product_id: str, local_processing_dir=Non
                     "Band cleanup: deleted %d band files from tenant bucket %s/%s",
                     deleted, tenant_bucket, band_prefix,
                 )
+            else:
+                logger.warning(
+                    "Band cleanup meta missing for scene %s tenant %s: bucket copy kept",
+                    scene_product_id, tenant_id,
+                )
             r.delete(key, key + ":meta")
-            if local_processing_dir is not None and os.path.isdir(str(local_processing_dir)):
-                try:
-                    shutil.rmtree(str(local_processing_dir), ignore_errors=True)
-                    logger.info("Freed local processing dir %s", local_processing_dir)
-                except Exception as fs_err:
-                    logger.debug("Local processing dir cleanup failed %s: %s", local_processing_dir, fs_err)
+            _free_local_processing_dir(local_processing_dir)
             return True
-        elif remaining is None:
-            logger.debug("Band cleanup counter not found for scene %s (may have expired)", scene_product_id)
-        else:
-            logger.debug("Band cleanup deferred for scene %s: %d calculations remaining", scene_product_id, remaining)
+        logger.debug("Band cleanup deferred for scene %s tenant %s: %s calculations remaining", scene_product_id, tenant_id, remaining)
     except Exception as e:
-        logger.warning("Band cleanup check failed for scene %s: %s", scene_product_id, e)
+        logger.warning("Band cleanup check failed for scene %s tenant %s: %s", scene_product_id, tenant_id, e)
     return False
 
 
@@ -495,6 +521,7 @@ def calculate_vegetation_index(
                         sensing_date=scene.sensing_date,
                     )
                 _decrement_and_cleanup_bands(
+                    tenant_id,
                     scene.scene_id,
                     local_processing_dir=Path(f"/tmp/vegetation_processing/{tenant_id}/{scene.id}"),
                 )
@@ -735,6 +762,7 @@ def calculate_vegetation_index(
         # Band cleanup: delete raw bands from tenant bucket after last index calc
         if not is_temporal_composite and primary_scene:
             _decrement_and_cleanup_bands(
+                tenant_id,
                 primary_scene.scene_id,
                 local_processing_dir=Path(f"/tmp/vegetation_processing/{tenant_id}/{primary_scene.id}"),
             )

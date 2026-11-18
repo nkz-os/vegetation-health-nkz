@@ -19,7 +19,7 @@ def test_local_processing_dir_removed_on_last_calc(tmp_path):
     fake_r.decr.return_value = 0          # last calculation for the scene
     fake_r.hgetall.return_value = {}      # no bucket meta -> skip MinIO branch
     with patch.object(pt, "_get_redis", return_value=fake_r):
-        cleaned = pt._decrement_and_cleanup_bands("scene-prod-1", local_processing_dir=d)
+        cleaned = pt._decrement_and_cleanup_bands("acme", "scene-prod-1", local_processing_dir=d)
     assert cleaned is True
     assert not d.exists()
 
@@ -30,7 +30,7 @@ def test_local_processing_dir_kept_when_calcs_remain(tmp_path):
     fake_r = MagicMock()
     fake_r.decr.return_value = 2          # other index calcs still pending
     with patch.object(pt, "_get_redis", return_value=fake_r):
-        pt._decrement_and_cleanup_bands("scene-prod-1", local_processing_dir=d)
+        pt._decrement_and_cleanup_bands("acme", "scene-prod-1", local_processing_dir=d)
     assert d.exists()                     # must NOT race-delete shared bands
 
 
@@ -40,4 +40,4 @@ def test_decrement_without_local_dir_is_noop_for_fs(tmp_path):
     fake_r.decr.return_value = 0
     fake_r.hgetall.return_value = {}
     with patch.object(pt, "_get_redis", return_value=fake_r):
-        assert pt._decrement_and_cleanup_bands("scene-prod-1") is True
+        assert pt._decrement_and_cleanup_bands("acme", "scene-prod-1") is True
