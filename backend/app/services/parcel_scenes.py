@@ -69,6 +69,7 @@ def record(
     parcel_cloud_pct: float | None = None,
     job_id=None,
     new_attempt: bool = False,
+    refund_attempt: bool = False,
 ) -> str:
     """Upsert the verdict of one parcel for one scene. Never raises; returns the stored status or ''."""
     if not entity_id or not scene_id:
@@ -96,6 +97,8 @@ def record(
             row.job_id = job_id
         if new_attempt:
             row.attempts = (row.attempts or 0) + 1
+        if refund_attempt:
+            row.attempts = max(0, (row.attempts or 0) - 1)
         row.updated_at = datetime.now(timezone.utc)
         stored = row.status
         session.commit()

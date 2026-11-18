@@ -2,14 +2,15 @@
 Periodic tasks for scheduling vegetation updates.
 """
 import logging
+import os
 import re
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time as dt_time, timedelta, timezone
 from sqlalchemy import or_, and_
 
 from app.celery_app import celery_app
 from app.database import get_db_session
 from app.models import VegetationSubscription, VegetationJob
-from app.services import parcel_scenes
+from app.services import acquisition_guard, parcel_scenes
 from app.tasks.download_tasks import download_sentinel2_scene
 from app.tasks.processing_tasks import calculate_vegetation_index
 
@@ -32,6 +33,11 @@ def _scene_date(value) -> date | None:
         return date.fromisoformat(str(value)[:10])
     except ValueError:
         return None
+
+
+def _next_02h(now: datetime) -> datetime:
+    """Next daily beat (02:00, same naive convention as next_run_at) after `now`."""
+    return datetime.combine((now + timedelta(days=1)).date(), dt_time(2, 0))
 
 
 # We might need a task to find new scenes first, then download them.
@@ -65,24 +71,21 @@ def process_subscriptions():
         logger.info("Processing %d due subscriptions.", len(subscriptions))
         
         for sub in subscriptions:
-            # Backfill + incremental: first run uses start_date (full history), then last_run_at
-            start_check = (sub.last_run_at.date() if sub.last_run_at else sub.start_date)
-            
-            # Simple logic: Trigger a new task that discovers and processes scenes for this entity
-            # We call a new task: check_and_process_entity
-            check_and_process_entity.delay(
-                subscription_id=str(sub.id),
-                start_date=start_check.isoformat(),
-                end_date=today.isoformat()
-            )
-            
+            # Backfill + incremental: first run uses start_date (full history); afterwards the
+            # cursor (last_run_at, moved only by check_and_process_entity) minus a lookback, so a
+            # scene published in the catalog days after its sensing date is not lost.
+            # Already-handled scenes are dropped by parcel_scenes.scenes_seen.
+            if sub.last_run_at:
+                lookback = int(os.getenv("VEG_SEARCH_LOOKBACK_DAYS", "5"))
+                start_check = max(sub.start_date, sub.last_run_at.date() - timedelta(days=lookback))
+            else:
+                start_check = sub.start_date
+
             # Compute next_run_at aligned to date boundary, not current timestamp.
             # Using now + timedelta accumulates microsecond drift: after one iteration
             # next_run_at becomes 02:00:00.991 instead of 02:00:00.000. The scheduler
             # fires at ~02:00:00.884 the next day, which is BEFORE 02:00:00.991 → not due.
             # Rounding to midnight + 2h snaps to the exact beat time regardless of jitter.
-            from datetime import time as dt_time
-
             if sub.frequency == 'daily':
                 delta = timedelta(days=1)
             elif sub.frequency == 'weekly':
@@ -94,8 +97,14 @@ def process_subscriptions():
 
             next_run_date = (now + delta).date()
             sub.next_run_at = datetime.combine(next_run_date, dt_time(2, 0))
-            sub.last_run_at = now  # Mark as checked
             db.commit()
+
+            # Dispatch after the commit so the task's own next_run_at/cursor updates are not overwritten
+            check_and_process_entity.delay(
+                subscription_id=str(sub.id),
+                start_date=start_check.isoformat(),
+                end_date=today.isoformat()
+            )
             
     finally:
         db.close()
@@ -119,7 +128,23 @@ def check_and_process_entity(self, subscription_id, start_date, end_date):
         if not sub:
             logger.error("Subscription %s not found", subscription_id)
             return
+
+        # S1 keeps its original window (the cursor as it was when this task started), not the S2 lookback
+        sar_start = sub.last_run_at.date() if sub.last_run_at else datetime.fromisoformat(start_date).date()
             
+        # Disk brake: below the threshold nothing is searched or enqueued and the cursor stays put
+        disk_is_ok, free_gb, threshold_gb = acquisition_guard.disk_ok()
+        if not disk_is_ok:
+            low_disk = acquisition_guard.LowDiskSpace(free_gb, threshold_gb, acquisition_guard.check_path())
+            logger.error(
+                "Subscription %s not processed: %s (free=%.1f GB, threshold=%.1f GB, path=%s)",
+                subscription_id, low_disk, free_gb, threshold_gb, acquisition_guard.check_path(),
+            )
+            sub.last_error = str(low_disk)
+            sub.next_run_at = _next_02h(datetime.now(timezone.utc))
+            db.commit()
+            return
+
         # Update status to syncing if new
         if sub.status == 'created':
             sub.status = 'syncing'
@@ -177,15 +202,79 @@ def check_and_process_entity(self, subscription_id, start_date, end_date):
                 start_date=start,
                 end_date=end,
                 cloud_cover_lte=50,
-                limit=20,
             )
         except Exception as e:
-            logger.error("Error searching scenes: %s", e)
+            # The cursor is NOT moved: the next pass searches the same window again.
+            logger.error("Error searching scenes for subscription %s: %s", subscription_id, e)
             sub.last_error = f"Search failed: {str(e)}"
-            # Don't set error status permanently if just search fail?
-            # sub.status = 'error' 
+            sub.next_run_at = _next_02h(datetime.now(timezone.utc))
             db.commit()
             return
+
+        # Skip scenes THIS parcel has already handled (another parcel's result does not count),
+        # then take the oldest ones up to the tenant's budget for this pass.
+        now = datetime.now(timezone.utc)
+        scene_ids = [s['id'] for s in scenes]
+        seen_ids = parcel_scenes.scenes_seen(db, sub.tenant_id, sub.entity_id, scene_ids, now)
+        budget = acquisition_guard.tenant_budget(db, sub.tenant_id, now)
+        batch, capped = acquisition_guard.select_batch(scenes, seen_ids, budget)
+        if capped and not batch:
+            logger.info(
+                "Subscription %s: tenant %s has no scene budget left, resuming next pass",
+                subscription_id, sub.tenant_id,
+            )
+
+        triggered_count = 0
+        last_enqueued = None
+        for scene in batch:
+            dl_params = {
+                'scene_id': scene['id'],
+                'bounds': intersects_geojson,
+                'bbox': bbox,
+                'date': scene['sensing_date'],
+                'entity_id': sub.entity_id,
+                'calculate_indices': sub.index_types,
+                'subscription_id': subscription_id,
+            }
+            job = VegetationJob(
+                id=uuid.uuid4(),
+                tenant_id=sub.tenant_id,
+                entity_id=sub.entity_id,
+                job_type='download',
+                status='pending',
+                parameters=dl_params,
+            )
+            db.add(job)
+            db.commit()
+            parcel_scenes.record(
+                sub.tenant_id, sub.entity_id, scene['id'], parcel_scenes.PENDING,
+                sensing_date=_scene_date(scene.get('sensing_date')),
+                job_id=job.id, new_attempt=True,
+            )
+            logger.info("Triggering download for scene %s", scene['id'])
+            download_sentinel2_scene.delay(
+                job_id=str(job.id),
+                tenant_id=sub.tenant_id,
+                parameters=dl_params
+            )
+            triggered_count += 1
+            last_enqueued = scene
+
+        if triggered_count > 0:
+            logger.info("Triggered %d S2 downloads for subscription %s", triggered_count, subscription_id)
+
+        # Cursor: only up to what was actually enqueued. Capped -> the last enqueued scene's date
+        # (the next pass resumes there, tomorrow); otherwise the whole window was covered.
+        if capped:
+            if last_enqueued is not None:
+                resume_date = _scene_date(last_enqueued.get('sensing_date'))
+                if resume_date is not None:
+                    sub.last_run_at = datetime.combine(resume_date, dt_time(0), tzinfo=timezone.utc)
+            sub.next_run_at = _next_02h(now)
+        else:
+            sub.last_run_at = datetime.combine(end, dt_time(0), tzinfo=timezone.utc)
+        sub.last_error = None
+        db.commit()
 
         if not scenes:
             # No scenes found, but successful search
@@ -193,50 +282,6 @@ def check_and_process_entity(self, subscription_id, start_date, end_date):
                 sub.status = 'active'
                 db.commit()
             return
-
-        # Skip scenes THIS parcel has already handled (another parcel's result does not count)
-        scene_ids = [s['id'] for s in scenes]
-        seen_ids = parcel_scenes.scenes_seen(
-            db, sub.tenant_id, sub.entity_id, scene_ids, datetime.now(timezone.utc)
-        )
-
-        triggered_count = 0
-        for scene in scenes:
-            if scene['id'] not in seen_ids:
-                dl_params = {
-                    'scene_id': scene['id'],
-                    'bounds': intersects_geojson,
-                    'bbox': bbox,
-                    'date': scene['sensing_date'],
-                    'entity_id': sub.entity_id,
-                    'calculate_indices': sub.index_types,
-                    'subscription_id': subscription_id,
-                }
-                job = VegetationJob(
-                    id=uuid.uuid4(),
-                    tenant_id=sub.tenant_id,
-                    entity_id=sub.entity_id,
-                    job_type='download',
-                    status='pending',
-                    parameters=dl_params,
-                )
-                db.add(job)
-                db.commit()
-                parcel_scenes.record(
-                    sub.tenant_id, sub.entity_id, scene['id'], parcel_scenes.PENDING,
-                    sensing_date=_scene_date(scene.get('sensing_date')),
-                    job_id=job.id, new_attempt=True,
-                )
-                logger.info("Triggering download for scene %s", scene['id'])
-                download_sentinel2_scene.delay(
-                    job_id=str(job.id),
-                    tenant_id=sub.tenant_id,
-                    parameters=dl_params
-                )
-                triggered_count += 1
-        
-        if triggered_count > 0:
-            logger.info("Triggered %d S2 downloads for subscription %s", triggered_count, subscription_id)
 
         # ── Sentinel-1 GRD (SAR) search ─────────────────────────────────
         # Search S1 scenes independently of S2 — SAR penetrates clouds.
@@ -246,7 +291,7 @@ def check_and_process_entity(self, subscription_id, start_date, end_date):
         try:
             s1_scenes = client.search_s1_scenes(
                 intersects=intersects_geojson,
-                start_date=start,
+                start_date=sar_start,
                 end_date=end,
                 limit=10,
             )
@@ -256,6 +301,15 @@ def check_and_process_entity(self, subscription_id, start_date, end_date):
                     VegetationScene.tenant_id == sub.tenant_id,
                 ).all()
                 s1_existing_ids = {r[0] for r in s1_existing}
+                # a scene that already has a live or finished SAR job for this parcel is not queued twice
+                s1_jobs = db.query(VegetationJob.parameters['scene_id'].astext).filter(
+                    VegetationJob.tenant_id == sub.tenant_id,
+                    VegetationJob.entity_id == sub.entity_id,
+                    VegetationJob.job_type == 'download_sar',
+                    VegetationJob.status.in_(['pending', 'running', 'completed']),
+                    VegetationJob.parameters['scene_id'].astext.in_([s["id"] for s in s1_scenes]),
+                ).all()
+                s1_existing_ids |= {r[0] for r in s1_jobs}
 
                 s1_triggered = 0
                 for s1_scene in s1_scenes:

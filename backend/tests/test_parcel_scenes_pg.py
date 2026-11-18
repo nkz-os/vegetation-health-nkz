@@ -170,3 +170,20 @@ def test_record_never_raises_and_leaves_caller_session_usable(parcel_scenes_db, 
     assert ps.record("acme", "parcel-a", "S1", ps.DONE) == ""
     caller.execute(text("SELECT 1"))
     caller.commit()
+
+
+def test_refund_attempt_keeps_scene_retryable(parcel_scenes_db, monkeypatch):
+    engine, make = parcel_scenes_db
+    with engine.begin() as conn:
+        conn.exec_driver_sql(MIGRATION.read_text())
+    from app import database
+    from app.services import parcel_scenes as ps
+    monkeypatch.setattr(database, "SessionLocal", make)
+
+    ps.record("acme", "parcel-a", "S1", ps.PENDING, new_attempt=True)          # enqueue: attempts 1
+    assert ps.record("acme", "parcel-a", "S1", ps.FAILED, refund_attempt=True) == "failed"
+    ps.record("acme", "parcel-a", "S1", ps.FAILED, refund_attempt=True)         # never below 0
+    with engine.begin() as conn:
+        attempts = conn.exec_driver_sql("SELECT attempts FROM vegetation_parcel_scenes").scalar()
+    assert attempts == 0
+    assert ps.scenes_seen(make(), "acme", "parcel-a", ["S1"], NOW) == set()

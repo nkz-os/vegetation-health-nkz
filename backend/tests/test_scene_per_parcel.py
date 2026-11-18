@@ -69,6 +69,8 @@ def _run_planner(seen):
          patch("app.services.copernicus_client.CopernicusDataSpaceClient", return_value=client), \
          patch("app.services.platform_credentials.get_copernicus_credentials_with_fallback",
                return_value={"client_id": "i", "client_secret": "s"}), \
+         patch.object(sched.acquisition_guard, "disk_ok", return_value=(True, 100.0, 20.0)), \
+         patch.object(sched.acquisition_guard, "tenant_budget", return_value=20), \
          patch.object(sched.parcel_scenes, "scenes_seen", return_value=seen) as seen_mock, \
          patch.object(sched.parcel_scenes, "record") as record, \
          patch.object(sched, "download_sentinel2_scene") as download:
