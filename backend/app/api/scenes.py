@@ -26,6 +26,7 @@ def _parse_iso_date(value):
         return None
 
 from app.database import get_db_with_tenant
+from app.services.parcel_scenes import downloaded_for_entity
 from app.middleware.auth import require_auth
 from app.models import VegetationScene, VegetationIndexCache, VegetationJob, VegetationCustomFormula
 from app.schemas import LatestResultsItem
@@ -1006,14 +1007,10 @@ async def list_scenes(
         # Scenes from completed download jobs (indices may still be queued on single worker)
         rows_dl = (
             db.query(VegetationScene.id)
-            .join(VegetationJob, VegetationScene.job_id == VegetationJob.id)
             .filter(
-                VegetationJob.tenant_id == tenant_id,
-                VegetationJob.entity_id == entity_id,
-                VegetationJob.job_type == "download",
-                VegetationJob.status == "completed",
                 VegetationScene.tenant_id == tenant_id,
                 VegetationScene.is_valid == True,
+                downloaded_for_entity(tenant_id, entity_id, completed_only=True),
             )
             .distinct()
             .all()

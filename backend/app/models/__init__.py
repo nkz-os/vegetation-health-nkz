@@ -12,6 +12,7 @@ from .global_scene_cache import GlobalSceneCache
 from .subscriptions import VegetationSubscription
 from .crop_seasons import VegetationCropSeason
 from .zoning import ZoningNote, ZoningVersion
+from .parcel_scenes import VegetationParcelScene
 
 __all__ = [
     'BaseModel',
@@ -29,5 +30,6 @@ __all__ = [
     'VegetationCropSeason',
     'ZoningVersion',
     'ZoningNote',
+    'VegetationParcelScene',
 ]
 

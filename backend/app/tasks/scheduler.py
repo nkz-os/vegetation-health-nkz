@@ -3,12 +3,13 @@ Periodic tasks for scheduling vegetation updates.
 """
 import logging
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from sqlalchemy import or_, and_
 
 from app.celery_app import celery_app
 from app.database import get_db_session
 from app.models import VegetationSubscription, VegetationJob
+from app.services import parcel_scenes
 from app.tasks.download_tasks import download_sentinel2_scene
 from app.tasks.processing_tasks import calculate_vegetation_index
 
@@ -24,6 +25,14 @@ def _is_recoverable_error(error_message: str | None) -> bool:
     if not error_message:
         return False
     return any(re.search(p, error_message) for p in RECOVERABLE_PATTERNS)
+
+def _scene_date(value) -> date | None:
+    """Date part of a catalog sensing date, or None when malformed."""
+    try:
+        return date.fromisoformat(str(value)[:10])
+    except ValueError:
+        return None
+
 
 # We might need a task to find new scenes first, then download them.
 # The current download_sentinel2_scene downloads a SPECIFIC scene ID.
@@ -185,17 +194,15 @@ def check_and_process_entity(self, subscription_id, start_date, end_date):
                 db.commit()
             return
 
-        # Filter existing scenes for this tenant (scene_id unique per tenant)
+        # Skip scenes THIS parcel has already handled (another parcel's result does not count)
         scene_ids = [s['id'] for s in scenes]
-        existing = db.query(VegetationScene.scene_id).filter(
-            VegetationScene.scene_id.in_(scene_ids),
-            VegetationScene.tenant_id == sub.tenant_id,
-        ).all()
-        existing_ids = {r[0] for r in existing}
-        
+        seen_ids = parcel_scenes.scenes_seen(
+            db, sub.tenant_id, sub.entity_id, scene_ids, datetime.now(timezone.utc)
+        )
+
         triggered_count = 0
         for scene in scenes:
-            if scene['id'] not in existing_ids:
+            if scene['id'] not in seen_ids:
                 dl_params = {
                     'scene_id': scene['id'],
                     'bounds': intersects_geojson,
@@ -215,6 +222,11 @@ def check_and_process_entity(self, subscription_id, start_date, end_date):
                 )
                 db.add(job)
                 db.commit()
+                parcel_scenes.record(
+                    sub.tenant_id, sub.entity_id, scene['id'], parcel_scenes.PENDING,
+                    sensing_date=_scene_date(scene.get('sensing_date')),
+                    job_id=job.id, new_attempt=True,
+                )
                 logger.info("Triggering download for scene %s", scene['id'])
                 download_sentinel2_scene.delay(
                     job_id=str(job.id),

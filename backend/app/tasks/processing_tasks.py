@@ -16,6 +16,7 @@ import numpy as np
 
 from app.celery_app import celery_app
 from app.models import VegetationJob, VegetationScene
+from app.services import parcel_scenes
 from app.services.processor import VegetationIndexProcessor
 from app.services.radiometry import l2a_radiometry
 from app.services.storage import create_storage_service, generate_tenant_bucket_name
@@ -208,6 +209,34 @@ def _persist_results(
     else:
         logger.error("Failed to upsert EOProduct for %s/%s", job.entity_id, index_type)
     return bool(eid)
+
+
+def _record_parcel_verdict(
+    tenant_id: str,
+    job: VegetationJob,
+    index_type: str,
+    is_temporal_composite: bool,
+    primary_scene: VegetationScene,
+    published: bool,
+    statistics: Dict[str, Any],
+) -> None:
+    """Annotate this parcel's verdict for the scene (single scene, standard index only).
+
+    done when published; no_valid_pixels when the parcel had none; any other
+    non-publication (e.g. broker failure) is left unannotated so it is retried.
+    """
+    if is_temporal_composite or index_type == 'CUSTOM' or not job.entity_id:
+        return
+    if published:
+        status = parcel_scenes.DONE
+    elif not has_valid_pixels(statistics):
+        status = parcel_scenes.NO_VALID_PIXELS
+    else:
+        return
+    parcel_scenes.record(
+        tenant_id, job.entity_id, primary_scene.scene_id, status,
+        sensing_date=primary_scene.sensing_date,
+    )
 
 
 _LOCAL_BANDS = {
@@ -408,10 +437,9 @@ def calculate_vegetation_index(
             )
 
             if job.entity_id:
-                scenes_query = scenes_query.join(
-                    VegetationJob,
-                    VegetationScene.job_id == VegetationJob.id
-                ).filter(VegetationJob.entity_id == job.entity_id)
+                scenes_query = scenes_query.filter(
+                    parcel_scenes.downloaded_for_entity(tenant_id, job.entity_id)
+                )
 
             scenes_to_process = scenes_query.order_by(VegetationScene.sensing_date.desc()).limit(10).all()
 
@@ -460,6 +488,12 @@ def calculate_vegetation_index(
                     "skipped": True,
                 })
                 db.commit()
+                # Same parcel and date already computed (e.g. from the other tile of the day): covered.
+                if job.entity_id and index_type != 'CUSTOM':
+                    parcel_scenes.record(
+                        tenant_id, job.entity_id, scene.scene_id, parcel_scenes.DONE,
+                        sensing_date=scene.sensing_date,
+                    )
                 _decrement_and_cleanup_bands(
                     scene.scene_id,
                     local_processing_dir=Path(f"/tmp/vegetation_processing/{tenant_id}/{scene.id}"),
@@ -523,7 +557,7 @@ def calculate_vegetation_index(
             calc_band_paths = local_band_paths
             if parcel_bounds and isinstance(parcel_bounds, dict) and 'coordinates' in parcel_bounds:
                 from app.services.window_crop import crop_bands_to_window
-                win_dir = str(local_band_dir / "win")
+                win_dir = str(local_band_dir / f"win-{job_id}")
                 calc_band_paths = crop_bands_to_window(
                     local_band_paths, parcel_bounds, window_buffer_m, win_dir,
                 )
@@ -693,6 +727,10 @@ def calculate_vegetation_index(
 
         job.mark_completed(job_result)
         db.commit()
+
+        _record_parcel_verdict(
+            tenant_id, job, index_type, is_temporal_composite, primary_scene, published, statistics,
+        )
 
         # Band cleanup: delete raw bands from tenant bucket after last index calc
         if not is_temporal_composite and primary_scene:
