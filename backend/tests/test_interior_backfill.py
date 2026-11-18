@@ -78,7 +78,9 @@ class FakeBroker:
 
     def parcel_geometry(self, tenant_id, parcel_urn):
         if self.geometry is None:
-            raise ValueError(f"parcel {parcel_urn} has no geometry")
+            raise ib.NoGeometry(f"parcel {parcel_urn} has no geometry")
+        if isinstance(self.geometry, Exception):
+            raise self.geometry
         return self.geometry
 
     def list_products(self, tenant_id):
@@ -156,3 +158,35 @@ def test_fallback_republishes_stats_of_the_chosen_scene(monkeypatch, rasters):
     _, kwargs = broker.writes[0]
     assert kwargs["statistics"]["mean"] == 0.7 and kwargs["interior"]["valid_fraction"] == 1.0
     assert kwargs["raster_url"].endswith("/y/NDVI.tif")
+
+
+def test_reader_errors_other_than_not_found_are_errors_not_missing(one_job):
+    def boom(path):
+        raise RuntimeError("storage down")
+    report = ib.backfill_tenant(None, TENANT, apply=True, reader=boom, broker=FakeBroker())
+    assert (report.errors, report.missing_raster) == (1, 0)
+
+
+def test_not_found_variants_count_as_missing(one_job):
+    class NoSuchKey(Exception):
+        response = {"Error": {"Code": "NoSuchKey"}}
+
+    for exc in (FileNotFoundError("x"), NoSuchKey("gone")):
+        def gone(path, exc=exc):
+            raise exc
+        report = ib.backfill_tenant(None, TENANT, apply=True, reader=gone, broker=FakeBroker())
+        assert (report.missing_raster, report.errors) == (1, 0)
+
+
+def test_geometry_broker_failure_is_an_error_not_no_geometry(one_job, rasters):
+    report = ib.backfill_tenant(None, TENANT, apply=True, reader=_reader(rasters),
+                                broker=FakeBroker(geometry=RuntimeError("broker 500")))
+    assert (report.errors, report.no_geometry) == (1, 1 - 1)
+
+
+def test_cli_exits_1_when_there_are_errors(monkeypatch):
+    out = []
+    monkeypatch.setattr(ib, "backfill_tenant", lambda *a, **k: ib.BackfillReport(errors=2))
+    assert ib.main(["--tenant", "acme"], db=object(), out=type("O", (), {"write": out.append})()) == 1
+    monkeypatch.setattr(ib, "backfill_tenant", lambda *a, **k: ib.BackfillReport())
+    assert ib.main(["--tenant", "acme"], db=object(), out=type("O", (), {"write": out.append})()) == 0
