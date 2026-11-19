@@ -205,6 +205,9 @@ async def update_subscription(
     reset_cursor = payload.pop("reset_monitoring_cursor", None)
     for key, value in payload.items():
         setattr(sub, key, value)
+    if payload.get("is_active") is not None:
+        # A person's choice: a pause is theirs (never resumed by the daily sync), a resume clears any pause reason.
+        sub.paused_reason = None if payload["is_active"] else "user"
     if reset_cursor:
         sub.last_run_at = None
 

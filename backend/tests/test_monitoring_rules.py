@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.services.monitoring import Period, is_woody, monitoring_period, monitoring_state
+from app.services.monitoring import Period, is_woody, monitoring_period, monitoring_state, needs_parcel_crop, utc_today
 
 TODAY = date(2026, 11, 19)
 SOWN = date(2026, 3, 10)
@@ -191,3 +191,79 @@ def test_continuous_by_is_listed_sorted_and_opens_the_period():
     assert state["continuous_by"] == ["alpha", "carbon"]
     assert state["period"] == {"start": "2025-11-19", "end": None}
     assert state["monitoring"] == "paused_harvest"
+
+
+# ── woody crop without a registered planting (the parcel's own crop) ─────
+
+def parcel_crop(species="Olea europaea", lifecycle=None, status="active", end=None):
+    return {"species": species, "lifecycle": lifecycle, "status": status,
+            "end": {"date": end.isoformat() if end else None, "provenance": "declared" if end else None}}
+
+
+WOODY_WINDOW = Period(date(2025, 11, 19), None, "woody")
+
+
+@pytest.mark.parametrize("previous", [
+    None,
+    cycle(lifecycle="unknown", species="Olea europaea"),  # no start at all
+    cycle(lifecycle="unknown", species="Olea europaea", start=boundary(date(2015, 1, 1), "planned")),
+])
+def test_an_olive_without_a_planting_record_is_watched_all_year(previous):
+    tl = {"current": None, "previous": previous, "parcel_crop": parcel_crop()}
+    assert monitoring_period(tl, TODAY, False) == WOODY_WINDOW
+    state = monitoring_state(tl, None, [], TODAY)
+    assert state["crop"] == {"present": True, "species": "Olea europaea", "lifecycle": "perennial",
+                             "planting_date": None, "termination_date": None}
+    assert state["needs_activation"] is True and state["period"]["start"] == "2025-11-19"
+
+
+def test_a_declared_perennial_without_a_planting_record_is_watched_too():
+    tl = {"current": None, "previous": None, "parcel_crop": parcel_crop("Something odd", "perennial")}
+    assert monitoring_period(tl, TODAY, False) == WOODY_WINDOW
+
+
+@pytest.mark.parametrize("crop", [
+    parcel_crop(status="terminated"),
+    parcel_crop(status="uprooted"),
+    parcel_crop(status="finished"),
+    parcel_crop(end=date(2026, 5, 1)),
+])
+def test_a_terminated_woody_crop_is_not_present(crop):
+    tl = {"current": None, "previous": None, "parcel_crop": crop}
+    assert monitoring_period(tl, TODAY, False) is None
+    state = monitoring_state(tl, None, [], TODAY)
+    assert state["crop"]["present"] is False and state["needs_activation"] is False
+
+
+def test_an_annual_without_a_registered_sowing_gets_no_fallback():
+    planned = cycle(start=boundary(SOWN, "planned"))
+    for crop in (parcel_crop("Triticum aestivum", "annual"), parcel_crop("Triticum aestivum", None),
+                 parcel_crop("Zea mays", "unknown")):
+        tl = {"current": None, "previous": planned, "parcel_crop": crop}
+        assert monitoring_period(tl, TODAY, False) is None
+        assert monitoring_state(tl, None, [], TODAY)["needs_activation"] is False
+
+
+def test_the_fallback_is_ignored_when_the_timeline_has_a_registered_cycle():
+    tl = {"current": sown(), "previous": None, "parcel_crop": parcel_crop()}
+    assert monitoring_period(tl, TODAY, False) == Period(SOWN, None, "annual")
+
+
+def test_the_fallback_does_not_serve_a_continuity_request():
+    tl = {"current": None, "previous": None, "parcel_crop": parcel_crop("Zea mays", "annual")}
+    assert monitoring_period(tl, TODAY, True) is None
+
+
+@pytest.mark.parametrize("timeline_,expected", [
+    (None, False),
+    ({"current": None, "previous": None}, True),
+    ({"current": None, "previous": cycle(start=boundary(SOWN, "planned"))}, True),
+    ({"current": sown(), "previous": None}, False),
+])
+def test_needs_parcel_crop(timeline_, expected):
+    assert needs_parcel_crop(timeline_) is expected
+
+
+def test_utc_today_is_the_utc_date():
+    from datetime import datetime, timezone
+    assert abs((utc_today() - datetime.now(timezone.utc).date()).days) <= 1

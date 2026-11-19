@@ -129,7 +129,9 @@ def test_candidates_are_alive_crops_without_a_subscription(monkeypatch):
     }
     patch_sources(monkeypatch, parcels, timelines)
     db = FakeDb(subs=[sub(urn(2)), sub(urn(3), False, "user")])
-    result = asyncio.run(mc.candidates(db, TENANT, TODAY))
+    answer = asyncio.run(mc.candidates(db, TENANT, TODAY))
+    assert answer["partial"] is False and answer["failed"] == 0
+    result = answer["candidates"]
     assert [c["entity_id"] for c in result] == [urn(1), urn(5)]
     assert result[0] == {"entity_id": urn(1), "name": "P1", "species": "Triticum aestivum",
                          "lifecycle": "annual", "period": {"start": "2026-03-10", "end": None}}
@@ -139,14 +141,44 @@ def test_candidates_are_alive_crops_without_a_subscription(monkeypatch):
 def test_a_harvested_parcel_kept_continuous_is_not_a_candidate(monkeypatch):
     patch_sources(monkeypatch, [{"id": urn(1), "name": "P1"}], {urn(1): sown_timeline(end="2026-07-05")})
     db = FakeDb(requests=[req(urn(1), "carbon")])
-    assert asyncio.run(mc.candidates(db, TENANT, TODAY)) == []
+    assert asyncio.run(mc.candidates(db, TENANT, TODAY))["candidates"] == []
 
 
-def test_one_failed_crop_read_fails_the_whole_answer(monkeypatch):
-    patch_sources(monkeypatch, [{"id": urn(1), "name": "a"}, {"id": urn(2), "name": "b"}],
-                  {urn(1): sown_timeline(), urn(2): None})
+def test_a_failed_parcel_is_skipped_and_reported_not_fatal(monkeypatch, caplog):
+    patch_sources(monkeypatch, [{"id": urn(1), "name": "a"}, {"id": urn(2), "name": "b"}, {"id": urn(3), "name": "c"}],
+                  {urn(1): sown_timeline(), urn(2): None, urn(3): sown_timeline()})
+    with caplog.at_level("WARNING"):
+        answer = asyncio.run(mc.candidates(FakeDb(), TENANT, TODAY))
+    assert [c["entity_id"] for c in answer["candidates"]] == [urn(1), urn(3)]
+    assert answer["partial"] is True and answer["failed"] == 1
+    assert any(TENANT in m and urn(2) in m for m in caplog.messages)
+
+
+def test_every_parcel_failing_is_still_an_answer_with_all_failed(monkeypatch):
+    patch_sources(monkeypatch, [{"id": urn(1), "name": "a"}], {urn(1): None})
+    answer = asyncio.run(mc.candidates(FakeDb(), TENANT, TODAY))
+    assert answer == {"candidates": [], "partial": True, "failed": 1}
+
+
+def test_a_failure_listing_the_parcels_is_unavailable(monkeypatch):
+    monkeypatch.setattr(mc, "parcels_with_crop", AsyncMock(side_effect=BrokerUnavailable("down")))
     with pytest.raises(BrokerUnavailable):
         asyncio.run(mc.candidates(FakeDb(), TENANT, TODAY))
+
+
+def test_a_partial_answer_is_cached_for_one_minute_only(monkeypatch):
+    fetch = patch_sources(monkeypatch, [{"id": urn(1), "name": "a"}, {"id": urn(2), "name": "b"}],
+                          {urn(1): sown_timeline(), urn(2): None})
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(mc.time, "monotonic", lambda: clock["t"])
+    asyncio.run(mc.candidates(FakeDb(), TENANT, TODAY))
+    assert fetch.await_count == 2
+    clock["t"] += 59
+    asyncio.run(mc.candidates(FakeDb(), TENANT, TODAY))
+    assert fetch.await_count == 2
+    clock["t"] += 2
+    asyncio.run(mc.candidates(FakeDb(), TENANT, TODAY))
+    assert fetch.await_count == 4
 
 
 def test_crop_reads_run_at_most_five_at_a_time(monkeypatch):
@@ -162,7 +194,7 @@ def test_crop_reads_run_at_most_five_at_a_time(monkeypatch):
         return sown_timeline()
 
     monkeypatch.setattr(mc, "fetch_timeline", slow)
-    result = asyncio.run(mc.candidates(FakeDb(), TENANT, TODAY))
+    result = asyncio.run(mc.candidates(FakeDb(), TENANT, TODAY))["candidates"]
     assert len(result) == 12 and state["max"] == 5
 
 
@@ -187,12 +219,12 @@ def test_the_answer_is_cached_per_tenant_for_five_minutes_and_can_be_invalidated
     assert fetch.await_count == 3
 
 
-def test_a_failure_is_not_cached(monkeypatch):
-    patch_sources(monkeypatch, [{"id": urn(1), "name": "a"}], {urn(1): None})
+def test_a_failed_listing_is_not_cached(monkeypatch):
+    monkeypatch.setattr(mc, "parcels_with_crop", AsyncMock(side_effect=BrokerUnavailable("down")))
     with pytest.raises(BrokerUnavailable):
         asyncio.run(mc.candidates(FakeDb(), TENANT, TODAY))
     patch_sources(monkeypatch, [{"id": urn(1), "name": "a"}], {urn(1): sown_timeline()})
-    assert len(asyncio.run(mc.candidates(FakeDb(), TENANT, TODAY))) == 1
+    assert len(asyncio.run(mc.candidates(FakeDb(), TENANT, TODAY))["candidates"]) == 1
 
 
 # ── one parcel ───────────────────────────────────────────────────────────

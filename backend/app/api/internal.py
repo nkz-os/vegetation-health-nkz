@@ -34,7 +34,7 @@ from app.api.parcels import observations_response, parcel_urn_of
 from app.database import SessionLocal, get_db_with_tenant
 from app.middleware.auth import require_auth, get_tenant_id
 from app.models import VegetationIndexCache, VegetationScene, VegetationSubscription
-from app.services.monitoring import Period, monitoring_period
+from app.services.monitoring import Period, monitoring_period, utc_today
 from app.services.monitoring_candidates import candidates, invalidate as invalidate_candidates, parcel_state
 from app.services.monitoring_io import add_continuous, continuous_modules, fetch_timeline, remove_continuous
 from app.services.observation_series import BrokerUnavailable
@@ -281,7 +281,7 @@ def _ensure_subscription(db: Session, tenant_id: str, parcel_urn: str, geometry:
     """
     sub = _find_subscription(db, tenant_id, parcel_urn)
     if sub is None:
-        start = period.start if period else date.today() - timedelta(days=SUBSCRIPTION_BACKFILL_DAYS)
+        start = period.start if period else utc_today() - timedelta(days=SUBSCRIPTION_BACKFILL_DAYS)
         db.add(VegetationSubscription(
             tenant_id=tenant_id,
             entity_id=parcel_urn,
@@ -391,7 +391,7 @@ async def setup_parcel(request: Request, body: SetupParcelRequest):
             period = None
             if timeline is not None:
                 continuous = continuous_modules(db, body.tenant_id, parcel_urn)
-                period = monitoring_period(timeline, date.today(), bool(continuous))
+                period = monitoring_period(timeline, utc_today(), bool(continuous))
             subscription = _ensure_subscription(db, body.tenant_id, parcel_urn, geometry, period)
         except Exception as exc:
             subscription = "error"
@@ -451,7 +451,7 @@ async def internal_parcel_monitoring(request: Request, entity_id: str, tenant_id
     tenant_id = _require_tenant(tenant_id)
     db = SessionLocal()
     try:
-        return await parcel_state(db, tenant_id, parcel_urn_of(entity_id), date.today())
+        return await parcel_state(db, tenant_id, parcel_urn_of(entity_id), utc_today())
     except BrokerUnavailable:
         raise HTTPException(status_code=502, detail="Context broker unavailable; the crop could not be read")
     finally:
@@ -465,7 +465,7 @@ async def internal_monitoring_candidates(request: Request, tenant_id: Optional[s
     tenant_id = _require_tenant(tenant_id)
     db = SessionLocal()
     try:
-        return {"tenant_id": tenant_id, "candidates": await candidates(db, tenant_id, date.today())}
+        return {"tenant_id": tenant_id, **await candidates(db, tenant_id, utc_today())}
     except BrokerUnavailable:
         raise HTTPException(status_code=502, detail="Context broker unavailable; the crops could not be read")
     finally:
@@ -490,14 +490,32 @@ async def request_continuous_monitoring(request: Request, entity_id: str, body: 
     return Response(status_code=204)
 
 
+class ContinuousWithdrawal(BaseModel):
+    tenant_id: Optional[str] = None
+    module_id: Optional[str] = None
+
+
 @router.delete("/api/internal/vegetation/parcels/{entity_id}/continuous", status_code=204)
-async def withdraw_continuous_monitoring(request: Request, entity_id: str, body: ContinuousRequest):
-    """A module withdraws its request. Idempotent."""
+async def withdraw_continuous_monitoring(
+    request: Request,
+    entity_id: str,
+    body: Optional[ContinuousWithdrawal] = None,
+    tenant_id: Optional[str] = Query(None),
+    module_id: Optional[str] = Query(None),
+):
+    """A module withdraws its request. Idempotent.
+
+    The values come as query parameters or in the body (a proxy may drop a DELETE body).
+    """
     _require_internal_secret(request, "continuous withdrawal")
+    tenant_id = tenant_id or (body.tenant_id if body else None)
+    module_id = module_id or (body.module_id if body else None)
+    if not tenant_id or not module_id:
+        raise HTTPException(status_code=422, detail="tenant_id and module_id are required")
     db = SessionLocal()
     try:
-        remove_continuous(db, body.tenant_id, parcel_urn_of(entity_id), body.module_id)
+        remove_continuous(db, tenant_id, parcel_urn_of(entity_id), module_id)
     finally:
         db.close()
-    invalidate_candidates(body.tenant_id)
+    invalidate_candidates(tenant_id)
     return Response(status_code=204)

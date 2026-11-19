@@ -34,6 +34,7 @@ from app.models import (
     VegetationJob,
     VegetationScene,
 )
+from app.services.monitoring import utc_today
 from app.services.monitoring_candidates import candidates, parcel_state
 from app.services.observation_series import SUPPORTED_INDICES, BrokerUnavailable, observation_series
 from app.services.storage import create_storage_service, generate_tenant_bucket_name
@@ -197,7 +198,7 @@ async def parcel_monitoring(
 ):
     """Crop, monitoring status and period of the parcel, for the caller's tenant."""
     try:
-        return await parcel_state(db, current_user["tenant_id"], parcel_urn_of(entity_id), date.today())
+        return await parcel_state(db, current_user["tenant_id"], parcel_urn_of(entity_id), utc_today())
     except BrokerUnavailable:
         raise HTTPException(status_code=502, detail="Context broker unavailable; the crop could not be read")
 
@@ -210,7 +211,7 @@ async def monitoring_candidates(
     """Parcels of the tenant with a living crop and no monitoring."""
     tenant_id = current_user["tenant_id"]
     try:
-        return {"tenant_id": tenant_id, "candidates": await candidates(db, tenant_id, date.today())}
+        return {"tenant_id": tenant_id, **await candidates(db, tenant_id, utc_today())}
     except BrokerUnavailable:
         raise HTTPException(status_code=502, detail="Context broker unavailable; the crops could not be read")
 

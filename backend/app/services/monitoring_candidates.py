@@ -1,7 +1,7 @@
 """Parcel monitoring state and the parcels that need activation, read for a tenant.
 
 The candidates answer reads every crop of the tenant, so it is cached per tenant in
-the memory of the process for a few minutes and dropped whenever monitoring changes
+the memory of the process for a few minutes (one minute when some parcel failed) and dropped whenever monitoring changes
 here (activation, deactivation, continuity requests). Another process keeps its own
 copy until it expires.
 """
@@ -26,9 +26,10 @@ PAGE_SIZE = 500
 MAX_PAGES = 100
 MAX_CONCURRENT_READS = 5
 CACHE_TTL_SECONDS = 300
+PARTIAL_CACHE_TTL_SECONDS = 60  # an answer with failed parcels is retried soon
 
 _CROP_RELATIONSHIPS = ("hasAgriCrop", "refAgriCrop")
-_cache: Dict[str, tuple[float, List[dict]]] = {}
+_cache: Dict[str, tuple[float, float, dict]] = {}  # tenant -> (stored at, ttl, answer)
 
 
 def invalidate(tenant_id: str) -> None:
@@ -91,14 +92,16 @@ async def parcel_state(db: Session, tenant_id: str, parcel_urn: str, today: date
     return monitoring_state(timeline, subscription, continuous_modules(db, tenant_id, parcel_urn), today)
 
 
-async def candidates(db: Session, tenant_id: str, today: date) -> List[dict]:
+async def candidates(db: Session, tenant_id: str, today: date) -> dict:
     """Parcels with a living crop and no monitoring, with the period they would be watched over.
 
-    Any failed crop read fails the whole answer: a partial list would hide parcels.
+    ``{candidates, partial, failed}``. A parcel whose crop cannot be read is skipped
+    and counted (``partial``), not guessed; failing to list the parcels at all raises
+    BrokerUnavailable.
     """
     cached = _cache.get(tenant_id)
-    if cached and time.monotonic() - cached[0] < CACHE_TTL_SECONDS:
-        return cached[1]
+    if cached and time.monotonic() - cached[0] < cached[1]:
+        return cached[2]
     parcels = await parcels_with_crop(tenant_id)
     gate = asyncio.Semaphore(MAX_CONCURRENT_READS)
 
@@ -107,8 +110,6 @@ async def candidates(db: Session, tenant_id: str, today: date) -> List[dict]:
             return await fetch_timeline(tenant_id, parcel_id)
 
     timelines = await asyncio.gather(*(read(p["id"]) for p in parcels))
-    if any(t is None for t in timelines):
-        raise BrokerUnavailable("crop timeline unavailable for some parcels")
     subscriptions = {
         s.entity_id: s for s in db.query(VegetationSubscription).filter(VegetationSubscription.tenant_id == tenant_id).all()
     }
@@ -116,7 +117,12 @@ async def candidates(db: Session, tenant_id: str, today: date) -> List[dict]:
     for row in db.query(VegetationContinuousRequest).filter(VegetationContinuousRequest.tenant_id == tenant_id).all():
         requests.setdefault(row.entity_id, []).append(row.module_id)
     result = []
+    failed = 0
     for parcel, timeline in zip(parcels, timelines):
+        if timeline is None:
+            logger.warning("candidates: crop timeline unavailable tenant=%s parcel=%s; skipped", tenant_id, parcel["id"])
+            failed += 1
+            continue
         state = monitoring_state(timeline, subscriptions.get(parcel["id"]), requests.get(parcel["id"], []), today)
         if state["needs_activation"]:
             result.append({
@@ -126,5 +132,7 @@ async def candidates(db: Session, tenant_id: str, today: date) -> List[dict]:
                 "lifecycle": state["crop"]["lifecycle"],
                 "period": state["period"],
             })
-    _cache[tenant_id] = (time.monotonic(), result)
-    return result
+    answer = {"candidates": result, "partial": failed > 0, "failed": failed}
+    ttl = PARTIAL_CACHE_TTL_SECONDS if failed else CACHE_TTL_SECONDS
+    _cache[tenant_id] = (time.monotonic(), ttl, answer)
+    return answer

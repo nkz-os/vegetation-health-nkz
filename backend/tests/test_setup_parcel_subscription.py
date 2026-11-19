@@ -247,3 +247,12 @@ def test_activate_with_a_continuity_request_opens_the_period_after_a_harvest(cli
     db = FakeSession()
     _activate(client, db)
     assert db.added[0].start_date == date.today() - timedelta(days=365)
+
+
+def test_activation_uses_the_single_utc_date_helper(client):
+    day = date(2031, 1, 2)
+    db = FakeSession()
+    internal.fetch_timeline.return_value = {"current": None, "previous": None}
+    with patch.object(internal, "utc_today", return_value=day):
+        _activate(client, db)
+    assert db.added[0].start_date == day - timedelta(days=internal.SUBSCRIPTION_BACKFILL_DAYS)

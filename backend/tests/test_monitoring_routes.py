@@ -40,7 +40,7 @@ def state():
 
 @pytest.fixture
 def cands():
-    value = [{"entity_id": URN, "name": "P"}]
+    value = {"candidates": [{"entity_id": URN, "name": "P"}], "partial": True, "failed": 2}
     with patch.object(parcels, "candidates", AsyncMock(return_value=value)) as m, \
          patch.object(internal, "candidates", m):
         yield m
@@ -69,7 +69,8 @@ def test_user_state_is_502_when_the_broker_fails(client, state):
 def test_user_candidates(client, cands):
     r = client.get("/api/vegetation/monitoring/candidates", headers=USER)
     assert r.status_code == 200
-    assert r.json() == {"tenant_id": "tenant-a", "candidates": [{"entity_id": URN, "name": "P"}]}
+    assert r.json() == {"tenant_id": "tenant-a", "candidates": [{"entity_id": URN, "name": "P"}],
+                        "partial": True, "failed": 2}
     assert cands.call_args.args[:2] == ("db", "tenant-a")
 
 
@@ -116,6 +117,7 @@ def test_internal_state(client, state, session):
 def test_internal_candidates(client, cands, session):
     r = client.get(CANDS_URL, params={"tenant_id": "tenant-a"}, headers=SECRET)
     assert r.status_code == 200 and r.json()["tenant_id"] == "tenant-a" and len(r.json()["candidates"]) == 1
+    assert r.json()["partial"] is True and r.json()["failed"] == 2
     session.close.assert_called_once()
 
 
@@ -229,3 +231,36 @@ def test_setup_parcel_invalidates_the_candidates_cache(client, action):
                         json={"parcel_id": URN, "tenant_id": "tenant-a", "action": action})
     assert r.status_code == 201
     invalidate.assert_called_once_with("tenant-a")
+
+
+# ── DELETE by query parameters ───────────────────────────────────────────
+
+def test_delete_accepts_query_parameters_without_a_body(client, requests_db):
+    requests_db.rows.add(("tenant-a", URN, "carbon"))
+    r = client.delete(CONT_URL, params=BODY, headers=SECRET)
+    assert r.status_code == 204 and requests_db.rows == set()
+    requests_db.invalidate.assert_called_with("tenant-a")
+
+
+def test_delete_needs_both_values_from_the_body_or_the_query(client, requests_db):
+    requests_db.rows.add(("tenant-a", URN, "carbon"))
+    assert client.delete(CONT_URL, params={"tenant_id": "tenant-a"}, headers=SECRET).status_code == 422
+    assert client.delete(CONT_URL, headers=SECRET).status_code == 422
+    assert client.delete(CONT_URL, params={"tenant_id": "", "module_id": "carbon"}, headers=SECRET).status_code == 422
+    assert requests_db.rows == {("tenant-a", URN, "carbon")}
+
+
+# ── one date basis ───────────────────────────────────────────────────────
+
+def test_routes_use_the_single_utc_date_helper(client, state, cands, session):
+    from datetime import date
+    day = date(2031, 1, 2)
+    with patch.object(parcels, "utc_today", return_value=day), patch.object(internal, "utc_today", return_value=day):
+        client.get(f"/api/vegetation/parcels/{SHORT}/monitoring", headers=USER)
+        assert state.call_args.args[3] == day
+        client.get("/api/vegetation/monitoring/candidates", headers=USER)
+        assert cands.call_args.args[2] == day
+        client.get(STATE_URL, params={"tenant_id": "tenant-a"}, headers=SECRET)
+        assert state.call_args.args[3] == day
+        client.get(CANDS_URL, params={"tenant_id": "tenant-a"}, headers=SECRET)
+        assert cands.call_args.args[2] == day

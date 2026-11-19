@@ -274,3 +274,83 @@ def test_the_task_is_registered_and_scheduled_before_the_subscription_pass():
     assert entry["task"] == "vegetation.sync_monitoring"
     assert entry["schedule"] == crontab(hour=1, minute=30)
     assert "vegetation.sync_monitoring" in celery_app.tasks
+
+
+# ── a person's pause survives the sync ───────────────────────────────────
+
+def test_a_patch_pause_after_a_harvest_pause_is_never_resumed_by_the_sync(broker):
+    import asyncio
+    from app.api import subscriptions as subs_api
+
+    sub = make_sub()
+    broker.timelines[sub.entity_id] = harvested()
+    run([sub], broker)
+    assert sub.paused_reason == "harvest"
+
+    class Db(FakeDb):
+        def first(self):
+            return sub
+
+        def refresh(self, _obj):
+            pass
+
+    def patch_is_active(value):
+        update = subs_api.SubscriptionUpdate(is_active=value)
+        return asyncio.run(subs_api.update_subscription(
+            "00000000-0000-0000-0000-000000000001", update, {"tenant_id": "tenant-a"}, Db([sub])))
+
+    patch_is_active(True)
+    assert sub.is_active is True and sub.paused_reason is None
+    patch_is_active(False)
+    assert sub.is_active is False and sub.paused_reason == "user"
+    broker.timelines[sub.entity_id] = {"current": cycle(start=date(2026, 10, 20)), "previous": cycle(end=HARVESTED)}
+    broker.requests[sub.entity_id] = ["carbon"]
+    _, result = run([sub], broker)
+    assert result == counts(unchanged=1) and not sub.is_active and sub.paused_reason == "user"
+
+
+def test_a_patch_without_is_active_leaves_the_reason_alone(broker):
+    import asyncio
+    from app.api import subscriptions as subs_api
+
+    sub = make_sub(active=False, reason="harvest")
+
+    class Db(FakeDb):
+        def first(self):
+            return sub
+
+        def refresh(self, _obj):
+            pass
+
+    asyncio.run(subs_api.update_subscription(
+        "00000000-0000-0000-0000-000000000001", subs_api.SubscriptionUpdate(frequency="daily"),
+        {"tenant_id": "tenant-a"}, Db([sub])))
+    assert sub.paused_reason == "harvest" and sub.is_active is False
+
+
+def test_a_deactivation_after_a_harvest_pause_is_a_person_s_and_the_sync_leaves_it(broker):
+    from app.api import internal
+
+    sub = make_sub()
+    broker.timelines[sub.entity_id] = harvested()
+    run([sub], broker)
+    assert sub.paused_reason == "harvest"
+
+    class Db(FakeDb):
+        def first(self):
+            return sub
+
+    assert internal._deactivate_subscription(Db([sub]), "tenant-a", sub.entity_id) is True
+    assert sub.paused_reason == "user"
+    broker.timelines[sub.entity_id] = {"current": cycle(start=date(2026, 10, 20)), "previous": cycle(end=HARVESTED)}
+    _, result = run([sub], broker)
+    assert result == counts(unchanged=1) and not sub.is_active
+
+
+def test_the_task_runs_on_the_utc_date(broker, monkeypatch):
+    seen = []
+    monkeypatch.setattr(ms, "utc_today", lambda: date(2031, 1, 2))
+    monkeypatch.setattr(ms, "sync_subscriptions", lambda db, today: seen.append(today) or counts())
+    monkeypatch.setattr(ms, "get_db_session", lambda: iter([MagicMock()]))
+    ms.sync_monitoring()
+    assert seen == [date(2031, 1, 2)]

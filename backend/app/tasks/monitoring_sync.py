@@ -6,7 +6,7 @@ A failed crop read changes nothing for that parcel.
 """
 import asyncio
 import logging
-from datetime import date, datetime, timezone
+from datetime import date
 from typing import Dict, List, Optional
 
 from sqlalchemy import or_
@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from app.celery_app import celery_app
 from app.database import get_db_session
 from app.models import VegetationSubscription
-from app.services.monitoring import monitoring_period
+from app.services.monitoring import monitoring_period, utc_today
 from app.services.monitoring_io import continuous_modules, fetch_timeline
 
 logger = logging.getLogger(__name__)
@@ -105,7 +105,7 @@ def sync_monitoring() -> Dict[str, int]:
     """Beat task, before the subscription pass."""
     db = next(get_db_session())
     try:
-        counters = sync_subscriptions(db, datetime.now(timezone.utc).date())
+        counters = sync_subscriptions(db, utc_today())
     finally:
         db.close()
     logger.info("monitoring sync done: %s", counters)
