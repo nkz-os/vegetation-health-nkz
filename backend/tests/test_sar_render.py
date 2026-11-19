@@ -67,7 +67,9 @@ class TestClipSarToParcel:
 
         src = str(tmp_path / "gcp.tif")
         w = h = 1000
-        data = (np.random.rand(h, w) * 500).astype(np.int16)
+        # Deterministic and never 0: 0 is the output nodata, so a random 0 inside
+        # the parcel made the clipping tests fail now and then.
+        data = np.random.default_rng(0).integers(1, 500, size=(h, w), dtype=np.int16)
         gcps = [
             GCP(row=0, col=0, x=-3.0, y=44.0),
             GCP(row=0, col=w - 1, x=-1.0, y=44.0),
