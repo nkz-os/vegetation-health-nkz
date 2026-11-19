@@ -3,6 +3,7 @@ import logging
 from typing import List, Optional
 
 from nkz_platform_sdk.crop_timeline import fetch_crop_timeline
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models import VegetationContinuousRequest
@@ -32,3 +33,28 @@ def continuous_modules(db: Session, tenant_id: str, parcel_urn: str) -> List[str
         .all()
     )
     return sorted(row[0] for row in rows)
+
+
+def _request_filter(db: Session, tenant_id: str, parcel_urn: str, module_id: str):
+    return db.query(VegetationContinuousRequest).filter(
+        VegetationContinuousRequest.tenant_id == tenant_id,
+        VegetationContinuousRequest.entity_id == parcel_urn,
+        VegetationContinuousRequest.module_id == module_id,
+    )
+
+
+def add_continuous(db: Session, tenant_id: str, parcel_urn: str, module_id: str) -> None:
+    """Record that a module asks for continuous monitoring. Idempotent."""
+    if _request_filter(db, tenant_id, parcel_urn, module_id).first() is not None:
+        return
+    db.add(VegetationContinuousRequest(tenant_id=tenant_id, entity_id=parcel_urn, module_id=module_id))
+    try:
+        db.commit()
+    except IntegrityError:  # a concurrent identical request won: same end state
+        db.rollback()
+
+
+def remove_continuous(db: Session, tenant_id: str, parcel_urn: str, module_id: str) -> None:
+    """Withdraw a module's request. Idempotent."""
+    _request_filter(db, tenant_id, parcel_urn, module_id).delete()
+    db.commit()

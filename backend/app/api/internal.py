@@ -26,16 +26,18 @@ import pyarrow as pa
 import pyarrow.ipc
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.api.parcels import observations_response
+from app.api.parcels import observations_response, parcel_urn_of
 from app.database import SessionLocal, get_db_with_tenant
 from app.middleware.auth import require_auth, get_tenant_id
 from app.models import VegetationIndexCache, VegetationScene, VegetationSubscription
 from app.services.monitoring import Period, monitoring_period
-from app.services.monitoring_io import continuous_modules, fetch_timeline
+from app.services.monitoring_candidates import candidates, invalidate as invalidate_candidates, parcel_state
+from app.services.monitoring_io import add_continuous, continuous_modules, fetch_timeline, remove_continuous
+from app.services.observation_series import BrokerUnavailable
 
 logger = logging.getLogger(__name__)
 
@@ -359,6 +361,7 @@ async def setup_parcel(request: Request, body: SetupParcelRequest):
     parcel_urn = body.parcel_id
     if not parcel_urn.startswith("urn:ngsi-ld:AgriParcel:"):
         parcel_urn = f"urn:ngsi-ld:AgriParcel:{parcel_urn}"
+    invalidate_candidates(body.tenant_id)  # whatever happens next, the cached list is stale
 
     if body.action in ("deactivate", "teardown"):
         paused = False
@@ -408,6 +411,21 @@ async def setup_parcel(request: Request, body: SetupParcelRequest):
             "subscription": subscription}
 
 
+def _require_internal_secret(request: Request, what: str) -> None:
+    """401 unless the request carries the shared internal secret."""
+    secret = request.headers.get("X-Internal-Service-Secret", "")
+    # Bytes, so a non-ASCII header is a 401 and not a TypeError (500).
+    if not INTERNAL_SECRET or not hmac.compare_digest(secret.encode("utf-8"), INTERNAL_SECRET.encode("utf-8")):
+        logger.warning("Unauthorized internal %s call from %s", what, request.client)
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+
+def _require_tenant(tenant_id: Optional[str]) -> str:
+    if not tenant_id:
+        raise HTTPException(status_code=400, detail="tenant_id is required")
+    return tenant_id
+
+
 @router.get("/api/internal/vegetation/parcels/{entity_id}/observations")
 async def internal_parcel_observations(
     request: Request,
@@ -422,11 +440,64 @@ async def internal_parcel_observations(
     Authenticated by X-Internal-Service-Secret, like setup-parcel; the tenant is
     explicit because no user identity travels with the call.
     """
-    secret = request.headers.get("X-Internal-Service-Secret", "")
-    # Bytes, so a non-ASCII header is a 401 and not a TypeError (500).
-    if not INTERNAL_SECRET or not hmac.compare_digest(secret.encode("utf-8"), INTERNAL_SECRET.encode("utf-8")):
-        logger.warning("Unauthorized internal observations call from %s", request.client)
-        raise HTTPException(status_code=401, detail="Unauthorized")
-    if not tenant_id:
-        raise HTTPException(status_code=400, detail="tenant_id is required")
-    return await observations_response(tenant_id, entity_id, index, start, end)
+    _require_internal_secret(request, "observations")
+    return await observations_response(_require_tenant(tenant_id), entity_id, index, start, end)
+
+
+@router.get("/api/internal/vegetation/parcels/{entity_id}/monitoring")
+async def internal_parcel_monitoring(request: Request, entity_id: str, tenant_id: Optional[str] = Query(None)):
+    """Crop, monitoring status and period of a parcel, for backends of other modules."""
+    _require_internal_secret(request, "monitoring")
+    tenant_id = _require_tenant(tenant_id)
+    db = SessionLocal()
+    try:
+        return await parcel_state(db, tenant_id, parcel_urn_of(entity_id), date.today())
+    except BrokerUnavailable:
+        raise HTTPException(status_code=502, detail="Context broker unavailable; the crop could not be read")
+    finally:
+        db.close()
+
+
+@router.get("/api/internal/vegetation/monitoring/candidates")
+async def internal_monitoring_candidates(request: Request, tenant_id: Optional[str] = Query(None)):
+    """Parcels of the tenant with a living crop and no monitoring."""
+    _require_internal_secret(request, "monitoring candidates")
+    tenant_id = _require_tenant(tenant_id)
+    db = SessionLocal()
+    try:
+        return {"tenant_id": tenant_id, "candidates": await candidates(db, tenant_id, date.today())}
+    except BrokerUnavailable:
+        raise HTTPException(status_code=502, detail="Context broker unavailable; the crops could not be read")
+    finally:
+        db.close()
+
+
+class ContinuousRequest(BaseModel):
+    tenant_id: str = Field(min_length=1)
+    module_id: str = Field(min_length=1)
+
+
+@router.post("/api/internal/vegetation/parcels/{entity_id}/continuous", status_code=204)
+async def request_continuous_monitoring(request: Request, entity_id: str, body: ContinuousRequest):
+    """A module asks that the parcel is never paused after its harvest. Idempotent."""
+    _require_internal_secret(request, "continuous request")
+    db = SessionLocal()
+    try:
+        add_continuous(db, body.tenant_id, parcel_urn_of(entity_id), body.module_id)
+    finally:
+        db.close()
+    invalidate_candidates(body.tenant_id)
+    return Response(status_code=204)
+
+
+@router.delete("/api/internal/vegetation/parcels/{entity_id}/continuous", status_code=204)
+async def withdraw_continuous_monitoring(request: Request, entity_id: str, body: ContinuousRequest):
+    """A module withdraws its request. Idempotent."""
+    _require_internal_secret(request, "continuous withdrawal")
+    db = SessionLocal()
+    try:
+        remove_continuous(db, body.tenant_id, parcel_urn_of(entity_id), body.module_id)
+    finally:
+        db.close()
+    invalidate_candidates(body.tenant_id)
+    return Response(status_code=204)
