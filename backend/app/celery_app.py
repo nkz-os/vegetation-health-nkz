@@ -78,6 +78,10 @@ celery_app.conf.update(
 
 # Periodic tasks
 celery_app.conf.beat_schedule = {
+    'vegetation.sync_monitoring': {
+        'task': 'vegetation.sync_monitoring',
+        'schedule': crontab(hour=1, minute=30),  # Daily at 1:30 AM, before process_subscriptions
+    },
     'vegetation.process_subscriptions': {
         'task': 'vegetation.process_subscriptions',
         'schedule': crontab(hour=2, minute=0),  # Daily at 2 AM
