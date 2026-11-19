@@ -26,14 +26,18 @@ import pyarrow as pa
 import pyarrow.ipc
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.api.parcels import observations_response
+from app.api.parcels import observations_response, parcel_urn_of
 from app.database import SessionLocal, get_db_with_tenant
 from app.middleware.auth import require_auth, get_tenant_id
 from app.models import VegetationIndexCache, VegetationScene, VegetationSubscription
+from app.services.monitoring import Period, monitoring_period, utc_today
+from app.services.monitoring_candidates import candidates, invalidate as invalidate_candidates, parcel_state
+from app.services.monitoring_io import add_continuous, continuous_modules, fetch_timeline, remove_continuous
+from app.services.observation_series import BrokerUnavailable
 
 logger = logging.getLogger(__name__)
 
@@ -265,20 +269,25 @@ def _find_subscription(db: Session, tenant_id: str, parcel_urn: str) -> Vegetati
     )
 
 
-def _ensure_subscription(db: Session, tenant_id: str, parcel_urn: str, geometry: dict) -> str:
+def _ensure_subscription(db: Session, tenant_id: str, parcel_urn: str, geometry: dict,
+                         period: Period | None = None) -> str:
     """Create the parcel's monitoring subscription, or reactivate a paused one.
 
-    Idempotent: an active subscription is left untouched. Returns
-    ``created`` | ``reactivated`` | ``unchanged``.
+    ``period`` is the crop's monitoring period; without it the default window applies.
+    Reactivating takes the period start, clears the pause reason and restarts the cursor.
+    An active subscription that starts after the period is widened to it (cursor restarted);
+    otherwise it is left untouched, so a repeated call changes nothing.
+    Returns ``created`` | ``reactivated`` | ``widened`` | ``unchanged``.
     """
     sub = _find_subscription(db, tenant_id, parcel_urn)
     if sub is None:
+        start = period.start if period else utc_today() - timedelta(days=SUBSCRIPTION_BACKFILL_DAYS)
         db.add(VegetationSubscription(
             tenant_id=tenant_id,
             entity_id=parcel_urn,
             entity_type="AgriParcel",
             geometry=_subscription_wkt(geometry),
-            start_date=date.today() - timedelta(days=SUBSCRIPTION_BACKFILL_DAYS),
+            start_date=start,
             index_types=list(SUBSCRIPTION_INDEX_TYPES),
             frequency="weekly",
             is_active=True,
@@ -287,19 +296,34 @@ def _ensure_subscription(db: Session, tenant_id: str, parcel_urn: str, geometry:
         db.commit()
         return "created"
     if sub.is_active:
+        if period is not None and sub.start_date > period.start:
+            sub.start_date = period.start
+            sub.last_run_at = None
+            sub.next_run_at = None
+            db.commit()
+            return "widened"
         return "unchanged"
     sub.is_active = True
+    sub.paused_reason = None
     sub.next_run_at = None  # due on the next beat
+    if period is not None:
+        sub.start_date = period.start
+        sub.last_run_at = None
     db.commit()
     return "reactivated"
 
 
 def _deactivate_subscription(db: Session, tenant_id: str, parcel_urn: str) -> bool:
-    """Pause the parcel's subscription; its scenes and indices stay. True when something changed."""
+    """Pause the parcel's subscription as a person's pause; its scenes and indices stay.
+
+    A pause after the harvest becomes the person's too, so it never resumes by itself.
+    True when something changed.
+    """
     sub = _find_subscription(db, tenant_id, parcel_urn)
-    if sub is None or not sub.is_active:
+    if sub is None or (not sub.is_active and sub.paused_reason == "user"):
         return False
     sub.is_active = False
+    sub.paused_reason = "user"
     db.commit()
     return True
 
@@ -337,6 +361,7 @@ async def setup_parcel(request: Request, body: SetupParcelRequest):
     parcel_urn = body.parcel_id
     if not parcel_urn.startswith("urn:ngsi-ld:AgriParcel:"):
         parcel_urn = f"urn:ngsi-ld:AgriParcel:{parcel_urn}"
+    invalidate_candidates(body.tenant_id)  # whatever happens next, the cached list is stale
 
     if body.action in ("deactivate", "teardown"):
         paused = False
@@ -357,10 +382,17 @@ async def setup_parcel(request: Request, body: SetupParcelRequest):
     lst_enqueued = False
     subscription = "skipped"
     if geometry and lat is not None and lon is not None:
+        timeline = await fetch_timeline(body.tenant_id, parcel_urn)
+        if timeline is None:
+            logger.warning("crop timeline unavailable for %s: default monitoring window", parcel_urn)
         db = None
         try:
             db = SessionLocal()
-            subscription = _ensure_subscription(db, body.tenant_id, parcel_urn, geometry)
+            period = None
+            if timeline is not None:
+                continuous = continuous_modules(db, body.tenant_id, parcel_urn)
+                period = monitoring_period(timeline, utc_today(), bool(continuous))
+            subscription = _ensure_subscription(db, body.tenant_id, parcel_urn, geometry, period)
         except Exception as exc:
             subscription = "error"
             logger.error("Subscription setup failed for %s: %s", parcel_urn, exc)
@@ -379,6 +411,21 @@ async def setup_parcel(request: Request, body: SetupParcelRequest):
             "subscription": subscription}
 
 
+def _require_internal_secret(request: Request, what: str) -> None:
+    """401 unless the request carries the shared internal secret."""
+    secret = request.headers.get("X-Internal-Service-Secret", "")
+    # Bytes, so a non-ASCII header is a 401 and not a TypeError (500).
+    if not INTERNAL_SECRET or not hmac.compare_digest(secret.encode("utf-8"), INTERNAL_SECRET.encode("utf-8")):
+        logger.warning("Unauthorized internal %s call from %s", what, request.client)
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+
+def _require_tenant(tenant_id: Optional[str]) -> str:
+    if not tenant_id:
+        raise HTTPException(status_code=400, detail="tenant_id is required")
+    return tenant_id
+
+
 @router.get("/api/internal/vegetation/parcels/{entity_id}/observations")
 async def internal_parcel_observations(
     request: Request,
@@ -393,11 +440,82 @@ async def internal_parcel_observations(
     Authenticated by X-Internal-Service-Secret, like setup-parcel; the tenant is
     explicit because no user identity travels with the call.
     """
-    secret = request.headers.get("X-Internal-Service-Secret", "")
-    # Bytes, so a non-ASCII header is a 401 and not a TypeError (500).
-    if not INTERNAL_SECRET or not hmac.compare_digest(secret.encode("utf-8"), INTERNAL_SECRET.encode("utf-8")):
-        logger.warning("Unauthorized internal observations call from %s", request.client)
-        raise HTTPException(status_code=401, detail="Unauthorized")
-    if not tenant_id:
-        raise HTTPException(status_code=400, detail="tenant_id is required")
-    return await observations_response(tenant_id, entity_id, index, start, end)
+    _require_internal_secret(request, "observations")
+    return await observations_response(_require_tenant(tenant_id), entity_id, index, start, end)
+
+
+@router.get("/api/internal/vegetation/parcels/{entity_id}/monitoring")
+async def internal_parcel_monitoring(request: Request, entity_id: str, tenant_id: Optional[str] = Query(None)):
+    """Crop, monitoring status and period of a parcel, for backends of other modules."""
+    _require_internal_secret(request, "monitoring")
+    tenant_id = _require_tenant(tenant_id)
+    db = SessionLocal()
+    try:
+        return await parcel_state(db, tenant_id, parcel_urn_of(entity_id), utc_today())
+    except BrokerUnavailable:
+        raise HTTPException(status_code=502, detail="Context broker unavailable; the crop could not be read")
+    finally:
+        db.close()
+
+
+@router.get("/api/internal/vegetation/monitoring/candidates")
+async def internal_monitoring_candidates(request: Request, tenant_id: Optional[str] = Query(None)):
+    """Parcels of the tenant with a living crop and no monitoring."""
+    _require_internal_secret(request, "monitoring candidates")
+    tenant_id = _require_tenant(tenant_id)
+    db = SessionLocal()
+    try:
+        return {"tenant_id": tenant_id, **await candidates(db, tenant_id, utc_today())}
+    except BrokerUnavailable:
+        raise HTTPException(status_code=502, detail="Context broker unavailable; the crops could not be read")
+    finally:
+        db.close()
+
+
+class ContinuousRequest(BaseModel):
+    tenant_id: str = Field(min_length=1)
+    module_id: str = Field(min_length=1)
+
+
+@router.post("/api/internal/vegetation/parcels/{entity_id}/continuous", status_code=204)
+async def request_continuous_monitoring(request: Request, entity_id: str, body: ContinuousRequest):
+    """A module asks that the parcel is never paused after its harvest. Idempotent."""
+    _require_internal_secret(request, "continuous request")
+    db = SessionLocal()
+    try:
+        add_continuous(db, body.tenant_id, parcel_urn_of(entity_id), body.module_id)
+    finally:
+        db.close()
+    invalidate_candidates(body.tenant_id)
+    return Response(status_code=204)
+
+
+class ContinuousWithdrawal(BaseModel):
+    tenant_id: Optional[str] = None
+    module_id: Optional[str] = None
+
+
+@router.delete("/api/internal/vegetation/parcels/{entity_id}/continuous", status_code=204)
+async def withdraw_continuous_monitoring(
+    request: Request,
+    entity_id: str,
+    body: Optional[ContinuousWithdrawal] = None,
+    tenant_id: Optional[str] = Query(None),
+    module_id: Optional[str] = Query(None),
+):
+    """A module withdraws its request. Idempotent.
+
+    The values come as query parameters or in the body (a proxy may drop a DELETE body).
+    """
+    _require_internal_secret(request, "continuous withdrawal")
+    tenant_id = tenant_id or (body.tenant_id if body else None)
+    module_id = module_id or (body.module_id if body else None)
+    if not tenant_id or not module_id:
+        raise HTTPException(status_code=422, detail="tenant_id and module_id are required")
+    db = SessionLocal()
+    try:
+        remove_continuous(db, tenant_id, parcel_urn_of(entity_id), module_id)
+    finally:
+        db.close()
+    invalidate_candidates(tenant_id)
+    return Response(status_code=204)

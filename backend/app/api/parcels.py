@@ -34,6 +34,8 @@ from app.models import (
     VegetationJob,
     VegetationScene,
 )
+from app.services.monitoring import utc_today
+from app.services.monitoring_candidates import candidates, parcel_state
 from app.services.observation_series import SUPPORTED_INDICES, BrokerUnavailable, observation_series
 from app.services.storage import create_storage_service, generate_tenant_bucket_name
 from nkz_platform_sdk import SyncOrionClient
@@ -41,6 +43,7 @@ from nkz_platform_sdk import SyncOrionClient
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/vegetation/parcels", tags=["parcels"])
+monitoring_router = APIRouter(prefix="/api/vegetation/monitoring", tags=["monitoring"])
 
 
 # ── Serialisation helpers ───────────────────────────────────────────────
@@ -185,6 +188,32 @@ async def parcel_observations(
 ):
     """Observation series (interior measure and quality per date) for the caller's tenant."""
     return await observations_response(current_user["tenant_id"], entity_id, index, start, end)
+
+
+@router.get("/{entity_id}/monitoring")
+async def parcel_monitoring(
+    entity_id: str,
+    current_user: dict = Depends(require_auth),
+    db: Session = Depends(get_db_with_tenant),
+):
+    """Crop, monitoring status and period of the parcel, for the caller's tenant."""
+    try:
+        return await parcel_state(db, current_user["tenant_id"], parcel_urn_of(entity_id), utc_today())
+    except BrokerUnavailable:
+        raise HTTPException(status_code=502, detail="Context broker unavailable; the crop could not be read")
+
+
+@monitoring_router.get("/candidates")
+async def monitoring_candidates(
+    current_user: dict = Depends(require_auth),
+    db: Session = Depends(get_db_with_tenant),
+):
+    """Parcels of the tenant with a living crop and no monitoring."""
+    tenant_id = current_user["tenant_id"]
+    try:
+        return {"tenant_id": tenant_id, **await candidates(db, tenant_id, utc_today())}
+    except BrokerUnavailable:
+        raise HTTPException(status_code=502, detail="Context broker unavailable; the crops could not be read")
 
 
 @router.get("/{entity_id}/overview")

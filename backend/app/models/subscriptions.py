@@ -32,6 +32,8 @@ class VegetationSubscription(BaseModel, TenantMixin):
     last_run_at = Column(DateTime)
     next_run_at = Column(DateTime)
     last_error = Column(String, nullable=True)
+    # Why is_active is false: 'harvest' (paused after the harvest, resumes by itself) or 'user' (never resumes by itself).
+    paused_reason = Column(String, nullable=True)
     
     def __repr__(self):
         return f"<VegetationSubscription {self.id} (Entity: {self.entity_id})>"
