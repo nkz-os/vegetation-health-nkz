@@ -566,6 +566,25 @@ def orion_delete_entity(orion, entity_id: str) -> bool:
         return False
 
 
+def delete_eo_attribute(tenant_id: str, entity_id: str, attr: str) -> str:
+    """Delete one attribute of an entity (DELETE /entities/{id}/attrs/{attr}).
+
+    ``attr`` is sent exactly as given (short name or full IRI; the SDK URL-encodes it).
+    Returns ``"deleted"``, ``"not_found"`` (404: nothing was removed, so the caller must
+    not count it as done) or ``"error"`` (logged). Used instead of writing null, which
+    Orion rejects.
+    """
+    try:
+        SyncOrionClient(tenant_id).delete_entity_attr(entity_id, attr)
+        return "deleted"
+    except Exception as exc:
+        if getattr(getattr(exc, "response", None), "status_code", None) == 404:
+            logger.warning("Orion delete attribute %s of %s: not found", attr, entity_id)
+            return "not_found"
+        logger.error("Orion delete attribute %s of %s failed: %s", attr, entity_id, exc)
+        return "error"
+
+
 def delete_eo_product(tenant_id: str, entity_id: str) -> bool:
     """Delete an EOProduct entity from Orion-LD."""
     if orion_delete_entity(SyncOrionClient(tenant_id), entity_id):
