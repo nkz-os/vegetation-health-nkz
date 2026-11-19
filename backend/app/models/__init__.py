@@ -13,6 +13,7 @@ from .subscriptions import VegetationSubscription
 from .crop_seasons import VegetationCropSeason
 from .zoning import ZoningNote, ZoningVersion
 from .parcel_scenes import VegetationParcelScene
+from .continuous_requests import VegetationContinuousRequest
 
 __all__ = [
     'BaseModel',
@@ -31,5 +32,6 @@ __all__ = [
     'ZoningVersion',
     'ZoningNote',
     'VegetationParcelScene',
+    'VegetationContinuousRequest',
 ]
 
