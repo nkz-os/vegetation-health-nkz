@@ -94,9 +94,14 @@ def test_perennial_window_is_the_last_365_days():
     assert monitoring_period(timeline(current=perennial), TODAY, False) == Period(date(2025, 11, 19), None, "woody")
 
 
-def test_continuous_request_keeps_an_harvested_annual_open():
+def test_continuous_request_keeps_an_harvested_annual_open_from_its_sowing():
+    # Continuity only lifts the harvest pause; it never reaches a year back for an annual crop.
     harvested = sown(end=boundary(HARVESTED, "actual"))
-    assert monitoring_period(timeline(previous=harvested), TODAY, True) == Period(date(2025, 11, 19), None, "continuous")
+    assert monitoring_period(timeline(previous=harvested), TODAY, True) == Period(SOWN, None, "continuous")
+
+
+def test_continuous_request_on_a_growing_annual_keeps_the_sowing_start():
+    assert monitoring_period(timeline(current=sown()), TODAY, True) == Period(SOWN, None, "continuous")
 
 
 def test_continuous_without_a_crop_has_no_period():
@@ -189,7 +194,7 @@ def test_continuous_by_is_listed_sorted_and_opens_the_period():
     state = monitoring_state(timeline(previous=sown(end=boundary(HARVESTED, "actual"))),
                              sub(False, "harvest"), ["carbon", "alpha"], TODAY)
     assert state["continuous_by"] == ["alpha", "carbon"]
-    assert state["period"] == {"start": "2025-11-19", "end": None}
+    assert state["period"] == {"start": SOWN.isoformat(), "end": None}
     assert state["monitoring"] == "paused_harvest"
 
 

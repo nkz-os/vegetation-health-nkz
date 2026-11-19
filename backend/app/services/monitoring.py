@@ -116,7 +116,8 @@ def monitoring_period(timeline: Optional[dict], today: date, continuous: bool) -
     if is_woody(cycle) and not _stand_removed(cycle, today):
         return Period(window_start, None, "woody")
     if continuous:
-        return Period(window_start, None, "continuous")
+        # Continuity only lifts the harvest pause: an annual crop is still watched from its sowing.
+        return Period(sowing, None, "continuous")
     if is_woody(cycle):
         return None
     return Period(sowing, _fact_date(cycle.get("end")), "annual")

@@ -238,7 +238,7 @@ def test_activate_with_a_failed_crop_read_keeps_the_default_window_and_warns(cli
     assert any("crop timeline" in m for m in caplog.messages)
 
 
-def test_activate_with_a_continuity_request_opens_the_period_after_a_harvest(client):
+def test_activate_with_a_continuity_request_opens_the_period_after_a_harvest_from_its_sowing(client):
     tl = timeline_sown()
     tl["previous"], tl["current"] = tl["current"], None
     tl["previous"]["end"] = {"date": "2026-07-05", "provenance": "actual"}
@@ -246,7 +246,7 @@ def test_activate_with_a_continuity_request_opens_the_period_after_a_harvest(cli
     internal.continuous_modules.return_value = ["carbon"]
     db = FakeSession()
     _activate(client, db)
-    assert db.added[0].start_date == date.today() - timedelta(days=365)
+    assert db.added[0].start_date == SOWN
 
 
 def test_activation_uses_the_single_utc_date_helper(client):
