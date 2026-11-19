@@ -190,3 +190,20 @@ def test_cli_exits_1_when_there_are_errors(monkeypatch):
     assert ib.main(["--tenant", "acme"], db=object(), out=type("O", (), {"write": out.append})()) == 1
     monkeypatch.setattr(ib, "backfill_tenant", lambda *a, **k: ib.BackfillReport())
     assert ib.main(["--tenant", "acme"], db=object(), out=type("O", (), {"write": out.append})()) == 0
+
+
+def test_job_statistics_accepts_copernicus_valid_pixels():
+    """Copernicus-path jobs store valid_pixels, not pixel_count: they must be backfilled too."""
+    stats = {"mean": 0.4, "min": 0.1, "max": 0.7, "std": 0.1, "p10": 0.2, "p90": 0.6,
+             "valid_pixels": 812, "total_pixels": 900}
+    out = ib._job_statistics(stats)
+    assert out["pixel_count"] == 812
+    assert out["mean"] == 0.4
+    assert "pixel_count" not in stats  # the job's own dict is not mutated
+
+
+def test_job_statistics_rejects_no_pixels():
+    assert ib._job_statistics({"mean": 0.0, "pixel_count": 0}) is None
+    assert ib._job_statistics({"mean": 0.0, "valid_pixels": 0}) is None
+    assert ib._job_statistics(None) is None
+    assert ib._job_statistics({"mean": 0.3, "pixel_count": 50})["pixel_count"] == 50

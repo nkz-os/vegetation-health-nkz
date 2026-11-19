@@ -171,11 +171,26 @@ def _load_jobs(db, tenant_id: str, parcel: Optional[str] = None) -> List[dict]:
             sensing_date = date.fromisoformat(str(result["sensing_date"])[:10])
         except ValueError:
             continue
-        if not fi.has_valid_pixels(result.get("statistics")):
+        statistics = _job_statistics(result.get("statistics"))
+        if statistics is None:
             continue
         jobs.append({"entity_id": job.entity_id, "index_type": index_type, "sensing_date": sensing_date,
-                     "raster_path": result["raster_path"], "statistics": result["statistics"]})
+                     "raster_path": result["raster_path"], "statistics": statistics})
     return jobs
+
+
+def _job_statistics(statistics) -> Optional[dict]:
+    """The job's statistics with ``pixel_count`` set, or None without valid pixels.
+
+    Jobs from the Copernicus path store ``valid_pixels`` instead of ``pixel_count``
+    (the same mapping ``copernicus_analyze`` applies when it publishes).
+    """
+    if not isinstance(statistics, dict):
+        return None
+    out = dict(statistics)
+    if out.get("pixel_count") is None and out.get("valid_pixels") is not None:
+        out["pixel_count"] = out["valid_pixels"]
+    return out if fi.has_valid_pixels(out) else None
 
 
 class OrionBroker:
