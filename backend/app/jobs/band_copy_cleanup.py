@@ -43,12 +43,20 @@ class CopyEntry:
 
 
 def _tenant_paths(db, tenants: Optional[list]) -> dict:
-    """tenant_id -> storage_path for the requested tenants (or all configured ones)."""
+    """tenant_id -> storage_path for the requested tenants, or every tenant with vegetation data.
+
+    A tenant without a vegetation_config row still has copies (the download task
+    then uses the default path), so "all" means every tenant seen in config,
+    scenes or jobs.
+    """
     rows = db.execute(text("SELECT tenant_id, storage_path FROM vegetation_config")).fetchall()
     configured = {r[0]: (r[1] or "") for r in rows}
-    if tenants:
-        return {t: configured.get(t, DEFAULT_STORAGE_PATH) for t in tenants}
-    return configured
+    if not tenants:
+        seen = db.execute(text(
+            "SELECT tenant_id FROM vegetation_scenes UNION SELECT tenant_id FROM vegetation_jobs"
+        )).fetchall()
+        tenants = sorted(set(configured) | {r[0] for r in seen if r[0]})
+    return {t: configured.get(t, DEFAULT_STORAGE_PATH) for t in tenants}
 
 
 def _tenant_context(db, tenant_id: str) -> None:

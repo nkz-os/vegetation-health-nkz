@@ -239,3 +239,35 @@ def test_sql_helpers_against_postgres():
         with engine.begin() as conn:
             conn.exec_driver_sql("DROP TABLE IF EXISTS vegetation_parcel_scenes, vegetation_jobs, vegetation_scenes")
         engine.dispose()
+
+
+def test_all_tenants_include_those_without_config_row():
+    """Without --tenant, every tenant with scenes or jobs is listed, not only vegetation_config rows."""
+    import os
+
+    import pytest
+
+    url = os.getenv("ZONING_PG_URL")
+    if not url:
+        pytest.skip("ZONING_PG_URL not set")
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    engine = create_engine(url)
+    with engine.begin() as conn:
+        conn.exec_driver_sql("DROP TABLE IF EXISTS vegetation_config, vegetation_jobs, vegetation_scenes")
+        conn.exec_driver_sql("CREATE TABLE vegetation_config (tenant_id text, storage_path text)")
+        conn.exec_driver_sql("CREATE TABLE vegetation_jobs (id uuid PRIMARY KEY, tenant_id text)")
+        conn.exec_driver_sql("CREATE TABLE vegetation_scenes (id uuid PRIMARY KEY, tenant_id text)")
+        conn.exec_driver_sql("INSERT INTO vegetation_config VALUES ('tenant-a', 'custom/')")
+        conn.exec_driver_sql("INSERT INTO vegetation_scenes VALUES (gen_random_uuid(), 'acme')")
+        conn.exec_driver_sql("INSERT INTO vegetation_jobs VALUES (gen_random_uuid(), 'demo-coop')")
+    db = sessionmaker(bind=engine)()
+    try:
+        paths = bcc._tenant_paths(db, None)
+    finally:
+        db.close()
+        with engine.begin() as conn:
+            conn.exec_driver_sql("DROP TABLE IF EXISTS vegetation_config, vegetation_jobs, vegetation_scenes")
+        engine.dispose()
+    assert paths == {"tenant-a": "custom/", "acme": bcc.DEFAULT_STORAGE_PATH, "demo-coop": bcc.DEFAULT_STORAGE_PATH}
