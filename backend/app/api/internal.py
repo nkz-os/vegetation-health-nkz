@@ -34,6 +34,8 @@ from app.api.parcels import observations_response
 from app.database import SessionLocal, get_db_with_tenant
 from app.middleware.auth import require_auth, get_tenant_id
 from app.models import VegetationIndexCache, VegetationScene, VegetationSubscription
+from app.services.monitoring import Period, monitoring_period
+from app.services.monitoring_io import continuous_modules, fetch_timeline
 
 logger = logging.getLogger(__name__)
 
@@ -265,20 +267,25 @@ def _find_subscription(db: Session, tenant_id: str, parcel_urn: str) -> Vegetati
     )
 
 
-def _ensure_subscription(db: Session, tenant_id: str, parcel_urn: str, geometry: dict) -> str:
+def _ensure_subscription(db: Session, tenant_id: str, parcel_urn: str, geometry: dict,
+                         period: Period | None = None) -> str:
     """Create the parcel's monitoring subscription, or reactivate a paused one.
 
-    Idempotent: an active subscription is left untouched. Returns
-    ``created`` | ``reactivated`` | ``unchanged``.
+    ``period`` is the crop's monitoring period; without it the default window applies.
+    Reactivating takes the period start, clears the pause reason and restarts the cursor.
+    An active subscription that starts after the period is widened to it (cursor restarted);
+    otherwise it is left untouched, so a repeated call changes nothing.
+    Returns ``created`` | ``reactivated`` | ``widened`` | ``unchanged``.
     """
     sub = _find_subscription(db, tenant_id, parcel_urn)
     if sub is None:
+        start = period.start if period else date.today() - timedelta(days=SUBSCRIPTION_BACKFILL_DAYS)
         db.add(VegetationSubscription(
             tenant_id=tenant_id,
             entity_id=parcel_urn,
             entity_type="AgriParcel",
             geometry=_subscription_wkt(geometry),
-            start_date=date.today() - timedelta(days=SUBSCRIPTION_BACKFILL_DAYS),
+            start_date=start,
             index_types=list(SUBSCRIPTION_INDEX_TYPES),
             frequency="weekly",
             is_active=True,
@@ -287,19 +294,34 @@ def _ensure_subscription(db: Session, tenant_id: str, parcel_urn: str, geometry:
         db.commit()
         return "created"
     if sub.is_active:
+        if period is not None and sub.start_date > period.start:
+            sub.start_date = period.start
+            sub.last_run_at = None
+            sub.next_run_at = None
+            db.commit()
+            return "widened"
         return "unchanged"
     sub.is_active = True
+    sub.paused_reason = None
     sub.next_run_at = None  # due on the next beat
+    if period is not None:
+        sub.start_date = period.start
+        sub.last_run_at = None
     db.commit()
     return "reactivated"
 
 
 def _deactivate_subscription(db: Session, tenant_id: str, parcel_urn: str) -> bool:
-    """Pause the parcel's subscription; its scenes and indices stay. True when something changed."""
+    """Pause the parcel's subscription as a person's pause; its scenes and indices stay.
+
+    A pause after the harvest becomes the person's too, so it never resumes by itself.
+    True when something changed.
+    """
     sub = _find_subscription(db, tenant_id, parcel_urn)
-    if sub is None or not sub.is_active:
+    if sub is None or (not sub.is_active and sub.paused_reason == "user"):
         return False
     sub.is_active = False
+    sub.paused_reason = "user"
     db.commit()
     return True
 
@@ -357,10 +379,17 @@ async def setup_parcel(request: Request, body: SetupParcelRequest):
     lst_enqueued = False
     subscription = "skipped"
     if geometry and lat is not None and lon is not None:
+        timeline = await fetch_timeline(body.tenant_id, parcel_urn)
+        if timeline is None:
+            logger.warning("crop timeline unavailable for %s: default monitoring window", parcel_urn)
         db = None
         try:
             db = SessionLocal()
-            subscription = _ensure_subscription(db, body.tenant_id, parcel_urn, geometry)
+            period = None
+            if timeline is not None:
+                continuous = continuous_modules(db, body.tenant_id, parcel_urn)
+                period = monitoring_period(timeline, date.today(), bool(continuous))
+            subscription = _ensure_subscription(db, body.tenant_id, parcel_urn, geometry, period)
         except Exception as exc:
             subscription = "error"
             logger.error("Subscription setup failed for %s: %s", parcel_urn, exc)
