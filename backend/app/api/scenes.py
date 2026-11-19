@@ -37,6 +37,7 @@ from app.engines.base import EngineDegradedException
 from app.services.satellite_quota import SatelliteQuota
 from app.services.local_analyze import AnalyzeDispatchError, dispatch_local_pipeline
 from nkz_platform_sdk import OrionClient
+from app.services.observation_series import BrokerUnavailable
 
 router = APIRouter(prefix="/api/vegetation", tags=["scenes"])
 logger = logging.getLogger(__name__)
@@ -479,6 +480,47 @@ async def _get_crop_species_from_orion(tenant_id: str, entity_id: str) -> Option
     except Exception:
         logger.debug("Failed to read AgriCrop for %s", entity_id)
         return None
+
+
+async def _get_crop_species_strict(tenant_id: str, entity_id: str) -> Optional[str]:
+    """Like ``_get_crop_species_from_orion`` but a broker failure is not "no crop".
+
+    None only means no crop is assigned (or the parcel/crop entity does not exist);
+    any other broker or HTTP error raises ``BrokerUnavailable``.
+    """
+    def _missing(exc: Exception) -> bool:
+        return getattr(getattr(exc, "response", None), "status_code", None) == 404
+
+    try:
+        orion = OrionClient(tenant_id)
+        try:
+            try:
+                parcel = await orion.get_entity(entity_id)
+            except Exception as exc:
+                if _missing(exc):
+                    return None
+                raise
+            crop_rel = parcel.get("hasAgriCrop") or parcel.get("refAgriCrop")
+            if not isinstance(crop_rel, dict):
+                return None
+            crop_id = crop_rel.get("object") or crop_rel.get("value")
+            if not crop_id:
+                return None
+            try:
+                crop = await orion.get_entity(crop_id)
+            except Exception as exc:
+                if _missing(exc):
+                    return None
+                raise
+            return (
+                (crop.get("cropSpecies") or {}).get("value")
+                or (crop.get("name") or {}).get("value")
+            )
+        finally:
+            await orion.close()
+    except Exception as exc:
+        logger.warning("crop species lookup failed for %s: %s", entity_id, exc)
+        raise BrokerUnavailable(str(exc)) from exc
 
 
 async def _dispatch_analyze_for_parcel(

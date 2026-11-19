@@ -24,12 +24,13 @@ from typing import List, Optional
 
 import pyarrow as pa
 import pyarrow.ipc
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.api.parcels import observations_response
 from app.database import SessionLocal, get_db_with_tenant
 from app.middleware.auth import require_auth, get_tenant_id
 from app.models import VegetationIndexCache, VegetationScene, VegetationSubscription
@@ -244,7 +245,7 @@ async def _fetch_parcel_location(
 # and searches Sentinel-1 for a parcel, and it works off `vegetation_subscriptions`.
 # Activating the module on a parcel must therefore own that row.
 SUBSCRIPTION_BACKFILL_DAYS = int(os.getenv("SUBSCRIPTION_BACKFILL_DAYS", "60"))
-SUBSCRIPTION_INDEX_TYPES = ("NDVI", "EVI", "SAVI", "NDRE", "GNDVI")
+SUBSCRIPTION_INDEX_TYPES = ("NDVI", "EVI", "SAVI", "NDRE", "GNDVI", "NDMI")
 
 
 def _subscription_wkt(geometry: dict) -> str:
@@ -376,3 +377,27 @@ async def setup_parcel(request: Request, body: SetupParcelRequest):
     logger.info("Activated vegetation-health for parcel %s (subscription=%s)", parcel_urn, subscription)
     return {"message": "activated", "parcel_id": body.parcel_id, "lst_enqueued": lst_enqueued,
             "subscription": subscription}
+
+
+@router.get("/api/internal/vegetation/parcels/{entity_id}/observations")
+async def internal_parcel_observations(
+    request: Request,
+    entity_id: str,
+    tenant_id: Optional[str] = Query(None),
+    index: str = Query("NDVI"),
+    start: Optional[date] = Query(None),
+    end: Optional[date] = Query(None),
+):
+    """Observation series for backends of other modules (read only).
+
+    Authenticated by X-Internal-Service-Secret, like setup-parcel; the tenant is
+    explicit because no user identity travels with the call.
+    """
+    secret = request.headers.get("X-Internal-Service-Secret", "")
+    # Bytes, so a non-ASCII header is a 401 and not a TypeError (500).
+    if not INTERNAL_SECRET or not hmac.compare_digest(secret.encode("utf-8"), INTERNAL_SECRET.encode("utf-8")):
+        logger.warning("Unauthorized internal observations call from %s", request.client)
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    if not tenant_id:
+        raise HTTPException(status_code=400, detail="tenant_id is required")
+    return await observations_response(tenant_id, entity_id, index, start, end)
