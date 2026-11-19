@@ -20,7 +20,7 @@ from typing import Callable, Dict, List, Optional
 
 import numpy as np
 import rasterio
-from rasterio.io import MemoryFile
+from rasterio import MemoryFile
 from sqlalchemy import text
 
 from app.services import fiware_integration as fi
