@@ -91,7 +91,8 @@ def _lst_attribute(statistics: dict, observed_at: str) -> dict:
 
 
 def _index_attribute(index_type: str, statistics: dict, observed_at: str,
-                     raster_url: Optional[str], preview_url: Optional[str]) -> dict:
+                     raster_url: Optional[str], preview_url: Optional[str],
+                     interior: Optional[dict] = None) -> dict:
     attr = {
         "type": "Property",
         "value": round(float(statistics.get("mean", 0)), 6),
@@ -104,7 +105,63 @@ def _index_attribute(index_type: str, statistics: dict, observed_at: str,
         attr["rasterUrl"] = {"type": "Property", "value": raster_url}
     if preview_url:
         attr["previewUrl"] = {"type": "Property", "value": preview_url}
+    if interior:
+        attr.update(_interior_subproperties(interior))
     return attr
+
+
+def _interior_subproperties(interior: dict) -> dict:
+    """Interior-measure sub-properties; statistics with no valid pixel are left out, never zero."""
+    sub = {
+        "interiorValidFraction": {"type": "Property", "value": round(float(interior["valid_fraction"]), 4)},
+        "interiorPixelCount": {"type": "Property", "value": int(interior["valid_pixels"])},
+        "interiorMask": {"type": "Property", "value": interior["mask"]},
+    }
+    for name, key in (("interiorMedian", "median"), ("interiorMean", "mean"),
+                      ("interiorP10", "p10"), ("interiorP90", "p90")):
+        if interior.get(key) is not None:
+            sub[name] = {"type": "Property", "value": round(float(interior[key]), 6)}
+    return sub
+
+
+# Attribute names reach a reader as the short name or as the full IRI of either vocabulary.
+_NAME_PREFIXES = ("", "https://nkz-os.org/ns/", "https://uri.etsi.org/ngsi-ld/default-context/")
+
+
+def _attr_by_name(container: dict, name: str):
+    for prefix in _NAME_PREFIXES:
+        value = container.get(prefix + name)
+        if value is not None:
+            return value
+    return None
+
+
+def _property_value(prop):
+    return prop.get("value") if isinstance(prop, dict) else prop
+
+
+def existing_interior_observation(tenant_id: str, parcel_id: str, sensing_date: date,
+                                  index_type: str) -> Optional[tuple]:
+    """``(interiorValidFraction, rasterUrl)`` of the index in the parcel's EOProduct for the date.
+
+    None when the entity does not exist (404); any other broker error raises, so the
+    caller decides. The whole entity is read: ``?attrs=`` answers 404 on an existing
+    entity when an attribute is missing or expands differently.
+    """
+    entity_id = _entity_id_for_acquisition(tenant_id, parcel_id, sensing_date.isoformat())
+    try:
+        entity = SyncOrionClient(tenant_id).get_entity(entity_id)
+    except Exception as exc:
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+        if status == 404:
+            return None
+        raise
+    attr = _attr_by_name(entity or {}, index_type.lower())
+    if not isinstance(attr, dict):
+        return (None, None)
+    fraction = _property_value(_attr_by_name(attr, "interiorValidFraction"))
+    raster_url = _property_value(_attr_by_name(attr, "rasterUrl"))
+    return (float(fraction) if fraction is not None else None, raster_url)
 
 
 def has_valid_pixels(statistics: dict) -> bool:
@@ -116,7 +173,8 @@ def has_valid_pixels(statistics: dict) -> bool:
 
 
 def upsert_eo_index(tenant_id, parcel_id, index_type, statistics, sensing_date,
-                    raster_url=None, preview_url=None, cloud_cover=None):
+                    raster_url=None, preview_url=None, cloud_cover=None,
+                    interior: Optional[dict] = None, parcel_cloud_fraction: Optional[float] = None):
     """Approach A: one EOProduct per (parcel, sensingDate); merge one named index Property."""
     sensing_date_str = sensing_date.isoformat()
     index_key = index_type.lower()
@@ -127,7 +185,7 @@ def upsert_eo_index(tenant_id, parcel_id, index_type, statistics, sensing_date,
     entity_id = _entity_id_for_acquisition(tenant_id, parcel_id, sensing_date_str)
     observed_at = datetime(sensing_date.year, sensing_date.month, sensing_date.day,
                            10, 50, 0, tzinfo=timezone.utc).isoformat().replace("+00:00", "Z")
-    index_attr = _index_attribute(index_type, statistics, observed_at, raster_url, preview_url)
+    index_attr = _index_attribute(index_type, statistics, observed_at, raster_url, preview_url, interior)
 
     # NOTE: pixelCount/source (and sensingDate) are top-level, per-acquisition attrs.
     # Under options=update, when multiple indices (NDVI, NDRE, ...) merge into the
@@ -149,6 +207,8 @@ def upsert_eo_index(tenant_id, parcel_id, index_type, statistics, sensing_date,
             entity["cloudCoverPercentage"] = {"type": "Property", "value": round(float(cloud_cover), 2)}
         except (TypeError, ValueError):
             pass
+    if parcel_cloud_fraction is not None:
+        entity["parcelCloudFraction"] = {"type": "Property", "value": round(float(parcel_cloud_fraction), 4)}
     try:
         result = _upsert_eoproduct_entity(tenant_id, entity)
         if result.get("upserted", 0) >= 1 and not result.get("errors"):

@@ -8,6 +8,7 @@ by the telemetry-worker subscription on Orion-LD.
 
 import logging
 import os
+import re
 import shutil
 from typing import Dict, Any, List, Optional
 from datetime import datetime, date, timezone
@@ -23,7 +24,8 @@ from app.services.radiometry import l2a_radiometry
 from app.services.storage import create_storage_service, generate_tenant_bucket_name
 from app.database import get_db_session
 from app.tasks.download_tasks import band_cleanup_key, band_copy_prefix
-from app.services.fiware_integration import has_valid_pixels, upsert_eo_index
+from app.services.fiware_integration import existing_interior_observation, has_valid_pixels, upsert_eo_index
+from app.services.interior_stats import cloud_fraction, interior_mask, interior_statistics, parcel_mask
 
 logger = logging.getLogger(__name__)
 
@@ -112,13 +114,16 @@ def _decrement_and_cleanup_bands(tenant_id: str, scene_product_id: str, local_pr
     return False
 
 
-def _idempotency_key(tenant_id: str, parcel_id: str, index_type: str, sensing_date_str: str) -> str:
-    return f"vegetation:calc:{tenant_id}:{parcel_id}:{index_type}:{sensing_date_str}"
+def _idempotency_key(tenant_id: str, parcel_id: str, index_type: str, sensing_date_str: str,
+                     scene_product_id: str) -> str:
+    return f"vegetation:calc:{tenant_id}:{parcel_id}:{index_type}:{sensing_date_str}:{scene_product_id}"
 
 
-def _check_idempotency(tenant_id: str, parcel_id: str, index_type: str, sensing_date_str: str) -> bool:
-    """Atomically claim the slot for this (tenant, parcel, index, date)
-    calculation in Redis (SETNX, TTL 24h). Two workers racing on the same
+def _check_idempotency(tenant_id: str, parcel_id: str, index_type: str, sensing_date_str: str,
+                       scene_product_id: str) -> bool:
+    """Atomically claim the slot for this (tenant, parcel, index, date, scene)
+    calculation in Redis (SETNX, TTL 24h). Two scenes of the same day each get
+    their own slot; the best one is chosen when publishing. Two workers racing on the same
     key cannot both proceed — only one wins.
 
     Returns True if a previous run already claimed this slot (caller must
@@ -129,7 +134,7 @@ def _check_idempotency(tenant_id: str, parcel_id: str, index_type: str, sensing_
     retries for 24h.
     """
     try:
-        key = _idempotency_key(tenant_id, parcel_id, index_type, sensing_date_str)
+        key = _idempotency_key(tenant_id, parcel_id, index_type, sensing_date_str, scene_product_id)
         r = _get_redis()
         was_set = r.set(key, "1", nx=True, ex=86400)
         return not was_set
@@ -138,12 +143,13 @@ def _check_idempotency(tenant_id: str, parcel_id: str, index_type: str, sensing_
         return False
 
 
-def _release_idempotency(tenant_id: str, parcel_id: str, index_type: str, sensing_date_str: str) -> None:
+def _release_idempotency(tenant_id: str, parcel_id: str, index_type: str, sensing_date_str: str,
+                         scene_product_id: str) -> None:
     """Release a previously-claimed idempotency slot. Called after a failed
     calc_index so the next retry can compute again, and from the DELETE
     cascade so users can re-run an analysis they explicitly removed."""
     try:
-        key = _idempotency_key(tenant_id, parcel_id, index_type, sensing_date_str)
+        key = _idempotency_key(tenant_id, parcel_id, index_type, sensing_date_str, scene_product_id)
         _get_redis().delete(key)
     except Exception as e:
         logger.debug("Redis idempotency release failed (non-fatal): %s", e)
@@ -189,6 +195,30 @@ def _window_band_set(required_bands, scene_bands, sen2res_enabled):
     return bands
 
 
+_SCENE_SEGMENT = re.compile(r"/scenes/([^/]+)/")
+
+
+def is_better_observation(new_fraction: float, new_raster_url: str, existing: Optional[tuple]) -> bool:
+    """Whether a new scene's observation replaces the existing one for the same date.
+
+    ``existing`` is ``(interiorValidFraction, rasterUrl)`` of the published product,
+    or None. The same scene recomputed replaces itself; a product from before the
+    interior measure has no fraction to defend; otherwise only a strictly better
+    valid interior fraction wins.
+    """
+    if existing is None:
+        return True
+    existing_fraction, existing_url = existing
+    if existing_fraction is None:
+        return True
+    if existing_url:
+        new_scene = _SCENE_SEGMENT.search(new_raster_url or "")
+        old_scene = _SCENE_SEGMENT.search(existing_url)
+        if existing_url == new_raster_url or (new_scene and old_scene and new_scene.group(1) == old_scene.group(1)):
+            return True
+    return new_fraction > existing_fraction
+
+
 def _persist_results(
     tenant_id: str,
     job: VegetationJob,
@@ -197,6 +227,8 @@ def _persist_results(
     statistics: Dict[str, Any],
     remote_raster_path: str,
     primary_scene: VegetationScene,
+    interior: Optional[Dict[str, Any]] = None,
+    parcel_cloud_fraction: Optional[float] = None,
 ) -> bool:
     """Persist analysis results to Orion-LD as an EOProduct entity.
 
@@ -229,6 +261,8 @@ def _persist_results(
         raster_url=raster_url,
         preview_url=preview_url,
         cloud_cover=primary_scene.cloud_coverage if hasattr(primary_scene, "cloud_coverage") else None,
+        interior=interior,
+        parcel_cloud_fraction=parcel_cloud_fraction,
     )
     if eid:
         logger.info("EOProduct upserted: %s (%s)", eid, index_type)
@@ -286,11 +320,12 @@ _LOCAL_CALCULATORS = {
 }
 
 
-def release_scene_idempotency(tenant_id: str, parcel_id: str, sensing_date_str: str) -> None:
+def release_scene_idempotency(tenant_id: str, parcel_id: str, sensing_date_str: str,
+                              scene_product_id: str) -> None:
     """Release the calc slot of every index the local engine computes for a scene,
     so a scene skipped before calculation can be retried (e.g. with another cloud threshold)."""
     for index_type in _LOCAL_CALCULATORS:
-        _release_idempotency(tenant_id, parcel_id, index_type, sensing_date_str)
+        _release_idempotency(tenant_id, parcel_id, index_type, sensing_date_str, scene_product_id)
 
 
 def _to_reference_grid(index_array, shape):
@@ -497,7 +532,7 @@ def calculate_vegetation_index(
 
             # Idempotency check via Redis (always)
             sensing_str = scene.sensing_date.isoformat() if scene.sensing_date else "unknown"
-            if _check_idempotency(tenant_id, job.entity_id or "", idempotency_key, sensing_str):
+            if _check_idempotency(tenant_id, job.entity_id or "", idempotency_key, sensing_str, scene.scene_id):
                 logger.info(
                     "Idempotency: %s for scene %s already calculated, skipping",
                     index_type, scene.id,
@@ -528,13 +563,14 @@ def calculate_vegetation_index(
                 return
 
             # Claim is fresh — record the exact key so a failure below releases it.
-            claimed_lock = (tenant_id, job.entity_id or "", idempotency_key, sensing_str)
+            claimed_lock = (tenant_id, job.entity_id or "", idempotency_key, sensing_str, scene.scene_id)
 
             scenes_to_process = [scene]
 
         # Calculate indices for all scenes
         index_arrays: List[Any] = []
         reference_meta = None
+        first_scene_scl = None
 
         for idx, scene in enumerate(scenes_to_process):
             progress = 20 + (idx * 50 // len(scenes_to_process))
@@ -612,6 +648,8 @@ def calculate_vegetation_index(
                 reference_meta = processor.band_meta
 
             index_array = compute_local_index(processor, index_type, formula)
+            if not index_arrays:
+                first_scene_scl = processor.band_data.get("SCL")
             if index_arrays:
                 index_array = _to_reference_grid(index_array, index_arrays[0].shape)
 
@@ -645,6 +683,24 @@ def calculate_vegetation_index(
                 logger.warning("Could not create geometry mask: %s", mask_err)
 
         statistics = processor.calculate_statistics(composite_array, mask=geometry_mask)
+
+        # Interior measure and parcel cloud fraction (single scene, standard index). Additive:
+        # a failure here never changes what is published today.
+        interior = None
+        parcel_cloud_fraction = None
+        if (not is_temporal_composite and index_type != 'CUSTOM'
+                and parcel_geojson and isinstance(parcel_geojson, dict) and 'coordinates' in parcel_geojson):
+            try:
+                inside, mask_name = interior_mask(processor.band_meta, parcel_geojson, composite_array.shape)
+                interior = interior_statistics(composite_array, inside, mask_name)
+                if first_scene_scl is not None:
+                    scl_on_index = _to_reference_grid(first_scene_scl, composite_array.shape)
+                    parcel_cloud_fraction = cloud_fraction(
+                        scl_on_index,
+                        parcel_mask(processor.band_meta, parcel_geojson, composite_array.shape),
+                    )
+            except Exception as interior_err:
+                logger.warning("Interior measure skipped for %s: %s", job.entity_id, interior_err)
 
         # Vectorize for offline sync
         self.update_state(state='PROGRESS', meta={'progress': 85, 'message': 'Vectorizing index'})
@@ -703,19 +759,43 @@ def calculate_vegetation_index(
         # Upload to MinIO/S3
         storage.upload_file(upload_path, remote_raster_path, bucket_name)
 
+        # One observation per date: a worse scene of the same day does not replace the published one.
+        better_scene_published = False
+        if interior is not None and has_valid_pixels(statistics) and job.entity_id and primary_scene.sensing_date:
+            try:
+                existing = existing_interior_observation(
+                    tenant_id, job.entity_id, primary_scene.sensing_date, index_type,
+                )
+                better_scene_published = not is_better_observation(
+                    interior["valid_fraction"], f"s3://{bucket_name}/{remote_raster_path}", existing,
+                )
+            except Exception as read_err:
+                logger.warning(
+                    "Existing observation of %s on %s not read, publishing: %s",
+                    job.entity_id, primary_scene.sensing_date, read_err,
+                )
+
         # Persist results to Orion-LD
-        published = _persist_results(
-            tenant_id=tenant_id,
-            job=job,
-            index_type=index_type,
-            formula=formula,
-            statistics=statistics,
-            remote_raster_path=remote_raster_path,
-            primary_scene=primary_scene,
-        )
+        if better_scene_published:
+            logger.info("Scene %s not published for %s on %s: a better scene of the same date exists",
+                        primary_scene.scene_id, job.entity_id, primary_scene.sensing_date)
+            published = False
+        else:
+            published = _persist_results(
+                tenant_id=tenant_id,
+                job=job,
+                index_type=index_type,
+                formula=formula,
+                statistics=statistics,
+                remote_raster_path=remote_raster_path,
+                primary_scene=primary_scene,
+                interior=interior,
+                parcel_cloud_fraction=parcel_cloud_fraction,
+            )
 
         # Per-management-zone products: additive, never affects the parcel result.
-        if index_type != 'CUSTOM' and job.entity_id and primary_scene.sensing_date:
+        if (not better_scene_published and index_type != 'CUSTOM'
+                and job.entity_id and primary_scene.sensing_date):
             try:
                 from app.services.zone_products import publish_zone_indices
                 publish_zone_indices(
@@ -748,6 +828,16 @@ def calculate_vegetation_index(
         job_result['published'] = bool(published)
         if not has_valid_pixels(statistics):
             job_result['skip_reason'] = 'no_valid_pixels'
+        elif better_scene_published:
+            job_result['skip_reason'] = 'better_scene_same_date'
+            # Readers pick "the job with a raster" per date; the losing scene must not look
+            # like a ready raster for a date whose published product is another scene's.
+            job_result['superseded_raster_path'] = job_result['raster_path']
+            job_result['raster_path'] = None
+        if interior is not None:
+            job_result['interior'] = interior
+        if parcel_cloud_fraction is not None:
+            job_result['parcel_cloud_fraction'] = parcel_cloud_fraction
 
         if is_temporal_composite:
             job_result['date_range'] = {'start': start_date, 'end': end_date}
@@ -756,7 +846,8 @@ def calculate_vegetation_index(
         db.commit()
 
         _record_parcel_verdict(
-            tenant_id, job, index_type, is_temporal_composite, primary_scene, published, statistics,
+            tenant_id, job, index_type, is_temporal_composite, primary_scene,
+            published or better_scene_published, statistics,
         )
 
         # Band cleanup: delete raw bands from tenant bucket after last index calc
