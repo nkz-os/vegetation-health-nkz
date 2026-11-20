@@ -144,13 +144,13 @@ def test_harvest_today_still_counts_as_monitored(broker):
     assert result == counts(unchanged=1) and sub.is_active
 
 
-def test_a_continuity_request_keeps_the_harvested_parcel_monitored_and_widens_it_to_the_last_year(broker):
+def test_a_continuity_request_keeps_the_harvested_parcel_monitored_without_widening(broker):
     sub = make_sub()
     broker.timelines[sub.entity_id] = harvested()
     broker.requests[sub.entity_id] = ["carbon"]
     _, result = run([sub], broker)
-    assert result == counts(widened=1) and sub.is_active and sub.paused_reason is None
-    assert sub.start_date == TODAY - timedelta(days=365)
+    assert result == counts(unchanged=1) and sub.is_active and sub.paused_reason is None
+    assert sub.start_date == SOWN
     _, again = run([sub], broker)
     assert again == counts(unchanged=1)
 
@@ -188,13 +188,13 @@ def test_a_planned_sowing_does_not_resume_a_harvest_pause(broker):
     assert result == counts(unchanged=1) and not sub.is_active
 
 
-def test_a_continuity_request_resumes_a_harvest_pause_over_the_last_year(broker):
+def test_a_continuity_request_resumes_a_harvest_pause_from_the_sowing(broker):
     sub = make_sub(active=False, reason="harvest")
     broker.timelines[sub.entity_id] = harvested()
     broker.requests[sub.entity_id] = ["carbon"]
     _, result = run([sub], broker)
     assert result == counts(resumed=1)
-    assert sub.is_active and sub.paused_reason is None and sub.start_date == TODAY - timedelta(days=365)
+    assert sub.is_active and sub.paused_reason is None and sub.start_date == SOWN
     assert sub.last_run_at is None and sub.next_run_at is None
 
 
