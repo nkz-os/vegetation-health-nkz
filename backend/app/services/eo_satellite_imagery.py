@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import math
+import numbers
 import re
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
@@ -68,9 +69,11 @@ _PRODUCT_TYPE = {
     Family.CLMS_LST: "CLMS-LST",
 }
 
-# The enum is the contract table; the SDK reader is the single source of names.
-if tuple(f.value for f in Family) != tuple(EO_FAMILIES):  # pragma: no cover
-    raise ImportError("Family enum out of sync with nkz_platform_sdk.EO_FAMILIES")
+# The writer must never write a family the reader does not know. (The equality
+# between the two lists is asserted in the tests, not at import.)
+_UNKNOWN_FAMILIES = [f.value for f in Family if f.value not in EO_FAMILIES]
+if _UNKNOWN_FAMILIES:  # pragma: no cover
+    raise ImportError(f"families unknown to nkz_platform_sdk.EO_FAMILIES: {_UNKNOWN_FAMILIES}")
 
 
 @dataclass(frozen=True)
@@ -110,75 +113,119 @@ class RasterMeta:
 
 # ── value formatting ────────────────────────────────────────────────────────
 
-_INDEX_DECIMALS = 6
-_DECIMALS = {
-    "backscatterVV": 4,
-    "backscatterVH": 4,
-    "deltaVV": 4,
-    "lst": 2,
-    "soilMoistureIndex": 4,
-    "validPixelFraction": 4,
-    "parcelCloudFraction": 4,
-    "changeConfidence": 4,
-    "cloudCoverage": 2,
-    "incidenceAngle": 2,
+INDEX_NAMES = ("ndvi", "evi", "savi", "osavi", "gndvi", "ndre", "ndmi")
+_SAR_RASTER = ("backscatterVV", "backscatterVH")
+
+# One explicit row per contract value: kind, decimals, raster (has a stored
+# .tif and per-pixel statistics). A name the SDK knows but this table does not
+# is a contract change and raises.
+_CLASSES: dict[str, tuple[str, int | None, bool]] = {
+    **{n: ("num", 6, True) for n in INDEX_NAMES},
+    "lst": ("num", 2, True),
+    "backscatterVV": ("num", 4, True),
+    "backscatterVH": ("num", 4, True),
+    "soilMoistureIndex": ("num", 4, True),
+    "pixelCount": ("count1", None, False),
+    "validPixelFraction": ("num", 4, False),
+    "parcelCloudFraction": ("num", 4, False),
+    "cloudCoverage": ("num", 2, False),
+    "incidenceAngle": ("num", 2, False),
+    "changeFlag": ("text", None, False),
+    "changeConfidence": ("num", 4, False),
+    "deltaVV": ("num", 4, False),
 }
-_INTEGER_BASES = frozenset({"pixelCount"})
-_TEXT_BASES = frozenset({"changeFlag"})
-# Values that never carry per-pixel statistics.
-_NO_STATS = frozenset(
-    {"pixelCount", "validPixelFraction", "parcelCloudFraction", "cloudCoverage",
-     "incidenceAngle", "changeFlag", "changeConfidence", "deltaVV"}
-)
+_RASTER_BASES = frozenset(n for n, c in _CLASSES.items() if c[2])
 _STAT_SUFFIXES = frozenset({"min", "max", "std", "interiorMean", "interiorMedian", "interiorP10", "interiorP90"})
+_INTERIOR_SUFFIXES = frozenset(
+    {"interiorMean", "interiorMedian", "interiorP10", "interiorP90",
+     "interiorPixelCount", "interiorValidFraction", "interiorMask"}
+)
+_MASK_VALUES = frozenset({"core", "parcel"})
 _NEGATIVE_ZERO = re.compile(r"^-(0(\.0+)?)$")
+
+# Primary values: a family with none of them has nothing to say.
+_PRIMARY = {
+    Family.S2_INDICES: frozenset(INDEX_NAMES),
+    Family.S2_COMPOSITE: frozenset(INDEX_NAMES),
+    Family.S1_BACKSCATTER: frozenset(_SAR_RASTER),
+    Family.S1_SOIL_MOISTURE: frozenset({"soilMoistureIndex"}),
+    Family.S1_CHANGE: frozenset({"changeFlag"}),
+    Family.LANDSAT_LST: frozenset({"lst"}),
+    Family.CLMS_LST: frozenset({"lst"}),
+}
 
 
 def _classify(name: str) -> tuple[str, int | None]:
-    """Return ("text"|"int"|"num", decimals) for a contract name; ValueError if unknown."""
+    """Return (kind, decimals) for a contract name; ValueError if unknown.
+
+    kind: "text", "mask", "count1" (whole >= 1), "count0" (whole >= 0), "num".
+    """
     base, dot, suffix = name.partition(".")
     if base not in EO_VALUE_NAMES:
         raise ValueError(f"unknown analytics name: {name!r}")
+    if base not in _CLASSES:
+        raise ValueError(f"analytics name {name!r} has no class in this writer")
+    kind, decimals, raster = _CLASSES[base]
     if not dot:
-        if base in _TEXT_BASES:
-            return "text", None
-        if base in _INTEGER_BASES:
-            return "int", None
-        return "num", _DECIMALS.get(base, _INDEX_DECIMALS)
-    if base in _NO_STATS:
+        return kind, decimals
+    if not raster:
         raise ValueError(f"unknown analytics name: {name!r}")
     if suffix == "interiorMask":
-        return "text", None
+        return "mask", None
     if suffix == "interiorPixelCount":
-        return "int", None
+        return "count0", None
     if suffix == "interiorValidFraction":
         return "num", 4
     if suffix in _STAT_SUFFIXES:
-        return "num", _DECIMALS.get(base, _INDEX_DECIMALS)
+        return "num", decimals
     raise ValueError(f"unknown analytics name: {name!r}")
 
 
 def _usable(value: Any) -> bool:
+    """False for None, empty text and non-finite numbers (omitted, never written)."""
     if value is None:
         return False
     if isinstance(value, str):
         return value != ""
-    return not (isinstance(value, float) and not math.isfinite(value))
+    if isinstance(value, numbers.Real) and not isinstance(value, bool):
+        return math.isfinite(float(value))
+    return True  # wrong types are rejected by format_value
 
 
 def format_value(name: str, value: float | int | str) -> str:
     """Contract section 5 representation: fixed decimals, never an exponent."""
     kind, decimals = _classify(name)
-    if kind == "text":
+    if kind in ("text", "mask"):
         if not isinstance(value, str):
             raise ValueError(f"{name} takes text, got {type(value).__name__}")
+        if kind == "mask" and value not in _MASK_VALUES:
+            raise ValueError(f"{name} must be one of {sorted(_MASK_VALUES)}, got {value!r}")
         return value
-    if isinstance(value, (str, bool)) or not isinstance(value, (int, float)):
+    if isinstance(value, bool) or not isinstance(value, numbers.Real):
         raise ValueError(f"{name} takes a number, got {type(value).__name__}")
-    if not math.isfinite(value):
+    if not math.isfinite(float(value)):
         raise ValueError(f"{name} is not finite")
-    text = f"{value:.0f}" if kind == "int" else f"{value:.{decimals}f}"
+    if kind in ("count1", "count0"):
+        number = int(value) if isinstance(value, numbers.Integral) else float(value)
+        if isinstance(number, float):
+            if not number.is_integer():
+                raise ValueError(f"{name} must be a whole number, got {value!r}")
+            number = int(number)
+        floor = 1 if kind == "count1" else 0
+        if number < floor:
+            raise ValueError(f"{name} must be >= {floor}, got {value!r}")
+        return str(number)
+    text = f"{float(value):.{decimals}f}"
     return _NEGATIVE_ZERO.sub(r"\1", text)
+
+
+def _check_scope(name: str, family: Family) -> None:
+    base, dot, suffix = name.partition(".")
+    if dot and suffix in _INTERIOR_SUFFIXES:
+        if base not in INDEX_NAMES or family is not Family.S2_INDICES:
+            raise ValueError(f"{name} is only valid on an index in s2-indices")
+    if base == "pixelCount" and family is Family.S1_CHANGE:
+        raise ValueError("pixelCount is not written in s1-change")
 
 
 # ── identifiers ─────────────────────────────────────────────────────────────
@@ -187,9 +234,15 @@ def format_value(name: str, value: float | int | str) -> str:
 def entity_id(tenant: str, target_kind: Literal["parcel", "zone"], target_urn: str, family: Family, day: date) -> str:
     if target_kind not in ("parcel", "zone"):
         raise ValueError(f"target kind must be parcel or zone, got {target_kind!r}")
+    if not tenant or ":" in tenant:
+        raise ValueError(f"tenant must be non-empty and contain no ':', got {tenant!r}")
+    if isinstance(day, datetime) or not isinstance(day, date):
+        raise ValueError("day must be a date, not a datetime")
+    if not target_urn:
+        raise ValueError("target urn is required")
     target_id = target_urn.rsplit(":", 1)[-1]
-    if not tenant or not target_id:
-        raise ValueError("tenant and target urn are required")
+    if not target_id:
+        raise ValueError("target urn has no id segment")
     return f"urn:ngsi-ld:{ENTITY_TYPE}:{tenant}:{target_kind}:{target_id}:{Family(family).value}:{day.isoformat()}"
 
 
@@ -209,6 +262,8 @@ def _relationship(urn: str) -> dict:
 
 
 def _check_target(target: Target) -> None:
+    if not target.parcel_urn:
+        raise ValueError("parcel_urn is required")
     if target.kind == "parcel":
         if target.zone_urn is not None or target.zone_relation is not None:
             raise ValueError("a parcel target carries no zone")
@@ -254,20 +309,27 @@ def build_entity(
     sensing_text = _sensing_date(family, sensing)
 
     items = []
-    for name, value in analytics.items():
+    for name in sorted(analytics):
+        value = analytics[name]
         _classify(name)  # unknown names fail even when their value is dropped
+        _check_scope(name, family)
         if _usable(value):
             items.append({"name": name, "value": format_value(name, value)})
+    present = {i["name"] for i in items}
 
     if raster is not None:
-        present = {i["name"] for i in items}
+        if not raster.local_server_path:
+            raise ValueError("raster local_server_path is required")
         for layer_name, _ in raster.layers:
+            if layer_name not in _RASTER_BASES:
+                raise ValueError(f"raster layer {layer_name!r} is not a raster value name")
             if layer_name not in present:
                 raise ValueError(f"raster layer {layer_name!r} is not in analytics")
 
-    if len(items) < MIN_ANALYTICS:
+    if len(items) < MIN_ANALYTICS or not (present & _PRIMARY[family]):
         logger.warning(
-            "eo_satellite_imagery: not written, fewer than %d analytics tenant=%s target=%s family=%s day=%s",
+            "eo_satellite_imagery: not written, fewer than %d analytics or no primary value "
+            "tenant=%s target=%s family=%s day=%s",
             MIN_ANALYTICS, tenant, target_urn, family.value, sensing.day.isoformat(),
         )
         return None
@@ -290,12 +352,19 @@ def build_entity(
     if scene is None:
         entity["productType"] = _prop(family.default_product_type)
     else:
-        entity["productID"] = _prop(scene.product_id)
-        entity["productURL"] = _prop(scene.product_url)
-        entity["productFormat"] = _prop(scene.product_format)
-        entity["productType"] = _prop(scene.product_type)
-        entity["platformName"] = _prop(scene.platform_name)
+        for key, value in (
+            ("productID", scene.product_id),
+            ("productURL", scene.product_url),
+            ("productFormat", scene.product_format),
+        ):
+            if value:
+                entity[key] = _prop(value)
+        entity["productType"] = _prop(scene.product_type or family.default_product_type)
+        if scene.platform_name:
+            entity["platformName"] = _prop(scene.platform_name)
         if scene.orbit_number is not None:
+            if isinstance(scene.orbit_number, bool) or not isinstance(scene.orbit_number, numbers.Integral):
+                raise ValueError(f"orbit_number must be an integer, got {scene.orbit_number!r}")
             entity["orbitNumber"] = _prop(int(scene.orbit_number))
         if scene.operational_mode:
             entity["operationalMode"] = _prop(scene.operational_mode)
