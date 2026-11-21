@@ -23,8 +23,9 @@ def rel(o):
 
 
 class FakeResponse:
-    def __init__(self, body, status=200):
+    def __init__(self, body, status=200, headers=None):
         self._body = body
+        self.headers = headers or {}
         self.status_code = status
 
     def raise_for_status(self):
@@ -45,9 +46,14 @@ class FakeSession:
     def get(self, url, params=None, headers=None, timeout=None):
         self.gets.append((url, dict(params or {}), dict(headers or {})))
         assert "Link" not in (headers or {}), "the read must not send a Link header"
-        assert params["type"] == "EOProduct"
+        # a short type without Link expands to the default vocabulary and matches nothing
+        assert params["type"] == job.EOPRODUCT_TYPE == "https://smartdatamodels.org/dataModel.SatelliteImagery/EOProduct"
         off, lim = params["offset"], params["limit"]
-        return FakeResponse(list(self.client.entities.values())[off:off + lim])
+        assert (off == 0) == (params.get("count") == "true")
+        total = len(self.client.entities)
+        shown = total + self.client.count_skew
+        return FakeResponse(list(self.client.entities.values())[off:off + lim],
+                            headers={"NGSILD-Results-Count": str(shown)})
 
 
 class FakeSyncClient:
@@ -58,6 +64,7 @@ class FakeSyncClient:
         self.appended = []
         self.deleted = []
         self.fail_append = False
+        self.count_skew = 0
 
     def _url(self, path):
         return "http://orion" + path
@@ -163,7 +170,7 @@ def test_verify_reports_zero_missing_after_apply():
     assert rc == 0
     lines = out.getvalue().splitlines()
     sd = [l for l in lines if l.startswith("tenant-a\tsensingDate")][0]
-    assert sd == "tenant-a\tsensingDate\told=2\tofficial=2\tmissing=0\tdiffering=0"
+    assert sd == "tenant-a\tsensingDate\told=2\tofficial=2\tmissing=0\tdiffering=0\tmalformed=0"
 
 
 def test_verify_reports_differing_values():
@@ -172,7 +179,7 @@ def test_verify_reports_differing_values():
     e[OFF_PT] = prop("GRD")
     _, rc, out = run([e], ["--verify"])
     assert rc == 1
-    assert "tenant-a\tsensingDate\told=1\tofficial=1\tmissing=0\tdiffering=1" in out
+    assert "tenant-a\tsensingDate\told=1\tofficial=1\tmissing=0\tdiffering=1\tmalformed=0" in out
     assert "DIFFERING\ttenant-a\turn:ngsi-ld:EOProduct:tenant-a:s1\tsensingDate" in out
 
 
@@ -217,3 +224,128 @@ def test_read_paginates_until_short_page():
     offsets = [p["offset"] for _, p, _ in client._session.gets]
     assert offsets == [0, 1000]
     assert all(p["limit"] == 1000 for _, p, _ in client._session.gets)
+
+
+def test_count_mismatch_is_an_error_and_writes_nothing():
+    client = FakeSyncClient("tenant-a", [old_scene("s1")])
+    client.count_skew = 1
+    out = io.StringIO()
+    rc = job.main(["--tenant", "tenant-a", "--apply"], db=object(), client_factory=lambda t: client, out=out)
+    assert rc == 1
+    assert client.appended == [] and client.deleted == []
+    assert "ERROR\ttenant-a" in out.getvalue()
+
+
+def test_missing_count_header_is_an_error():
+    client = FakeSyncClient("tenant-a", [old_scene("s1")])
+    client._session.get_orig = client._session.get
+    orig = client._session.get
+
+    def no_header(*a, **k):
+        r = orig(*a, **k)
+        r.headers = {}
+        return r
+    client._session.get = no_header
+    rc = job.main(["--tenant", "tenant-a"], db=object(), client_factory=lambda t: client, out=io.StringIO())
+    assert rc == 1
+
+
+def test_verify_with_zero_entities_is_not_clean():
+    _, rc, out = run([], ["--verify"])
+    assert rc == 1
+    assert "tenant-a\tentities=0" in out and "EMPTY\ttenant-a" in out
+
+
+def test_contract_refuses_zero_entities():
+    client, rc, out = run([], ["--contract", "--apply"])
+    assert rc == 2 and client.deleted == [] and "REFUSED" in out
+
+
+def test_contract_guard_only_deletes_equal_old_copies():
+    absent = old_scene("absent")  # official missing
+    differing = old_scene("differing")
+    differing[OFF_SD] = prop("1999-01-01")
+    differing[OFF_PT] = prop("SLC")
+    equal = old_scene("equal")
+    equal[OFF_SD] = prop(SD)
+    equal[OFF_PT] = prop("GRD")
+    official_only = {"id": "urn:ngsi-ld:EOProduct:tenant-a:off", "type": "EOProduct",
+                     OFF_SD: prop(SD), OFF_PT: prop("GRD")}
+    client = FakeSyncClient("tenant-a", [absent, differing, equal, official_only])
+    res = job.contract(client, list(client.entities.values()), apply=True)
+    assert res["errors"] == 0
+    assert sorted(client.deleted) == sorted([(equal["id"], OLD_SD), (equal["id"], DEFAULT_PT)])
+    assert all(a not in (OFF_SD, OFF_PT, OFF_ZONE) for _, a in client.deleted)
+
+
+def malformed_scene():
+    e = old_scene("m1")
+    e[OLD_SD] = [prop(SD), prop("2026-01-01")]  # multi-instance
+    e["productType"] = {"type": "Property"}  # no value: would be sent as null
+    e["hasAgriParcelZone"] = "urn:z"  # not an attribute object
+    return e
+
+
+def test_malformed_old_copies_are_never_sent_and_count_in_verify():
+    e = malformed_scene()
+    client, rc, out = run([e], ["--apply"])
+    assert client.appended == []
+    assert rc == 1
+    _, rc2, out2 = run([malformed_scene()], ["--verify"])
+    assert rc2 == 1
+    assert "sensingDate\told=1\tofficial=0\tmissing=0\tdiffering=0\tmalformed=1" in out2
+    assert "productType\told=1\tofficial=0\tmissing=0\tdiffering=0\tmalformed=1" in out2
+    assert "hasAgriParcelZone\told=1\tofficial=0\tmissing=0\tdiffering=0\tmalformed=1" in out2
+
+
+def test_malformed_attribute_skips_only_itself():
+    e = old_scene("m2")
+    e["productType"] = {"type": "Property", "value": None}
+    client, _, _ = run([e], ["--apply"])
+    (_, attrs, _), = client.appended
+    assert attrs == {OFF_SD: prop(SD)}
+
+
+def test_malformed_blocks_contract():
+    e = malformed_scene()
+    e[OFF_SD] = prop(SD)
+    client, rc, _ = run([e], ["--contract", "--apply"])
+    assert rc == 2 and client.deleted == []
+
+
+def two_tenant_run(clients, args):
+    out = io.StringIO()
+    rc = job.main(["--tenant", "acme", "--tenant", "tenant-a", *args], db=object(),
+                  client_factory=lambda t: clients[t], out=out)
+    return rc, out.getvalue()
+
+
+def test_contract_refusal_skips_only_that_tenant():
+    clean = old_scene("c")
+    clean[OFF_SD] = prop(SD)
+    clean[OFF_PT] = prop("GRD")
+    clients = {"acme": FakeSyncClient("acme", [old_scene("x")]),  # not clean
+               "tenant-a": FakeSyncClient("tenant-a", [clean])}
+    rc, out = two_tenant_run(clients, ["--contract", "--apply"])
+    assert rc == 2
+    assert clients["acme"].deleted == []
+    assert len(clients["tenant-a"].deleted) == 2
+
+
+def test_read_error_continues_and_earlier_error_is_not_lost():
+    bad = FakeSyncClient("acme", [old_scene("x")])
+    bad.count_skew = 1
+    clients = {"acme": bad, "tenant-a": FakeSyncClient("tenant-a", [old_scene("s")])}
+    rc, out = two_tenant_run(clients, ["--apply"])
+    assert rc == 1
+    assert len(clients["tenant-a"].appended) == 1
+
+    # refusal in a later tenant wins (2) over an earlier error (1)
+    clean = old_scene("c")
+    clean[OFF_SD] = prop(SD)
+    clean[OFF_PT] = prop("GRD")
+    bad2 = FakeSyncClient("acme", [clean])
+    bad2.count_skew = 1
+    clients = {"acme": bad2, "tenant-a": FakeSyncClient("tenant-a", [old_scene("s")])}
+    rc, _ = two_tenant_run(clients, ["--contract", "--apply"])
+    assert rc == 2

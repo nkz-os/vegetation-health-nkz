@@ -10,6 +10,10 @@ Step (c), --contract: delete the old copy only on entities that already hold the
 the SAME value; refuses unless --verify is clean (0 missing, 0 differing) for the tenant.
 Without --apply it only counts.
 
+The read asks for the FULL type IRI (a short type without Link expands to the default vocabulary and
+returns nothing) and is cross-checked against the broker's result count; a mismatch, or a read error,
+fails that tenant only (exit 1, nothing written). A tenant with 0 entities is never reported clean.
+An old copy that is a list or lacks value/object is counted `malformed`, never sent, and fails verify.
 Entities are read WITHOUT a Link header: SDM and `nkz:` terms come back as full IRIs, default
 vocabulary terms (productType, hasAgriParcelZone) come back short. That tells old from official
 without depending on the @context mapping, which changes between (a) and (c). Old copies are
@@ -52,46 +56,81 @@ TERMS = (
 )
 
 
-def _payload(attr) -> object:
-    return attr.get("object") if attr.get("type") == "Relationship" else attr.get("value")
+ABSENT, OK, MALFORMED = "absent", "ok", "malformed"
+EOPRODUCT_TYPE = SDM + "EOProduct"  # full IRI: without the Link a short type expands to the default vocabulary (0 hits)
+COUNT_HEADER = "NGSILD-Results-Count"
+
+
+class ReadError(Exception):
+    """The read of a tenant is not trustworthy; nothing is written for it."""
+
+
+def _state(entity: dict, key: str, kind: str):
+    """(state, payload) of one attribute: the single presence rule for expand, verify and contract.
+
+    ok = a single attribute object with a non-null value/object; malformed = a list (multi-instance),
+    a non-object, or an object without value/object (sending it would copy null, a 400).
+    """
+    if key not in entity:
+        return ABSENT, None
+    a = entity[key]
+    field = "object" if kind == "Relationship" else "value"
+    if not isinstance(a, dict) or a.get(field) is None:
+        return MALFORMED, None
+    return OK, a[field]
 
 
 def read_eo_products(client) -> list:
-    """All EOProduct of the client's tenant, read without the Link header, paginated."""
+    """All EOProduct of the client's tenant, read without the Link header, paginated.
+
+    Cross-checked against the broker's result count: a mismatch raises ReadError.
+    """
     headers = client._headers("none")  # tenant headers only: no Link, no Content-Type
-    entities, offset = [], 0
+    entities, offset, expected = [], 0, None
     while True:
+        params = {"type": EOPRODUCT_TYPE, "limit": PAGE, "offset": offset}
+        if offset == 0:
+            params["count"] = "true"
         resp = client._session.get(
-            client._url("/ngsi-ld/v1/entities"),
-            params={"type": "EOProduct", "limit": PAGE, "offset": offset},
+            client._url("/ngsi-ld/v1/entities"), params=params,
             headers=headers, timeout=getattr(client, "timeout", 30),
         )
         resp.raise_for_status()
         page = resp.json()
+        if offset == 0:
+            raw = (getattr(resp, "headers", None) or {}).get(COUNT_HEADER)
+            try:
+                expected = int(raw)
+            except (TypeError, ValueError):
+                raise ReadError(f"missing or invalid {COUNT_HEADER} header: {raw!r}")
         entities.extend(page)
         if len(page) < PAGE:
-            return entities
+            break
         offset += PAGE
-
-
-def _attr(entity: dict, key: str) -> Optional[dict]:
-    a = entity.get(key)
-    return a if isinstance(a, dict) else None
+    if len(entities) != expected:
+        raise ReadError(f"read {len(entities)} entities but the broker counts {expected}")
+    return entities
 
 
 def expand(client, entities: list, apply: bool) -> dict:
-    """Step (a). Returns counts: entities to expand/expanded, attributes, errors."""
-    result = {"entities": 0, "attrs": 0, "errors": 0}
+    """Step (a). Returns counts: entities to expand/expanded, attributes, errors, malformed skipped."""
+    result = {"entities": 0, "attrs": 0, "errors": 0, "malformed": 0}
     for entity in entities:
         to_add = {}
         for t in TERMS:
-            old, off = _attr(entity, t.read_old), entity.get(t.official)
-            if old is None or off is not None:
+            old_state, old_val = _state(entity, t.read_old, t.kind)
+            off_state, _ = _state(entity, t.official, t.kind)
+            if old_state == MALFORMED:
+                result["malformed"] += 1
+                logger.error("malformed old attribute tenant=%s entity=%s term=%s",
+                             client.tenant_id, entity["id"], t.name)
+                continue
+            if old_state == ABSENT or off_state != ABSENT:
                 continue
             if t.kind == "Relationship":
-                to_add[t.official] = {"type": "Relationship", "object": old.get("object")}
+                to_add[t.official] = {"type": "Relationship", "object": old_val}
             else:
-                to_add[t.official] = {"type": "Property", "value": old.get("value")}
+                to_add[t.official] = {"type": "Property", "value": old_val}
         if not to_add:
             continue
         result["entities"] += 1
@@ -108,31 +147,35 @@ def expand(client, entities: list, apply: bool) -> dict:
 
 
 def verify(entities: list) -> dict:
-    """term name -> {old, official, missing, differing: [entity ids]}."""
-    rep = {t.name: {"old": 0, "official": 0, "missing": 0, "differing": []} for t in TERMS}
+    """term name -> {old, official, missing, malformed, differing: [entity ids]}."""
+    rep = {t.name: {"old": 0, "official": 0, "missing": 0, "malformed": 0, "differing": []} for t in TERMS}
     for entity in entities:
         for t in TERMS:
-            old, off = _attr(entity, t.read_old), _attr(entity, t.official)
+            old_state, old_val = _state(entity, t.read_old, t.kind)
+            off_state, off_val = _state(entity, t.official, t.kind)
             r = rep[t.name]
-            if old is not None:
-                r["old"] += 1
-            if off is not None:
-                r["official"] += 1
-            if old is not None and off is None:
+            r["old"] += old_state != ABSENT
+            r["official"] += off_state != ABSENT
+            r["malformed"] += (old_state == MALFORMED) + (off_state == MALFORMED)
+            if old_state == OK and off_state == ABSENT:
                 r["missing"] += 1
-            elif old is not None and off is not None and _payload(old) != _payload(off):
+            elif old_state == OK and off_state == OK and old_val != off_val:
                 r["differing"].append(entity["id"])
     return rep
 
 
-def _is_clean(rep: dict) -> bool:
-    return all(r["missing"] == 0 and not r["differing"] for r in rep.values())
+def _is_clean(rep: dict, entity_count: int) -> bool:
+    """Clean = non-empty read and no missing, differing or malformed. An empty read proves nothing."""
+    return entity_count > 0 and all(
+        r["missing"] == 0 and r["malformed"] == 0 and not r["differing"] for r in rep.values())
 
 
-def _print_verify(tenant_id: str, rep: dict, out) -> None:
+def _print_verify(tenant_id: str, rep: dict, entity_count: int, out) -> None:
+    if entity_count == 0:
+        out.write(f"EMPTY\t{tenant_id}\tno EOProduct read; not a clean verify\n")
     for name, r in rep.items():
         out.write(f"{tenant_id}\t{name}\told={r['old']}\tofficial={r['official']}\t"
-                  f"missing={r['missing']}\tdiffering={len(r['differing'])}\n")
+                  f"missing={r['missing']}\tdiffering={len(r['differing'])}\tmalformed={r['malformed']}\n")
         for eid in r["differing"]:
             out.write(f"DIFFERING\t{tenant_id}\t{eid}\t{name}\n")
 
@@ -142,8 +185,9 @@ def contract(client, entities: list, apply: bool) -> dict:
     result = {"attrs": 0, "errors": 0}
     for entity in entities:
         for t in TERMS:
-            old, off = _attr(entity, t.read_old), _attr(entity, t.official)
-            if old is None or off is None or _payload(old) != _payload(off):
+            old_state, old_val = _state(entity, t.read_old, t.kind)
+            off_state, off_val = _state(entity, t.official, t.kind)
+            if old_state != OK or off_state != OK or old_val != off_val:
                 continue
             result["attrs"] += 1
             if not apply:
@@ -178,42 +222,54 @@ def main(argv=None, db=None, client_factory: Optional[Callable] = None, out=None
         from app import database  # imported late: needs DATABASE_URL, which tests do not set
         db = database.SessionLocal()
     factory = client_factory or _default_client
-    rc = EXIT_OK
+    errors, refused = False, False
     try:
         for tenant_id in sorted(_tenant_paths(db, args.tenant)):
-            client = factory(tenant_id)
-            entities = read_eo_products(client)
-            if args.contract:
-                rep = verify(entities)
-                _print_verify(tenant_id, rep, out)
-                if not _is_clean(rep):
-                    out.write(f"REFUSED\t{tenant_id}\tverify is not clean (missing or differing > 0)\n")
-                    logger.error("contract refused tenant=%s", tenant_id)
-                    return EXIT_REFUSED
-                res = contract(client, entities, args.apply)
-                verb = "deleted" if args.apply else "would delete"
-                out.write(f"{tenant_id}\tcontract\t{verb}={res['attrs']}\terrors={res['errors']}\n")
-                if res["errors"]:
-                    rc = EXIT_ERRORS
-                continue
-            if args.apply or not args.verify:
-                res = expand(client, entities, args.apply)
-                verb = "added" if args.apply else "would add"
-                out.write(f"{tenant_id}\texpand\t{verb}\tentities={res['entities']}\tattrs={res['attrs']}\t"
-                          f"errors={res['errors']}\n")
-                if res["errors"]:
-                    rc = EXIT_ERRORS
-                if args.apply and res["attrs"]:
-                    entities = read_eo_products(client)
-            if args.verify:
-                rep = verify(entities)
-                _print_verify(tenant_id, rep, out)
-                if not _is_clean(rep):
-                    rc = EXIT_ERRORS
-        return rc
+            try:
+                outcome = _run_tenant(tenant_id, factory, args, out)
+            except Exception:  # one tenant's failure never stops the others
+                logger.exception("tenant failed tenant=%s", tenant_id)
+                out.write(f"ERROR\t{tenant_id}\tread or write failed\n")
+                outcome = EXIT_ERRORS
+            errors |= outcome == EXIT_ERRORS
+            refused |= outcome == EXIT_REFUSED
+        return EXIT_REFUSED if refused else EXIT_ERRORS if errors else EXIT_OK
     finally:
         if own_db:
             db.close()
+
+
+def _run_tenant(tenant_id: str, factory, args, out) -> int:
+    client = factory(tenant_id)
+    entities = read_eo_products(client)  # ReadError propagates: nothing is written for this tenant
+    rc = EXIT_OK
+    out.write(f"{tenant_id}\tentities={len(entities)}\n")
+    if args.contract:
+        rep = verify(entities)
+        _print_verify(tenant_id, rep, len(entities), out)
+        if not _is_clean(rep, len(entities)):
+            out.write(f"REFUSED\t{tenant_id}\tverify is not clean (empty, missing, differing or malformed)\n")
+            logger.error("contract refused tenant=%s", tenant_id)
+            return EXIT_REFUSED
+        res = contract(client, entities, args.apply)
+        verb = "deleted" if args.apply else "would delete"
+        out.write(f"{tenant_id}\tcontract\t{verb}={res['attrs']}\terrors={res['errors']}\n")
+        return EXIT_ERRORS if res["errors"] else EXIT_OK
+    if args.apply or not args.verify:
+        res = expand(client, entities, args.apply)
+        verb = "added" if args.apply else "would add"
+        out.write(f"{tenant_id}\texpand\t{verb}\tentities={res['entities']}\tattrs={res['attrs']}\t"
+                  f"errors={res['errors']}\tmalformed={res['malformed']}\n")
+        if res["errors"] or res["malformed"]:
+            rc = EXIT_ERRORS
+        if args.apply and res["attrs"]:
+            entities = read_eo_products(client)
+    if args.verify:
+        rep = verify(entities)
+        _print_verify(tenant_id, rep, len(entities), out)
+        if not _is_clean(rep, len(entities)):
+            rc = EXIT_ERRORS
+    return rc
 
 
 if __name__ == "__main__":
