@@ -6,6 +6,12 @@ analysis measured travels in the ``analytics`` list as fixed-decimal strings.
 
 No broker code lives here: the body carries no ``@context`` (the SDK upsert
 adds it) and relationships carry no ``"@type": "@id"``.
+
+Identifier (contract section 2):
+``urn:ngsi-ld:EOSatelliteImagery:{tenant}:{parcel|zone}:{targetId}:{family}:{day}``
+where ``{targetId}`` is the target URN without its ``urn:ngsi-ld:{Type}:``
+prefix, keeping every other segment and its ``:`` (no encoding). The last
+segment alone is NOT enough: zone ids end in ``L1``, ``L2`` ... on every parcel.
 """
 from __future__ import annotations
 
@@ -56,9 +62,8 @@ _ANALYSIS_TYPE = {
     Family.CLMS_LST: "land-surface-temperature",
 }
 
-# productType when there is no concrete scene (Statistical API path).
-# ASSUMPTION: the CLMS value is not fixed by the contract; "CLMS-LST" keeps it
-# distinct from landsat-lst (both share analysisType) - confirm with core.
+# productType when there is no concrete scene (Statistical API path); the
+# clms-lst value is the STAC product:type, verbatim.
 _PRODUCT_TYPE = {
     Family.S2_INDICES: "S2MSI2A",
     Family.S2_COMPOSITE: "S2MSI2A",
@@ -66,7 +71,7 @@ _PRODUCT_TYPE = {
     Family.S1_SOIL_MOISTURE: "GRD",
     Family.S1_CHANGE: "GRD",
     Family.LANDSAT_LST: "L2SP",
-    Family.CLMS_LST: "CLMS-LST",
+    Family.CLMS_LST: "land_surface_temperature",
 }
 
 # The writer must never write a family the reader does not know. (The equality
@@ -231,6 +236,9 @@ def _check_scope(name: str, family: Family) -> None:
 # ── identifiers ─────────────────────────────────────────────────────────────
 
 
+_URN_PREFIX = re.compile(r"^urn:ngsi-ld:[^:]+:(?P<rest>.*)$")
+
+
 def entity_id(tenant: str, target_kind: Literal["parcel", "zone"], target_urn: str, family: Family, day: date) -> str:
     if target_kind not in ("parcel", "zone"):
         raise ValueError(f"target kind must be parcel or zone, got {target_kind!r}")
@@ -240,9 +248,10 @@ def entity_id(tenant: str, target_kind: Literal["parcel", "zone"], target_urn: s
         raise ValueError("day must be a date, not a datetime")
     if not target_urn:
         raise ValueError("target urn is required")
-    target_id = target_urn.rsplit(":", 1)[-1]
-    if not target_id:
-        raise ValueError("target urn has no id segment")
+    match = _URN_PREFIX.match(target_urn)
+    if not match or not match.group("rest"):
+        raise ValueError(f"target urn must be urn:ngsi-ld:<Type>:<id>, got {target_urn!r}")
+    target_id = match.group("rest")
     return f"urn:ngsi-ld:{ENTITY_TYPE}:{tenant}:{target_kind}:{target_id}:{Family(family).value}:{day.isoformat()}"
 
 
@@ -360,13 +369,15 @@ def build_entity(
             if value:
                 entity[key] = _prop(value)
         entity["productType"] = _prop(scene.product_type or family.default_product_type)
-        if scene.platform_name:
+        # clms-lst has no platform, orbit or mode to report.
+        carries_platform = family is not Family.CLMS_LST
+        if scene.platform_name and carries_platform:
             entity["platformName"] = _prop(scene.platform_name)
-        if scene.orbit_number is not None:
+        if scene.orbit_number is not None and carries_platform:
             if isinstance(scene.orbit_number, bool) or not isinstance(scene.orbit_number, numbers.Integral):
                 raise ValueError(f"orbit_number must be an integer, got {scene.orbit_number!r}")
             entity["orbitNumber"] = _prop(int(scene.orbit_number))
-        if scene.operational_mode:
+        if scene.operational_mode and carries_platform:
             entity["operationalMode"] = _prop(scene.operational_mode)
         if scene.footprint:
             entity["productBbox"] = _geo(scene.footprint)

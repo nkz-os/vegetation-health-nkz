@@ -71,12 +71,30 @@ def test_id_parcel_full_segment_not_truncated():
     seg = "123e4567-e89b-12d3-a456-426614174000"
     assert len(seg) == 36
     got = entity_id("tenant-a", "parcel", f"urn:ngsi-ld:AgriParcel:tenant-a:{seg}", Family.S2_INDICES, DAY)
-    assert got == f"urn:ngsi-ld:EOSatelliteImagery:tenant-a:parcel:{seg}:s2-indices:2026-11-12"
+    assert got == f"urn:ngsi-ld:EOSatelliteImagery:tenant-a:parcel:tenant-a:{seg}:s2-indices:2026-11-12"
 
 
-def test_id_zone_uses_zone_urn_last_segment():
-    got = entity_id("tenant-a", "zone", ZONE, Family.S1_BACKSCATTER, DAY)
-    assert got == "urn:ngsi-ld:EOSatelliteImagery:tenant-a:zone:z1:s1-backscatter:2026-11-12"
+def test_id_zone_uses_full_zone_urn():
+    z = "urn:ngsi-ld:AgriManagementZone:p-uuid:0edc1602:L1"
+    got = entity_id("tenant-a", "zone", z, Family.S2_INDICES, DAY)
+    assert got == "urn:ngsi-ld:EOSatelliteImagery:tenant-a:zone:p-uuid:0edc1602:L1:s2-indices:2026-11-12"
+
+
+def test_id_zone_same_level_different_parcels_differ():
+    a = entity_id("tenant-a", "zone", "urn:ngsi-ld:AgriManagementZone:p1:run1:L1", Family.S2_INDICES, DAY)
+    b = entity_id("tenant-a", "zone", "urn:ngsi-ld:AgriManagementZone:p2:run1:L1", Family.S2_INDICES, DAY)
+    assert a != b
+
+
+def test_id_parcel_urn_with_two_segments():
+    got = entity_id("tenant-a", "parcel", PARCEL, Family.S2_INDICES, DAY)
+    assert got == "urn:ngsi-ld:EOSatelliteImagery:tenant-a:parcel:tenant-a:p1:s2-indices:2026-11-12"
+
+
+@pytest.mark.parametrize("bad", ["p1", "urn:other:AgriParcel:x", "urn:ngsi-ld:", "urn:ngsi-ld:AgriParcel:", "urn:ngsi-ld::x"])
+def test_id_rejects_malformed_urn(bad):
+    with pytest.raises(ValueError):
+        entity_id("tenant-a", "parcel", bad, Family.S2_INDICES, DAY)
 
 
 def test_format_value_fixed_decimals():
@@ -120,7 +138,7 @@ def test_zone_entity_has_parcel_and_zone_relation():
     assert e["hasAgriParcel"] == {"type": "Relationship", "object": PARCEL}
     assert e["hasAgriManagementZone"] == {"type": "Relationship", "object": ZONE}
     assert "hasAgriParcelZone" not in e
-    assert e["id"].split(":")[4:6] == ["zone", "z1"]
+    assert e["id"] == "urn:ngsi-ld:EOSatelliteImagery:tenant-a:zone:tenant-a:z1:s2-indices:2026-11-12"
     with pytest.raises(ValueError):
         build(target=zone_target(relation="hasAgriParcelZone"))
 
@@ -403,3 +421,41 @@ def test_raster_layers_must_be_raster_names(layer):
     with pytest.raises(ValueError):
         build(analytics={"ndvi": 0.5, "evi": 0.4, "pixelCount": 3, "ndvi.min": 0.1, "validPixelFraction": 0.9},
               raster=RasterMeta("/r", [("ndvi", "x"), (layer, "y")]))
+
+
+def test_clms_lst_default_product_type_and_no_platform_attributes():
+    lst = {"lst": 21.4, "validPixelFraction": 0.9}
+    e = build(family=Family.CLMS_LST, scene=None, sensing=Sensing(DAY, None), analytics=lst)
+    assert e["productType"]["value"] == "land_surface_temperature"
+    carried = SceneMeta("id", "https://catalog.example.org/x", "GeoTIFF", "land_surface_temperature",
+                        "CLMS", 5, "IW", GEOM)
+    e = build(family=Family.CLMS_LST, scene=carried, sensing=Sensing(DAY, None), analytics=lst)
+    for k in ("platformName", "orbitNumber", "operationalMode"):
+        assert k not in e
+    assert e["productID"]["value"] == "id"
+    assert build(family=Family.LANDSAT_LST, scene=None, analytics=lst)["productType"]["value"] == "L2SP"
+    assert build(family=Family.S1_BACKSCATTER, scene=None, analytics={"backscatterVV": -9.0, "backscatterVH": -15.0})[
+        "productType"]["value"] == "GRD"
+
+
+def test_sdk_parses_full_target_ids(caplog):
+    z1 = "urn:ngsi-ld:AgriManagementZone:p-uuid:0edc1602:L1"
+    z2 = "urn:ngsi-ld:AgriManagementZone:p-other:11aa22bb:L1"
+    parcel_a, parcel_b = "urn:ngsi-ld:AgriParcel:p-uuid", "urn:ngsi-ld:AgriParcel:p-other"
+    an = {"ndvi": 0.5, "evi": 0.4}
+    ents = [
+        build(target=Target("zone", parcel_a, z1, ZONE_REL, GEOM), analytics=an),
+        build(target=Target("zone", parcel_b, z2, ZONE_REL, GEOM), analytics=an, sensing=Sensing(date(2026, 11, 14), None)),
+        build(analytics=an),
+    ]
+    assert len({e["id"] for e in ents}) == 3
+    with caplog.at_level(logging.WARNING, logger="nkz_platform_sdk.eo"):
+        obs = parse_eo_entities(ents)
+    assert [r for r in caplog.records if r.name.startswith("nkz_platform_sdk.eo")] == []
+    assert len(obs) == 3
+    by_id = {o.entity_id: o for o in obs}
+    o1, o2, o3 = (by_id[e["id"]] for e in ents)
+    assert (o1.target, o1.zone_id, o1.parcel_id, o1.sensing_day) == ("zone", z1, parcel_a, DAY)
+    assert (o2.target, o2.zone_id, o2.parcel_id, o2.sensing_day) == ("zone", z2, parcel_b, date(2026, 11, 14))
+    assert (o3.target, o3.zone_id, o3.parcel_id, o3.sensing_day) == ("parcel", None, PARCEL, DAY)
+    assert {o.family for o in obs} == {"s2-indices"}
