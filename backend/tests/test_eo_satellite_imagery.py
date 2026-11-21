@@ -1,0 +1,275 @@
+"""Pure builders for the EOSatelliteImagery entity (contract sections 1-5)."""
+import logging
+import math
+from datetime import date, datetime, timezone
+
+import pytest
+from nkz_platform_sdk import EO_FAMILIES, EO_VALUE_NAMES, parse_eo_entities
+
+from app.services import eo_satellite_imagery as eo
+from app.services.eo_satellite_imagery import (
+    Family,
+    RasterMeta,
+    SceneMeta,
+    Sensing,
+    Target,
+    build_entity,
+    entity_id,
+    format_value,
+)
+
+PARCEL = "urn:ngsi-ld:AgriParcel:tenant-a:p1"
+ZONE = "urn:ngsi-ld:AgriManagementZone:tenant-a:z1"
+GEOM = {"type": "Polygon", "coordinates": [[[0, 0], [0, 1], [1, 1], [0, 0]]]}
+DAY = date(2026, 11, 12)
+TIME = datetime(2026, 11, 12, 10, 56, 21, tzinfo=timezone.utc)
+AN = {"ndvi": 0.62, "evi": 0.41, "pixelCount": 1532}
+
+
+def parcel_target(geometry=GEOM):
+    return Target("parcel", PARCEL, None, None, geometry)
+
+
+def zone_target(geometry=GEOM, relation="hasAgriManagementZone"):
+    return Target("zone", PARCEL, ZONE, relation, geometry)
+
+
+def scene():
+    return SceneMeta(
+        product_id="S2A_X",
+        product_url="https://catalog.example.org/items/S2A_X",
+        product_format="SAFE",
+        product_type="S2MSI2A",
+        platform_name="S2A",
+        orbit_number=37,
+        operational_mode="MSI",
+        footprint=GEOM,
+    )
+
+
+def build(**kw):
+    args = dict(
+        tenant="tenant-a",
+        target=parcel_target(),
+        family=Family.S2_INDICES,
+        sensing=Sensing(DAY, TIME),
+        analytics=dict(AN),
+        scene=scene(),
+        raster=None,
+        result_description="Sentinel-2 vegetation indices.",
+    )
+    args.update(kw)
+    return build_entity(**args)
+
+
+def analytics_of(entity):
+    return {i["name"]: i["value"] for i in entity["analytics"]["value"]}
+
+
+def test_id_parcel_full_segment_not_truncated():
+    seg = "123e4567-e89b-12d3-a456-426614174000"
+    assert len(seg) == 36
+    got = entity_id("tenant-a", "parcel", f"urn:ngsi-ld:AgriParcel:tenant-a:{seg}", Family.S2_INDICES, DAY)
+    assert got == f"urn:ngsi-ld:EOSatelliteImagery:tenant-a:parcel:{seg}:s2-indices:2026-11-12"
+
+
+def test_id_zone_uses_zone_urn_last_segment():
+    got = entity_id("tenant-a", "zone", ZONE, Family.S1_BACKSCATTER, DAY)
+    assert got == "urn:ngsi-ld:EOSatelliteImagery:tenant-a:zone:z1:s1-backscatter:2026-11-12"
+
+
+def test_format_value_fixed_decimals():
+    assert format_value("ndvi", 0.1234567) == "0.123457"
+    assert format_value("backscatterVV", -12.345678) == "-12.3457"
+    assert format_value("lst", 21.456) == "21.46"
+    assert format_value("pixelCount", 1532.0) == "1532"
+    assert format_value("ndvi", 1e-7) == "0.000000"
+    assert "e" not in format_value("ndvi", 1e-7).lower()
+    assert format_value("ndvi", -1e-9) == "0.000000"
+    assert format_value("cloudCoverage", 12.3456) == "12.35"
+    assert format_value("incidenceAngle", 39.1234) == "39.12"
+    assert format_value("deltaVV", 1.234567) == "1.2346"
+    assert format_value("soilMoistureIndex", 0.123456) == "0.1235"
+    assert format_value("validPixelFraction", 0.98765) == "0.9877"
+    assert format_value("changeFlag", "increase") == "increase"
+    # statistics follow their value
+    assert format_value("ndvi.min", 0.1234567) == "0.123457"
+    assert format_value("ndvi.interiorMean", 0.1234567) == "0.123457"
+    assert format_value("backscatterVV.std", 1.234567) == "1.2346"
+    assert format_value("lst.max", 21.456) == "21.46"
+    assert format_value("ndvi.interiorPixelCount", 12.0) == "12"
+    assert format_value("ndvi.interiorValidFraction", 0.98765) == "0.9877"
+    assert format_value("ndvi.interiorMask", "core") == "core"
+
+
+def test_nan_and_none_are_omitted():
+    e = build(analytics={"ndvi": 0.5, "evi": 0.4, "savi": float("nan"), "ndre": None, "ndmi": math.inf})
+    assert analytics_of(e) == {"ndvi": "0.500000", "evi": "0.400000"}
+
+
+def test_less_than_two_analytics_returns_none(caplog):
+    with caplog.at_level(logging.WARNING):
+        assert build(analytics={"ndvi": 0.5, "evi": float("nan")}) is None
+    text = caplog.text
+    assert "tenant-a" in text and PARCEL in text and "s2-indices" in text and "2026-11-12" in text
+
+
+def test_zone_entity_has_parcel_and_zone_relation():
+    e = build(target=zone_target())
+    assert e["hasAgriParcel"] == {"type": "Relationship", "object": PARCEL}
+    assert e["hasAgriManagementZone"] == {"type": "Relationship", "object": ZONE}
+    assert "hasAgriParcelZone" not in e
+    assert e["id"].split(":")[4:6] == ["zone", "z1"]
+    with pytest.raises(ValueError):
+        build(target=zone_target(relation="hasAgriParcelZone"))
+
+
+def test_parcel_entity_has_no_zone_relation():
+    e = build()
+    assert "hasAgriManagementZone" not in e
+    assert e["hasAgriParcel"]["object"] == PARCEL
+
+
+def test_target_kind_consistent():
+    with pytest.raises(ValueError):
+        build(target=Target("parcel", PARCEL, ZONE, "hasAgriManagementZone", GEOM))
+    with pytest.raises(ValueError):
+        build(target=Target("zone", PARCEL, None, None, GEOM))
+    with pytest.raises(ValueError):
+        build(target=Target("zone", PARCEL, ZONE, None, GEOM))
+
+
+def test_composite_sensing_is_date_only():
+    with pytest.raises(ValueError):
+        build(family=Family.S2_COMPOSITE, sensing=Sensing(DAY, TIME))
+    e = build(family=Family.S2_COMPOSITE, sensing=Sensing(DAY, None), scene=None)
+    assert e["sensingDate"]["value"] == "2026-11-12"
+    assert e["id"].endswith(":s2-composite:2026-11-12")
+    assert e["analysisType"]["value"] == "vegetation-indices-composite"
+
+
+def test_time_must_belong_to_the_day():
+    with pytest.raises(ValueError):
+        build(sensing=Sensing(date(2026, 11, 13), TIME))
+
+
+def test_unknown_analytic_name_raises():
+    with pytest.raises(ValueError):
+        build(analytics={"ndvi": 0.5, "evi": 0.4, "sarMoisture": 0.3})
+    with pytest.raises(ValueError):
+        build(analytics={"ndvi": 0.5, "evi": 0.4, "ndvi.bogus": 0.3})
+    with pytest.raises(ValueError):
+        format_value("nope", 1.0)
+
+
+def test_family_enum_matches_sdk():
+    assert tuple(f.value for f in Family) == EO_FAMILIES
+    assert all(f.analysis_type for f in Family)
+    assert all(n in EO_VALUE_NAMES for n in ("ndvi", "lst"))
+
+
+def test_no_geometry_omits_processed_bbox():
+    e = build(target=parcel_target(geometry=None))
+    assert "processedBbox" not in e
+    e = build()
+    assert e["processedBbox"] == {"type": "GeoProperty", "value": GEOM}
+
+
+def test_raster_layers_are_analytics_names():
+    r = RasterMeta("/rasters/p1/2026-11-12", [("ndvi", "NDVI, dimensionless"), ("evi", "EVI, dimensionless")])
+    e = build(raster=r)
+    assert e["localServerPath"]["value"] == "/rasters/p1/2026-11-12"
+    assert e["storageFormat"]["value"] == "GeoTIFF"
+    assert e["contentInformation"]["value"] == [
+        {"layer_name": "ndvi", "layer_categorization": "numerical", "values_explanation": ["NDVI, dimensionless"]},
+        {"layer_name": "evi", "layer_categorization": "numerical", "values_explanation": ["EVI, dimensionless"]},
+    ]
+    with pytest.raises(ValueError):
+        build(raster=RasterMeta("/r", [("ndvi", "x"), ("savi", "y")]))
+
+
+def test_relationships_have_no_type_id_context():
+    e = build(target=zone_target())
+    assert "@context" not in e
+    for key in ("hasAgriParcel", "hasAgriManagementZone"):
+        assert set(e[key]) == {"type", "object"}
+    assert "@type" not in repr(e)
+
+
+def test_no_scene_keeps_only_product_type_and_date_only_sensing():
+    e = build(scene=None, sensing=Sensing(DAY, None))
+    assert e["sensingDate"]["value"] == "2026-11-12"
+    assert e["productType"]["value"] == "S2MSI2A"
+    for k in ("productID", "productURL", "productFormat", "platformName", "orbitNumber", "operationalMode", "productBbox"):
+        assert k not in e
+
+
+def test_scene_attributes():
+    e = build(scene=scene())
+    assert e["productID"]["value"] == "S2A_X"
+    assert e["productURL"]["value"].startswith("https://")
+    assert e["productFormat"]["value"] == "SAFE"
+    assert e["productType"]["value"] == "S2MSI2A"
+    assert e["platformName"]["value"] == "S2A"
+    assert e["orbitNumber"]["value"] == 37
+    assert e["operationalMode"]["value"] == "MSI"
+    assert e["productBbox"] == {"type": "GeoProperty", "value": GEOM}
+
+
+def test_content_information_only_with_two_layers():
+    one = build(raster=RasterMeta("/r", [("ndvi", "x")]))
+    assert "contentInformation" not in one and one["localServerPath"]["value"] == "/r"
+    none = build(raster=RasterMeta("/r", []))
+    assert "contentInformation" not in none
+    assert "contentInformation" not in build(raster=None)
+
+
+def test_forbidden_attributes_absent():
+    e = build(target=zone_target(), raster=RasterMeta("/r", [("ndvi", "x"), ("evi", "y")]))
+    for k in ("refAgriParcel", "campaign", "source", "rasterUrl", "previewUrl", "processingLevel",
+              "acquisitionDate", "sarSceneId", "lstSourceScene", "ndvi", "evi", "pixelCount"):
+        assert k not in e
+    assert e["type"] == "EOSatelliteImagery"
+    assert e["provider"]["value"] == "Nekazari vegetation module"
+    assert e["resultDescription"]["value"] == "Sentinel-2 vegetation indices."
+
+
+def test_sensing_date_with_real_time_iso_z():
+    assert build()["sensingDate"]["value"] == "2026-11-12T10:56:21Z"
+
+
+def test_analytics_are_strings_never_exponent():
+    e = build(analytics={"ndvi": 1e-7, "evi": -0.0, "pixelCount": 3})
+    for item in e["analytics"]["value"]:
+        assert isinstance(item["value"], str)
+        assert "e" not in item["value"].lower()
+        assert item["value"] != "-0.000000"
+    assert analytics_of(e)["evi"] == "0.000000"
+
+
+def test_sdk_parses_built_entities():
+    p = build(
+        analytics={"ndvi": 0.62, "evi": 0.41, "pixelCount": 1532, "ndvi.interiorMask": "core"},
+        raster=RasterMeta("/rasters/p1/2026-11-12", [("ndvi", "x"), ("evi", "y")]),
+    )
+    z = build(
+        target=zone_target(),
+        family=Family.S1_BACKSCATTER,
+        sensing=Sensing(date(2026, 11, 13), None),
+        analytics={"backscatterVV": -12.345678, "backscatterVH": -18.5, "pixelCount": 40},
+        scene=None,
+        result_description="Sentinel-1 backscatter.",
+    )
+    obs = {o.family: o for o in parse_eo_entities([p, z])}
+    assert set(obs) == {"s2-indices", "s1-backscatter"}
+    a = obs["s2-indices"]
+    assert (a.target, a.parcel_id, a.zone_id) == ("parcel", PARCEL, None)
+    assert a.sensing_day == DAY and a.sensing_time == TIME
+    assert a.values["ndvi"] == pytest.approx(0.62) and a.values["pixelCount"] == 1532
+    assert a.values["ndvi.interiorMask"] == "core"
+    assert a.raster_path == "/rasters/p1/2026-11-12"
+    b = obs["s1-backscatter"]
+    assert (b.target, b.parcel_id, b.zone_id) == ("zone", PARCEL, ZONE)
+    assert b.sensing_day == date(2026, 11, 13) and b.sensing_time is None
+    assert b.values["backscatterVV"] == pytest.approx(-12.3457)
+    assert b.product_type == "GRD"
