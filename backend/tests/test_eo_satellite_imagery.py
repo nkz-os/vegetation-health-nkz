@@ -372,7 +372,7 @@ def test_no_pixel_count_in_s1_change():
         (Family.S1_SOIL_MOISTURE, {"pixelCount": 10, "validPixelFraction": 0.9}),
         (Family.S1_CHANGE, {"changeConfidence": 0.5, "deltaVV": 1.0}),
         (Family.LANDSAT_LST, {"pixelCount": 10, "lst.min": 1.0}),
-        (Family.CLMS_LST, {"pixelCount": 10, "validPixelFraction": 0.9}),
+        (Family.CLMS_LST, {"pixelCount": 10, "lst.min": 1.0}),
     ],
 )
 def test_family_without_primary_value_returns_none(family, analytics, caplog):
@@ -424,7 +424,7 @@ def test_raster_layers_must_be_raster_names(layer):
 
 
 def test_clms_lst_default_product_type_and_no_platform_attributes():
-    lst = {"lst": 21.4, "validPixelFraction": 0.9}
+    lst = {"lst": 21.4, "lst.min": 20.0}
     e = build(family=Family.CLMS_LST, scene=None, sensing=Sensing(DAY, None), analytics=lst)
     assert e["productType"]["value"] == "land_surface_temperature"
     carried = SceneMeta("id", "https://catalog.example.org/x", "GeoTIFF", "land_surface_temperature",
@@ -459,3 +459,84 @@ def test_sdk_parses_full_target_ids(caplog):
     assert (o2.target, o2.zone_id, o2.parcel_id, o2.sensing_day) == ("zone", z2, parcel_b, date(2026, 11, 14))
     assert (o3.target, o3.zone_id, o3.parcel_id, o3.sensing_day) == ("parcel", None, PARCEL, DAY)
     assert {o.family for o in obs} == {"s2-indices"}
+
+
+def test_family_values_equal_sdk_families():
+    assert set(f.value for f in Family) == set(EO_FAMILIES)
+
+
+def test_urn_pattern_matches_sdk():
+    from nkz_platform_sdk import eo as sdk_eo
+
+    assert eo._URN_PATTERN == sdk_eo._URN.pattern
+
+
+@pytest.mark.parametrize(
+    "bad",
+    ["urn:ngsi-ld:AgriParcel:a::b", "urn:ngsi-ld:AgriParcel:a:", "urn:ngsi-ld:AgriParcel:a b",
+     "urn:ngsi-ld:AgriParcel:a#b", "urn:ngsi-ld:AgriParcel:\u00f1"],
+)
+def test_target_urn_charset_and_empty_segments(bad):
+    with pytest.raises(ValueError):
+        entity_id("tenant-a", "parcel", bad, Family.S2_INDICES, DAY)
+    with pytest.raises(ValueError):
+        build(target=Target("parcel", bad, None, None, GEOM))
+    with pytest.raises(ValueError):
+        build(target=Target("zone", PARCEL, bad, ZONE_REL, GEOM))
+    with pytest.raises(ValueError):
+        build(target=Target("parcel", bad, None, None, GEOM))
+    assert entity_id("tenant-a", "parcel", "urn:ngsi-ld:AgriParcel:a_b.c~d%2B+@x/y-z", Family.S2_INDICES, DAY)
+
+
+def test_decimals_of_soil_moisture_cloud_and_incidence():
+    assert format_value("soilMoistureIndex", 0.123456) == "0.1235"
+    assert format_value("soilMoistureIndex", 0.5) == "0.5000"
+    assert format_value("cloudCoverage", 3.14159) == "3.14"
+    assert format_value("cloudCoverage", 3) == "3.00"
+    assert format_value("incidenceAngle", 39.999) == "40.00"
+    assert format_value("incidenceAngle", 33.456) == "33.46"
+
+
+S2I, S2C, S1B, S1M, S1C, LL, CL = (Family.S2_INDICES, Family.S2_COMPOSITE, Family.S1_BACKSCATTER,
+                                   Family.S1_SOIL_MOISTURE, Family.S1_CHANGE, Family.LANDSAT_LST, Family.CLMS_LST)
+# (name, allowed (family, kind), rejected (family, kind))
+WHERE_ROWS = [
+    ("ndvi", (S2C, "zone"), (S1B, "parcel")),
+    ("ndvi.min", (S2I, "parcel"), (LL, "parcel")),
+    ("lst", (CL, "zone"), (S2I, "parcel")),
+    ("lst.std", (LL, "parcel"), (S1C, "parcel")),
+    ("backscatterVV", (S1B, "zone"), (S1M, "zone")),
+    ("backscatterVH.max", (S1B, "parcel"), (S2I, "parcel")),
+    ("soilMoistureIndex", (S1M, "zone"), (S1B, "zone")),
+    ("soilMoistureIndex.min", (S1M, "parcel"), (S1C, "parcel")),
+    ("pixelCount", (S2C, "zone"), (S1C, "zone")),
+    ("validPixelFraction", (S1C, "parcel"), (LL, "parcel")),
+    ("parcelCloudFraction", (S2I, "parcel"), (S2I, "zone")),
+    ("cloudCoverage", (S2C, "zone"), (S1B, "zone")),
+    ("incidenceAngle", (S1M, "zone"), (S2I, "zone")),
+    ("changeFlag", (S1C, "zone"), (S1B, "zone")),
+    ("changeConfidence", (S1C, "parcel"), (S2I, "parcel")),
+    ("deltaVV", (S1C, "parcel"), (S1B, "parcel")),
+    ("ndvi.interiorMean", (S2I, "parcel"), (S2I, "zone")),
+    ("ndvi.interiorPixelCount", (S2I, "parcel"), (S2C, "parcel")),
+    ("ndvi.interiorMask", (S2I, "parcel"), (S1B, "parcel")),
+    ("lst.interiorMean", None, (LL, "parcel")),
+]
+
+
+@pytest.mark.parametrize("name,allowed,rejected", WHERE_ROWS)
+def test_where_column_enforced(name, allowed, rejected):
+    if allowed is not None:
+        eo._check_scope(name, *allowed)
+    with pytest.raises(ValueError):
+        eo._check_scope(name, *rejected)
+
+
+def test_where_column_enforced_through_build():
+    with pytest.raises(ValueError):
+        build(target=zone_target(), analytics={"ndvi": 0.5, "evi": 0.4, "parcelCloudFraction": 0.1})
+    with pytest.raises(ValueError):
+        build(family=Family.CLMS_LST, scene=None, sensing=Sensing(DAY, None),
+              analytics={"lst": 20.0, "validPixelFraction": 0.9})
+    with pytest.raises(ValueError):
+        build(target=zone_target(), analytics={"ndvi": 0.5, "ndvi.interiorMean": 0.5})

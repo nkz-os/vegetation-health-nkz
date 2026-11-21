@@ -224,19 +224,60 @@ def format_value(name: str, value: float | int | str) -> str:
     return _NEGATIVE_ZERO.sub(r"\1", text)
 
 
-def _check_scope(name: str, family: Family) -> None:
+_S2 = frozenset({Family.S2_INDICES, Family.S2_COMPOSITE})
+_S1 = frozenset({Family.S1_BACKSCATTER, Family.S1_SOIL_MOISTURE, Family.S1_CHANGE})
+_BOTH_KINDS = frozenset({"parcel", "zone"})
+_PARCEL_ONLY = frozenset({"parcel"})
+
+# Contract section 5, column "Donde": name class -> (families, target kinds).
+# Statistics (.min/.max/.std) follow their value; interior* has its own row.
+_WHERE: dict[str, tuple[frozenset, frozenset]] = {
+    **{n: (_S2, _BOTH_KINDS) for n in INDEX_NAMES},
+    "lst": (frozenset({Family.LANDSAT_LST, Family.CLMS_LST}), _BOTH_KINDS),
+    "backscatterVV": (frozenset({Family.S1_BACKSCATTER}), _BOTH_KINDS),
+    "backscatterVH": (frozenset({Family.S1_BACKSCATTER}), _BOTH_KINDS),
+    "soilMoistureIndex": (frozenset({Family.S1_SOIL_MOISTURE}), _BOTH_KINDS),
+    "pixelCount": (frozenset(Family) - {Family.S1_CHANGE}, _BOTH_KINDS),
+    "validPixelFraction": (_S2 | _S1, _BOTH_KINDS),
+    "parcelCloudFraction": (frozenset({Family.S2_INDICES}), _PARCEL_ONLY),
+    "cloudCoverage": (_S2, _BOTH_KINDS),
+    "incidenceAngle": (_S1, _BOTH_KINDS),
+    "changeFlag": (frozenset({Family.S1_CHANGE}), _BOTH_KINDS),
+    "changeConfidence": (frozenset({Family.S1_CHANGE}), _BOTH_KINDS),
+    "deltaVV": (frozenset({Family.S1_CHANGE}), _BOTH_KINDS),
+    "interior": (frozenset({Family.S2_INDICES}), _PARCEL_ONLY),
+}
+
+
+def _check_scope(name: str, family: Family, kind: str) -> None:
     base, dot, suffix = name.partition(".")
     if dot and suffix in _INTERIOR_SUFFIXES:
-        if base not in INDEX_NAMES or family is not Family.S2_INDICES:
-            raise ValueError(f"{name} is only valid on an index in s2-indices")
-    if base == "pixelCount" and family is Family.S1_CHANGE:
-        raise ValueError("pixelCount is not written in s1-change")
+        if base not in INDEX_NAMES:
+            raise ValueError(f"{name} is only valid on an index")
+        row = "interior"
+    else:
+        row = base
+    if row not in _WHERE:
+        raise ValueError(f"{name} has no scope row")
+    families, kinds = _WHERE[row]
+    if family not in families or kind not in kinds:
+        raise ValueError(f"{name} is not allowed in {family.value} on a {kind} target")
 
 
 # ── identifiers ─────────────────────────────────────────────────────────────
 
 
 _URN_PREFIX = re.compile(r"^urn:ngsi-ld:[^:]+:(?P<rest>.*)$")
+# Same character set as the reader's nkz_platform_sdk.eo._URN (a test compares them).
+_URN_PATTERN = r"^urn:[A-Za-z0-9_.:~%+@/-]+$"
+_URN = re.compile(_URN_PATTERN)
+
+
+def _check_urn(urn: str, what: str) -> None:
+    """Reject a URN the reader would drop: bad characters or an empty segment."""
+    if not isinstance(urn, str) or not _URN.match(urn) or "::" in urn or urn.endswith(":"):
+        raise ValueError(f"{what} is not a URN the reader accepts: {urn!r}")
+
 
 
 def entity_id(tenant: str, target_kind: Literal["parcel", "zone"], target_urn: str, family: Family, day: date) -> str:
@@ -248,6 +289,7 @@ def entity_id(tenant: str, target_kind: Literal["parcel", "zone"], target_urn: s
         raise ValueError("day must be a date, not a datetime")
     if not target_urn:
         raise ValueError("target urn is required")
+    _check_urn(target_urn, "target urn")
     match = _URN_PREFIX.match(target_urn)
     if not match or not match.group("rest"):
         raise ValueError(f"target urn must be urn:ngsi-ld:<Type>:<id>, got {target_urn!r}")
@@ -273,6 +315,9 @@ def _relationship(urn: str) -> dict:
 def _check_target(target: Target) -> None:
     if not target.parcel_urn:
         raise ValueError("parcel_urn is required")
+    _check_urn(target.parcel_urn, "parcel_urn")
+    if target.zone_urn:
+        _check_urn(target.zone_urn, "zone_urn")
     if target.kind == "parcel":
         if target.zone_urn is not None or target.zone_relation is not None:
             raise ValueError("a parcel target carries no zone")
@@ -321,7 +366,7 @@ def build_entity(
     for name in sorted(analytics):
         value = analytics[name]
         _classify(name)  # unknown names fail even when their value is dropped
-        _check_scope(name, family)
+        _check_scope(name, family, target.kind)
         if _usable(value):
             items.append({"name": name, "value": format_value(name, value)})
     present = {i["name"] for i in items}
