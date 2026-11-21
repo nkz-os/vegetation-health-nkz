@@ -13,11 +13,12 @@ Without --apply it only counts.
 The read asks for the FULL type IRI (a short type without Link expands to the default vocabulary and
 returns nothing) and is cross-checked against the broker's result count; a mismatch, or a read error,
 fails that tenant only (exit 1, nothing written). A tenant with 0 entities is never reported clean.
-An old copy that is a list or lacks value/object is counted `malformed`, never sent, and fails verify.
+An old copy that is a list or lacks a value is counted `malformed`, never sent, and fails verify.
 Entities are read WITHOUT a Link header: SDM and `nkz:` terms come back as full IRIs, default
-vocabulary terms (productType, hasAgriParcelZone) come back short. That tells old from official
+vocabulary terms (productType) come back short. That tells old from official
 without depending on the @context mapping, which changes between (a) and (c). Old copies are
 always deleted by full IRI, since after the mapping change the short name expands to the official copy.
+The zone relation (hasAgriParcelZone) is deliberately not handled: it is not copied, verified or contracted.
 """
 import argparse
 import logging
@@ -45,14 +46,11 @@ class Term:
     read_old: str  # key of the old copy as read without Link
     delete_old: str  # full IRI used to delete the old copy
     official: str
-    kind: str  # "Property" | "Relationship"
 
 
 TERMS = (
-    Term("sensingDate", NKZ + "sensingDate", NKZ + "sensingDate", SDM + "sensingDate", "Property"),
-    Term("productType", "productType", DEFAULT_CTX + "productType", SDM + "productType", "Property"),
-    Term("hasAgriParcelZone", "hasAgriParcelZone", DEFAULT_CTX + "hasAgriParcelZone",
-         NKZ + "hasAgriParcelZone", "Relationship"),
+    Term("sensingDate", NKZ + "sensingDate", NKZ + "sensingDate", SDM + "sensingDate"),
+    Term("productType", "productType", DEFAULT_CTX + "productType", SDM + "productType"),
 )
 
 
@@ -65,19 +63,18 @@ class ReadError(Exception):
     """The read of a tenant is not trustworthy; nothing is written for it."""
 
 
-def _state(entity: dict, key: str, kind: str):
+def _state(entity: dict, key: str):
     """(state, payload) of one attribute: the single presence rule for expand, verify and contract.
 
-    ok = a single attribute object with a non-null value/object; malformed = a list (multi-instance),
-    a non-object, or an object without value/object (sending it would copy null, a 400).
+    ok = a single Property object with a non-null value; malformed = a list (multi-instance),
+    a non-object, or an object without value (sending it would copy null, a 400).
     """
     if key not in entity:
         return ABSENT, None
     a = entity[key]
-    field = "object" if kind == "Relationship" else "value"
-    if not isinstance(a, dict) or a.get(field) is None:
+    if not isinstance(a, dict) or a.get("value") is None:
         return MALFORMED, None
-    return OK, a[field]
+    return OK, a["value"]
 
 
 def read_eo_products(client) -> list:
@@ -118,8 +115,8 @@ def expand(client, entities: list, apply: bool) -> dict:
     for entity in entities:
         to_add = {}
         for t in TERMS:
-            old_state, old_val = _state(entity, t.read_old, t.kind)
-            off_state, _ = _state(entity, t.official, t.kind)
+            old_state, old_val = _state(entity, t.read_old)
+            off_state, _ = _state(entity, t.official)
             if old_state == MALFORMED:
                 result["malformed"] += 1
                 logger.error("malformed old attribute tenant=%s entity=%s term=%s",
@@ -127,10 +124,7 @@ def expand(client, entities: list, apply: bool) -> dict:
                 continue
             if old_state == ABSENT or off_state != ABSENT:
                 continue
-            if t.kind == "Relationship":
-                to_add[t.official] = {"type": "Relationship", "object": old_val}
-            else:
-                to_add[t.official] = {"type": "Property", "value": old_val}
+            to_add[t.official] = {"type": "Property", "value": old_val}
         if not to_add:
             continue
         result["entities"] += 1
@@ -151,8 +145,8 @@ def verify(entities: list) -> dict:
     rep = {t.name: {"old": 0, "official": 0, "missing": 0, "malformed": 0, "differing": []} for t in TERMS}
     for entity in entities:
         for t in TERMS:
-            old_state, old_val = _state(entity, t.read_old, t.kind)
-            off_state, off_val = _state(entity, t.official, t.kind)
+            old_state, old_val = _state(entity, t.read_old)
+            off_state, off_val = _state(entity, t.official)
             r = rep[t.name]
             r["old"] += old_state != ABSENT
             r["official"] += off_state != ABSENT
@@ -185,8 +179,8 @@ def contract(client, entities: list, apply: bool) -> dict:
     result = {"attrs": 0, "errors": 0}
     for entity in entities:
         for t in TERMS:
-            old_state, old_val = _state(entity, t.read_old, t.kind)
-            off_state, off_val = _state(entity, t.official, t.kind)
+            old_state, old_val = _state(entity, t.read_old)
+            off_state, off_val = _state(entity, t.official)
             if old_state != OK or off_state != OK or old_val != off_val:
                 continue
             result["attrs"] += 1
