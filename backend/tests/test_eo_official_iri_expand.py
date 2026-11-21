@@ -8,9 +8,7 @@ from app.jobs import eo_official_iri_expand as job
 OLD_SD = "https://nkz-os.org/ns/sensingDate"
 OFF_SD = "https://smartdatamodels.org/dataModel.SatelliteImagery/sensingDate"
 OFF_PT = "https://smartdatamodels.org/dataModel.SatelliteImagery/productType"
-OFF_ZONE = "https://nkz-os.org/ns/hasAgriParcelZone"
 DEFAULT_PT = "https://uri.etsi.org/ngsi-ld/default-context/productType"
-DEFAULT_ZONE = "https://uri.etsi.org/ngsi-ld/default-context/hasAgriParcelZone"
 SD = "2026-11-12T10:56:21Z"
 
 
@@ -145,12 +143,23 @@ def test_grd_gets_official_product_type():
     assert attrs == {OFF_PT: prop("GRD")}
 
 
-def test_zone_relationship_copied_as_relationship():
+def test_zone_relationship_is_ignored():
     e = old_scene("z1")
+    del e["productType"]
     e["hasAgriParcelZone"] = rel("urn:ngsi-ld:AgriParcelZone:tenant-a:z")
     client, _, _ = run([e], ["--apply"])
     (_, attrs, _), = client.appended
-    assert attrs[OFF_ZONE] == rel("urn:ngsi-ld:AgriParcelZone:tenant-a:z")
+    assert list(attrs) == [OFF_SD]  # nothing for the zone relation
+    _, _, out = run([e], ["--verify"])
+    assert "hasAgriParcelZone" not in out
+    done = old_scene("z2")
+    done[OFF_SD] = prop(SD)
+    done[OFF_PT] = prop("GRD")
+    done["hasAgriParcelZone"] = rel("urn:z")
+    client, rc, _ = run([done], ["--contract", "--apply"])
+    assert rc == 0
+    assert all("hasAgriParcelZone" not in a for _, a in client.deleted)
+    assert "hasAgriParcelZone" in client.entities[done["id"]]
 
 
 def test_append_400_counts_as_error():
@@ -187,11 +196,9 @@ def test_contract_deletes_old_copy_only_when_official_present():
     done = old_scene("s1")
     done[OFF_SD] = prop(SD)
     done[OFF_PT] = prop("GRD")
-    done["hasAgriParcelZone"] = rel("urn:z")
-    done[OFF_ZONE] = rel("urn:z")
     client, rc, _ = run([done], ["--contract", "--apply"])
     assert rc == 0
-    assert sorted(a for _, a in client.deleted) == sorted([OLD_SD, DEFAULT_PT, DEFAULT_ZONE])
+    assert sorted(a for _, a in client.deleted) == sorted([OLD_SD, DEFAULT_PT])
     # official copies untouched
     assert OFF_SD in client.entities[done["id"]] and OFF_PT in client.entities[done["id"]]
 
@@ -275,14 +282,13 @@ def test_contract_guard_only_deletes_equal_old_copies():
     res = job.contract(client, list(client.entities.values()), apply=True)
     assert res["errors"] == 0
     assert sorted(client.deleted) == sorted([(equal["id"], OLD_SD), (equal["id"], DEFAULT_PT)])
-    assert all(a not in (OFF_SD, OFF_PT, OFF_ZONE) for _, a in client.deleted)
+    assert all(a not in (OFF_SD, OFF_PT) for _, a in client.deleted)
 
 
 def malformed_scene():
     e = old_scene("m1")
     e[OLD_SD] = [prop(SD), prop("2026-01-01")]  # multi-instance
     e["productType"] = {"type": "Property"}  # no value: would be sent as null
-    e["hasAgriParcelZone"] = "urn:z"  # not an attribute object
     return e
 
 
@@ -295,7 +301,17 @@ def test_malformed_old_copies_are_never_sent_and_count_in_verify():
     assert rc2 == 1
     assert "sensingDate\told=1\tofficial=0\tmissing=0\tdiffering=0\tmalformed=1" in out2
     assert "productType\told=1\tofficial=0\tmissing=0\tdiffering=0\tmalformed=1" in out2
-    assert "hasAgriParcelZone\told=1\tofficial=0\tmissing=0\tdiffering=0\tmalformed=1" in out2
+    assert "hasAgriParcelZone" not in out2
+
+
+def test_non_object_attribute_is_malformed():
+    e = old_scene("m3")
+    e["productType"] = "GRD"  # not an attribute object
+    client, rc, out = run([e], ["--apply", "--verify"])
+    (_, attrs, _), = client.appended
+    assert attrs == {OFF_SD: prop(SD)}
+    assert rc == 1
+    assert "productType\told=1\tofficial=0\tmissing=0\tdiffering=0\tmalformed=1" in out
 
 
 def test_malformed_attribute_skips_only_itself():
