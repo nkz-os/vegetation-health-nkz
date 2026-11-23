@@ -334,49 +334,111 @@ def write_optical(tenant: str, target: Target, take: OpticalTake, analytics: Map
         )
         if entity is None:
             return SKIP  # the builder logged why
-        if raw is not None and verdict == REPLACE and not fi.delete_eo_satellite_imagery(tenant, eid):
-            logger.error("eo_satimg: %s not replaced, delete of the stored take failed", context)
-            return None
         if fi.upsert_eo_satellite_imagery(tenant, entity) is None:
             logger.error("eo_satimg: %s write failed", context)
-            return None
+            return None  # nothing pruned: the stored take stays
+        if raw is not None and verdict == REPLACE:
+            _prune_leftovers(tenant, eid, raw, entity, context)
         return verdict
     except Exception as exc:
         logger.error("eo_satimg: %s write failed: %s", context, exc, exc_info=True)
         return None
 
 
+_KEEP = frozenset({"id", "type", "@context"})
+
+
+def _local_name(key: str) -> str:
+    return key.rsplit("/", 1)[-1].rsplit("#", 1)[-1]
+
+
+def _prune_leftovers(tenant: str, eid: str, raw: Mapping[str, Any], entity: Mapping[str, Any], context: str) -> None:
+    """After the upsert of a replacing take, drop the stored attributes the new entity does not carry.
+
+    The upsert overwrites every attribute it sends, so only the leftovers of the other take
+    remain (e.g. its product and footprint). A failed prune is logged, never raised: the new
+    take is already written.
+    """
+    carried = {_local_name(k) for k in entity}
+    for key in raw:
+        if key in _KEEP or _local_name(key) in _KEEP or _local_name(key) in carried:
+            continue
+        try:
+            outcome = fi.delete_eo_attribute(tenant, eid, key)
+        except Exception as exc:
+            outcome = "error"
+            logger.error("eo_satimg: %s attribute %s not pruned: %s", context, key, exc)
+            continue
+        if outcome == "error":
+            logger.error("eo_satimg: %s attribute %s of the replaced take not pruned", context, key)
+
+
 # ── deletes (never gated by the switch) ─────────────────────────────────────
 
 
 def job_family_day(result: Mapping[str, Any]) -> Optional[tuple]:
-    """(family, day) of a calculation's take: a composite is dated by its window end."""
+    """(family, day) of a calculation's take: a composite is dated by its window end. Never raises."""
     try:
         if result.get("is_composite"):
-            end = (result.get("date_range") or {}).get("end")
+            window = result.get("date_range")
+            end = window.get("end") if isinstance(window, Mapping) else None
             return (Family.S2_COMPOSITE, date.fromisoformat(str(end)[:10])) if end else None
         sensing = result.get("sensing_date")
         return (Family.S2_INDICES, date.fromisoformat(str(sensing)[:10])) if sensing else None
-    except ValueError:
+    except (ValueError, TypeError, AttributeError):
         return None
+
+
+def with_scene_product(db, tenant_id: str, result: Optional[Mapping[str, Any]]) -> dict:
+    """The job result plus ``scene_product_id`` (the STAC id of its scene), for the delete paths.
+
+    ``result.scene_id`` is the scene's row id; the stored entity carries the STAC id.
+    Never raises: without the lookup the result is returned as it was.
+    """
+    out = dict(result or {})
+    try:
+        import uuid
+
+        from app.models import VegetationScene
+
+        row = db.query(VegetationScene).filter(
+            VegetationScene.tenant_id == tenant_id,
+            VegetationScene.id == uuid.UUID(str(out["scene_id"])),
+        ).first()
+        if row is not None and isinstance(row.scene_id, str) and row.scene_id:
+            out["scene_product_id"] = row.scene_id
+    except Exception as exc:
+        logger.warning("eo_satimg: scene of a deleted job not resolved: %s", exc)
+    return out
 
 
 def _is_job_take(raw, obs, result: Mapping[str, Any]) -> bool:
     """Whether the stored entity holds the take of this calculation.
 
     A deleted job of a losing scene, or of the Statistical API, must not erase the winner's values.
+    Decided by scene first (the entity's ``productID`` against the job's scene, see
+    ``with_scene_product``); the raster path only tells two takes of the same scene apart.
     """
     if obs.family == Family.S2_COMPOSITE.value:
-        window = result.get("date_range") or {}
+        window = result.get("date_range")
+        if not isinstance(window, Mapping) or not window.get("start"):
+            return False
         take = composite_take(date.fromisoformat(str(window["start"])[:10]), obs.sensing_day)
         return _same_take(raw, obs, take)
-    scene_uuid = result.get("scene_id")
-    if not scene_uuid:
-        return obs.product_id is None
-    if obs.target == "zone":  # zones keep no raster: only a job that lost its day is told apart
+    job_product = result.get("scene_product_id")
+    has_scene = bool(job_product or result.get("scene_id"))
+    if job_product:
+        if obs.product_id != job_product:
+            return False
+    elif not has_scene:
+        return obs.product_id is None  # neither has a scene: the Statistical API take
+    elif obs.target == "zone":  # scene known by row id only; zones keep no raster
         return result.get("skip_reason") != "better_scene_same_date"
+    if obs.target == "zone":
+        return True
+    scene_uuid = result.get("scene_id")
     stored = re.search(r"/scenes/([^/]+)$", (obs.raster_path or "").rstrip("/"))
-    return stored is None or stored.group(1) == str(scene_uuid)
+    return stored is None or not scene_uuid or stored.group(1) == str(scene_uuid)
 
 
 def remove_index(tenant: str, target_kind: str, target_urn: str, family: Family, day: date,

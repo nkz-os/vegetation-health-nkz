@@ -606,7 +606,8 @@ def orion_delete_entity(orion, entity_id: str) -> bool:
         orion.delete_entity(entity_id)
         return True
     except Exception as exc:
-        if "404" in str(exc):
+        # Only the response status says "already gone": an id or message containing 404 does not.
+        if getattr(getattr(exc, "response", None), "status_code", None) == 404:
             return True
         logger.warning("Orion delete %s failed: %s", entity_id, exc)
         return False

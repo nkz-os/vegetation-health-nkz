@@ -266,11 +266,12 @@ async def bulk_delete_jobs(
                 try:
                     eo_id = _entity_id_for_acquisition(tenant_id, job.entity_id, sensing_str)
                     delete_eo_index(tenant_id, eo_id, job_index)
-                    from app.services.eo_satimg_optical import remove_job_index
-                    remove_job_index(tenant_id, job.entity_id, job.result or {}, job_index)
+                    from app.services.eo_satimg_optical import remove_job_index, with_scene_product
+                    job_result = with_scene_product(db, tenant_id, job.result)
+                    remove_job_index(tenant_id, job.entity_id, job_result, job_index)
                     from app.services.zone_products import delete_zone_products
                     delete_zone_products(tenant_id, job.entity_id, sensing_str, job_index,
-                                         job_result=job.result or {})
+                                         job_result=job_result)
                 except Exception as e:
                     logger.warning("EOProduct cleanup failed for job %s: %s", job_id, e)
 

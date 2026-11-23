@@ -51,6 +51,7 @@ class Store:
         self.entities = {}
         self.upserts = []
         self.deleted = []
+        self.pruned = []
         self.reads = 0
 
     def get(self, tenant, eid):
@@ -69,6 +70,7 @@ class Store:
         return True
 
     def delete_attr(self, tenant, eid, attr):
+        self.pruned.append(attr)
         self.entities.get(eid, {}).pop(attr, None)
         return "deleted"
 
@@ -392,7 +394,7 @@ def test_same_day_other_scene_replaces_whole_list(store):
     assert "contentInformation" in store.entities[PARCEL_ID]
     assert _write_scene(PID_B, "NDVI", 0.7, 0.9) == so.REPLACE
     entity = store.entities[PARCEL_ID]
-    assert PARCEL_ID in store.deleted
+    assert PARCEL_ID not in store.deleted  # a replace never deletes the entity
     assert entity["productID"]["value"] == PID_B and entity["platformName"]["value"] == "S2B"
     assert "evi" not in _analytics(entity)
     for leftover in ("localServerPath", "contentInformation", "storageFormat"):
@@ -748,3 +750,107 @@ def test_stored_footprint_element_becomes_product_bbox():
     scene.footprint = from_shape(Polygon([(0, 0), (1, 0), (1, 1)]), srid=4326)
     assert so.scene_take(scene).scene.footprint == {
         "type": "Polygon", "coordinates": [[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 0.0]]]}
+
+
+# ── fix round 1 (23-11) ─────────────────────────────────────────────────────
+
+
+class _HttpError(Exception):
+    def __init__(self, status, message="boom"):
+        super().__init__(message)
+        self.response = MagicMock(status_code=status)
+
+
+def test_f3_orion_delete_trusts_the_status_not_the_message():
+    orion = MagicMock()
+    orion.delete_entity.side_effect = _HttpError(500, "urn:...:404 server error")
+    assert fi.orion_delete_entity(orion, "urn:x:404") is False
+    orion.delete_entity.side_effect = _HttpError(404, "not found")
+    assert fi.orion_delete_entity(orion, "urn:x") is True
+    orion.delete_entity.side_effect = RuntimeError("connection to 404.example failed")
+    assert fi.orion_delete_entity(orion, "urn:x") is False
+    orion.delete_entity.side_effect = None
+    assert fi.orion_delete_entity(orion, "urn:x") is True
+
+
+def test_f2_replace_upserts_first_and_prunes_only_leftovers(store, monkeypatch):
+    _write_scene(PID_A, "NDVI", 0.6, folder="s3://bucket/a")
+    _write_scene(PID_A, "EVI", 0.4, folder="s3://bucket/a")
+    # the broker may hand attributes back as full IRIs
+    stored = store.entities[PARCEL_ID]
+    stored["https://smartdatamodels.org/dataModel.SatelliteImagery/storageFormat"] = stored.pop("storageFormat", {"type": "Property", "value": "COG"})
+    order = []
+    real_upsert, real_prune = store.upsert, store.delete_attr
+    monkeypatch.setattr(fi, "upsert_eo_satellite_imagery", lambda t, e: (order.append("upsert"), real_upsert(t, e))[1])
+    monkeypatch.setattr(fi, "delete_eo_attribute", lambda t, e, a: (order.append("prune"), real_prune(t, e, a))[1])
+    assert _write_scene(PID_B, "NDVI", 0.7, 0.9) == so.REPLACE
+    assert order[0] == "upsert" and set(order[1:]) == {"prune"}
+    assert PARCEL_ID not in store.deleted
+    assert store.pruned and not set(store.pruned) & {"id", "type", "@context", "analytics", "productID"}
+    assert any(a.endswith("storageFormat") and a.startswith("https://") for a in store.pruned)
+    assert "evi" not in _analytics(store.entities[PARCEL_ID])
+
+
+def test_f2_failed_upsert_keeps_the_old_take_and_prunes_nothing(store, caplog, monkeypatch):
+    _write_scene(PID_A, "NDVI", 0.6, folder="s3://bucket/a")
+    before = copy.deepcopy(store.entities[PARCEL_ID])
+    monkeypatch.setattr(fi, "upsert_eo_satellite_imagery", lambda t, e: None)
+    with caplog.at_level(logging.ERROR):
+        assert _write_scene(PID_B, "NDVI", 0.7, 0.9) is None
+    assert store.entities[PARCEL_ID] == before and not store.pruned and not store.deleted
+
+
+def test_f2_failed_prune_is_logged_and_the_write_counts(store, caplog, monkeypatch):
+    _write_scene(PID_A, "NDVI", 0.6, folder="s3://bucket/a")
+    monkeypatch.setattr(fi, "delete_eo_attribute", lambda t, e, a: "error")
+    with caplog.at_level(logging.ERROR):
+        assert _write_scene(PID_B, "NDVI", 0.7, 0.9) == so.REPLACE
+    text = "\n".join(r.getMessage() for r in caplog.records if r.levelno == logging.ERROR)
+    assert TENANT in text and PARCEL in text and "s2-indices" in text and "2026-06-21" in text and "localServerPath" in text
+    assert store.entities[PARCEL_ID]["productID"]["value"] == PID_B
+
+
+def test_f4_losing_job_of_a_rasterless_entity_keeps_the_winner(store):
+    _write_scene(PID_B, "NDVI", 0.6, 0.8)  # no raster folder: no localServerPath to tell scenes apart
+    assert "localServerPath" not in store.entities[PARCEL_ID]
+    before = copy.deepcopy(store.entities)
+    loser = {"sensing_date": DAY.isoformat(), "scene_id": str(uuid.uuid4()), "scene_product_id": PID_A}
+    assert so.remove_job_index(TENANT, PARCEL, loser, "NDVI")
+    assert store.entities == before
+    winner = {"sensing_date": DAY.isoformat(), "scene_id": str(SCENE_UUID), "scene_product_id": PID_B}
+    assert so.remove_job_index(TENANT, PARCEL, winner, "NDVI")
+    assert store.entities == {}
+
+
+def test_f4_statistical_api_job_never_removes_a_scenes_values(store):
+    _write_scene(PID_B, "NDVI", 0.6, 0.8)
+    before = copy.deepcopy(store.entities)
+    assert so.remove_job_index(TENANT, PARCEL, {"sensing_date": DAY.isoformat()}, "NDVI")
+    assert store.entities == before
+
+
+def test_f4_neither_has_a_scene_it_is_the_jobs_take(store):
+    take = so.no_scene_take(DAY)
+    a = so.index_analytics("NDVI", STATS)
+    a["pixelCount"] = 40
+    so.write_optical(TENANT, so.parcel_target(PARCEL, GEOM), take, a, index_type="NDVI")
+    assert so.remove_job_index(TENANT, PARCEL, {"sensing_date": DAY.isoformat()}, "NDVI")
+    assert store.entities == {}
+
+
+def test_f4_with_scene_product_resolves_the_stac_id():
+    db = MagicMock()
+    db.query.return_value.filter.return_value.first.return_value = MagicMock(scene_id=PID_A)
+    out = so.with_scene_product(db, TENANT, {"scene_id": str(SCENE_UUID), "x": 1})
+    assert out == {"scene_id": str(SCENE_UUID), "x": 1, "scene_product_id": PID_A}
+    db.query.side_effect = RuntimeError("db down")
+    assert so.with_scene_product(db, TENANT, {"scene_id": str(SCENE_UUID)}) == {"scene_id": str(SCENE_UUID)}
+
+
+def test_f7_job_family_day_survives_a_malformed_window():
+    for bad in ("2026-06-01", ["x"], 5, None):
+        assert so.job_family_day({"is_composite": True, "date_range": bad}) is None
+    assert so.job_family_day({"sensing_date": 5}) is None
+    assert so.job_family_day({"is_composite": True, "date_range": {"end": "2026-06-21"}}) == (Family.S2_COMPOSITE, DAY)
+    # and the delete path that calls it
+    assert so.remove_job_index(TENANT, PARCEL, {"is_composite": True, "date_range": "oops"}, "NDVI") is True
