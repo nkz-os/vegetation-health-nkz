@@ -26,6 +26,7 @@ from app.database import get_db_session
 from app.tasks.download_tasks import band_cleanup_key, band_copy_prefix
 from app.services.fiware_integration import existing_interior_observation, has_valid_pixels, upsert_eo_index
 from app.services.interior_stats import cloud_fraction, interior_mask, interior_statistics, parcel_mask
+from app.services.eo_satellite_imagery import INDEX_NAMES
 
 logger = logging.getLogger(__name__)
 
@@ -196,6 +197,30 @@ def _window_band_set(required_bands, scene_bands, sen2res_enabled):
 
 
 _SCENE_SEGMENT = re.compile(r"/scenes/([^/]+)/")
+
+# Indices whose raster is named after their EOSatelliteImagery analytics name.
+_ANALYTICS_INDICES = frozenset(INDEX_NAMES)
+
+
+def index_raster_key(tenant_id: str, entity_id: Optional[str], index_type: str, *, job_id,
+                     scene_uuid=None, window: Optional[tuple] = None) -> str:
+    """Object key of an index raster in the COG bucket.
+
+    A standard index is stored as ``{folder}/{name}.tif`` with its lowercase analytics
+    name (``ndvi.tif``): one folder per scene, or per ``{start}_{end}`` window for a
+    temporal composite, so every index of a take shares the folder that
+    ``EOSatelliteImagery.localServerPath`` names. CUSTOM has no analytics name and
+    keeps its former key (two formulas of one window would otherwise share a file).
+    """
+    base = f"{tenant_id}/entities/{entity_id or 'unknown'}"
+    standard = index_type.lower() in _ANALYTICS_INDICES
+    if window is not None:
+        # Without a parcel the window alone would be shared by unrelated jobs.
+        folder = f"composites/{window[0]}_{window[1]}" if standard and entity_id else f"composites/{job_id}"
+    else:
+        folder = f"scenes/{scene_uuid}"
+    name = index_type.lower() if standard else index_type
+    return f"{base}/{folder}/{name}.tif"
 
 
 def is_better_observation(new_fraction: float, new_raster_url: str, existing: Optional[tuple]) -> bool:
@@ -719,16 +744,10 @@ def calculate_vegetation_index(
 
         primary_scene = scenes_to_process[0]
 
-        if is_temporal_composite:
-            remote_raster_path = (
-                f"{tenant_id}/entities/{job.entity_id or 'unknown'}/"
-                f"composites/{job.id}/{index_type}.tif"
-            )
-        else:
-            remote_raster_path = (
-                f"{tenant_id}/entities/{job.entity_id or 'unknown'}/"
-                f"scenes/{primary_scene.id}/{index_type}.tif"
-            )
+        remote_raster_path = index_raster_key(
+            tenant_id, job.entity_id, index_type, job_id=job.id, scene_uuid=primary_scene.id,
+            window=(start_date[:10], end_date[:10]) if is_temporal_composite else None,
+        )
 
         local_dir = Path(f"/tmp/vegetation_indices/{tenant_id}/{job_id}")
         local_dir.mkdir(parents=True, exist_ok=True)

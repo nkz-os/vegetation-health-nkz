@@ -449,10 +449,26 @@ def _hard_delete_one(db: Session, tenant_id: str, job: VegetationJob) -> int:
             for c in children:
                 deleted += _hard_delete_one(db, tenant_id, c)
 
-    # 3. Drop the raster file from MinIO if the job produced one.
+    # 3. Drop the raster file from MinIO if the job produced one and no other live
+    #    job points at it: a scene folder, and a composite window folder, are shared
+    #    by every calculation of that take.
     raster_path = (job.result or {}).get("raster_path")
     if raster_path:
-        _delete_raster_safely(raster_path, tenant_id)
+        db.flush()  # autoflush is off: rows deleted earlier in this cascade must not count
+        shared = (
+            db.query(func.count(VegetationJob.id))
+            .filter(
+                VegetationJob.tenant_id == tenant_id,
+                VegetationJob.id != job.id,
+                VegetationJob.deleted_at.is_(None),
+                VegetationJob.result["raster_path"].astext == raster_path,
+            )
+            .scalar()
+        ) or 0
+        if shared:
+            logger.info("Raster %s kept: %d other job(s) use it", raster_path, shared)
+        else:
+            _delete_raster_safely(raster_path, tenant_id)
 
     # 4. Drop the matching cache row(s) for calc_index jobs (kept for
     # backwards compatibility; the cache table is no longer written by the
