@@ -47,6 +47,52 @@ def _upsert_eoproduct_entity(tenant_id: str, entity: dict) -> dict:
     return asyncio.run(_go())
 
 
+SATIMG_TENANTS_ENV = "EO_SATIMG_WRITE_TENANTS"
+
+
+def satimg_enabled(tenant_id: str) -> bool:
+    """Whether ``EOSatelliteImagery`` is written for this tenant (read at call time).
+
+    ``EO_SATIMG_WRITE_TENANTS``: comma-separated tenant ids; empty or unset = off; ``*`` = all.
+    Only writes are gated: deletes always clean both forms.
+    """
+    names = {t.strip() for t in os.getenv(SATIMG_TENANTS_ENV, "").split(",") if t.strip()}
+    return "*" in names or tenant_id in names
+
+
+def get_eo_satellite_imagery(tenant_id: str, entity_id: str) -> Optional[dict]:
+    """The whole entity in normalized form, None on 404. Any other broker error raises:
+    a failed read must never be taken for an empty entity."""
+    try:
+        return SyncOrionClient(tenant_id).get_entity(entity_id)
+    except Exception as exc:
+        if getattr(getattr(exc, "response", None), "status_code", None) == 404:
+            return None
+        raise
+
+
+def upsert_eo_satellite_imagery(tenant_id: str, entity: dict) -> Optional[str]:
+    """Upsert one built ``EOSatelliteImagery`` (options=update). Never raises; None on failure, logged."""
+    entity_id = entity.get("id")
+    try:
+        result = _upsert_eoproduct_entity(tenant_id, entity)
+        if result.get("upserted", 0) >= 1 and not result.get("errors"):
+            logger.info("Upserted EOSatelliteImagery %s", entity_id)
+            return entity_id
+        logger.error("EOSatelliteImagery upsert %s failed tenant=%s: %s", entity_id, tenant_id, result.get("errors"))
+    except Exception as exc:
+        logger.error("Error upserting EOSatelliteImagery %s tenant=%s: %s", entity_id, tenant_id, exc, exc_info=True)
+    return None
+
+
+def delete_eo_satellite_imagery(tenant_id: str, entity_id: str) -> bool:
+    """Delete one ``EOSatelliteImagery``; missing counts as done."""
+    if orion_delete_entity(SyncOrionClient(tenant_id), entity_id):
+        logger.info("Deleted EOSatelliteImagery %s", entity_id)
+        return True
+    return False
+
+
 def _make_headers(tenant_id: str) -> Dict[str, str]:
     """Legacy compatibility wrapper — delegates to SyncOrionClient header injection.
     
