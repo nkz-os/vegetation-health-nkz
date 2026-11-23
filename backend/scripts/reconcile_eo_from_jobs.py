@@ -26,6 +26,7 @@ Window:   python3 scripts/reconcile_eo_from_jobs.py --tenants acmefarm --since 2
 
 import argparse
 import collections
+import logging
 import sys
 from datetime import date, datetime
 from types import SimpleNamespace
@@ -51,6 +52,7 @@ def _iter_jobs(db, tenants, since):
                j.end_date,
                j.result->'date_range'->>'start' AS window_start,
                j.result->'date_range'->>'end'   AS window_end,
+               j.result->>'scene_id'         AS job_scene_id,
                j.result->>'raster_path'      AS raster_path,
                j.result->'interior'          AS interior,
                j.result->'parcel_cloud_fraction' AS parcel_cloud_fraction,
@@ -87,7 +89,17 @@ def _iter_jobs(db, tenants, since):
 
 
 def publish_satimg(job, stats) -> None:
-    """EOSatelliteImagery of one job row; the optical writer logs and never raises."""
+    """EOSatelliteImagery of one job row. Never raises (the optical writer logs its own failures)."""
+    try:
+        _publish_satimg(job, stats)
+    except Exception as exc:
+        logging.getLogger(__name__).error(
+            "eo_satimg: reconcile of tenant=%s target=%s index=%s day=%s failed: %s",
+            getattr(job, "tenant_id", None), getattr(job, "entity_id", None), getattr(job, "index_type", None),
+            getattr(job, "sensing_date", None), exc, exc_info=True)
+
+
+def _publish_satimg(job, stats) -> None:
     import os
 
     from app.services import eo_satimg_optical as so
@@ -113,6 +125,12 @@ def publish_satimg(job, stats) -> None:
         analytics.update(so.index_analytics(job.index_type, stats, interior=interior))
         analytics["cloudCoverage"] = so.cloud_coverage(job.scene_cloud_coverage)
         analytics["parcelCloudFraction"] = getattr(job, "parcel_cloud_fraction", None)
+    elif getattr(job, "job_scene_id", None):
+        # The job names a scene that no longer resolves: "no scene" would say Statistical API.
+        logging.getLogger(__name__).warning(
+            "eo_satimg: tenant=%s target=%s index=%s day=%s not written: scene %s no longer resolves",
+            job.tenant_id, job.entity_id, job.index_type, job.sensing_date, job.job_scene_id)
+        return
     else:
         take = so.no_scene_take(date.fromisoformat(job.sensing_date[:10]))
     so.write_optical(job.tenant_id, so.parcel_target(job.entity_id, getattr(job, "geometry", None)), take,

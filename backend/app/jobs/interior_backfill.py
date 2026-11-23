@@ -12,6 +12,7 @@ left unpublished for these dates. Running it again changes nothing.
 import argparse
 import logging
 import os
+import re
 import sys
 import tempfile
 from dataclasses import dataclass
@@ -252,7 +253,8 @@ class OrionBroker:
         analytics["pixelCount"] = statistics.get("pixel_count")
         analytics["cloudCoverage"] = so.cloud_coverage(getattr(scene, "cloud_coverage", None))
         return so.write_optical(tenant_id, so.parcel_target(parcel_id, geometry), take, analytics,
-                                index_type=index_type, interior_fraction=interior.get("valid_fraction"))
+                                index_type=index_type, interior_fraction=interior.get("valid_fraction"),
+                                replace_interior=True)
 
 
 def _load_scene(db, tenant_id: str, scene_id):
@@ -437,6 +439,27 @@ def _zero_snapshot(tenant_id: str, broker, parcel: Optional[str], report: Backfi
     return zeros
 
 
+_PARCEL_PRODUCT = re.compile(r"^urn:ngsi-ld:EOProduct:[^:]+:[^:]+:(\d{4}-\d{2}-\d{2})$")
+
+
+def _retire_satimg(tenant_id: str, broker, entity_id: str, key: str, parcel_urn: Optional[str]) -> None:
+    """The same retired index in the parcel's new form. Only a PARCEL optical product maps to it
+    (zone and GRD products have more id segments). A failure is logged, never counted: the report
+    is about the legacy form."""
+    remover = getattr(broker, "remove_satimg_index", None)
+    match = _PARCEL_PRODUCT.match(entity_id or "")
+    if not (parcel_urn and remover and match):
+        return
+    try:
+        day = date.fromisoformat(match.group(1))
+        if not remover(tenant_id, parcel_urn, day, _short_name(key)):
+            logger.error("EOSatelliteImagery index %s of %s not removed (tenant=%s, %s)",
+                         _short_name(key), parcel_urn, tenant_id, day.isoformat())
+    except Exception as exc:
+        logger.error("EOSatelliteImagery index %s of %s not removed (tenant=%s): %s",
+                     _short_name(key), parcel_urn, tenant_id, exc, exc_info=True)
+
+
 def _retire_zeros(tenant_id: str, broker, apply: bool, report: BackfillReport, zeros: list, touched: set) -> None:
     """Delete the listed zero attributes, except the indices this run republished, in both forms."""
     for entity_id, key, parcel_urn in zeros:
@@ -451,11 +474,7 @@ def _retire_zeros(tenant_id: str, broker, apply: bool, report: BackfillReport, z
         if outcome == "deleted":
             logger.info("%s: deleted %s (value 0, pixelCount 0)", entity_id, key)
             report.zeros_retired += 1
-            remover = getattr(broker, "remove_satimg_index", None)
-            if parcel_urn and remover:
-                day = date.fromisoformat(entity_id.rsplit(":", 1)[-1])
-                if not remover(tenant_id, parcel_urn, day, _short_name(key)):
-                    report.errors += 1
+            _retire_satimg(tenant_id, broker, entity_id, key, parcel_urn)
         elif outcome == "not_found":
             report.not_found += 1
         else:

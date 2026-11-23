@@ -10,6 +10,7 @@ import os
 import sys
 import uuid
 from datetime import date, datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 os.environ.setdefault("DATABASE_URL", "postgresql://u:p@localhost/db")
@@ -157,7 +158,7 @@ def _q(value):
     return q
 
 
-def _calc(composite=False, existing=None):
+def _calc(composite=False, existing=None, real_legacy=False):
     job = MagicMock()
     job.id = uuid.uuid4()
     job.entity_id = PARCEL
@@ -179,7 +180,8 @@ def _calc(composite=False, existing=None):
          patch.object(pt, "interior_mask", MagicMock(return_value=(np.ones((4, 4), dtype=bool), "core"))), \
          patch.object(pt, "parcel_mask", MagicMock(return_value=np.ones((4, 4), dtype=bool))), \
          patch.object(pt, "existing_interior_observation", return_value=existing), \
-         patch.object(pt, "upsert_eo_index", return_value="urn:ngsi-ld:EOProduct:x") as legacy, \
+         patch.object(pt, "upsert_eo_index", **({"wraps": fi.upsert_eo_index} if real_legacy
+                                                  else {"return_value": "urn:ngsi-ld:EOProduct:x"})) as legacy, \
          patch.object(pt.parcel_scenes, "record"), \
          patch("app.services.window_crop.crop_bands_to_window", lambda paths, *a, **k: paths), \
          patch("app.services.zone_products.publish_zone_indices") as zones, \
@@ -362,29 +364,36 @@ def test_zone_products_write_zone_entity_with_parcel_relation(store):
          patch.object(zp, "zone_statistics", return_value=stats), \
          patch.object(fi, "upsert_eo_zone_index", return_value="z") as legacy:
         zp.publish_zone_indices(TENANT, PARCEL, "NDVI", MagicMock(), np.zeros((2, 2)), DAY, satimg=None)
-    legacy.assert_called_once() and None
+    legacy.assert_called_once()
     assert store.entities == {}
 
 
 def test_old_form_unchanged(store, monkeypatch):
     from tests.fake_orion import FakeAsyncOrion
 
-    bodies = []
-    for switch in ("", "*"):
-        monkeypatch.setenv("EO_SATIMG_WRITE_TENANTS", switch)
-        with patch.object(fi, "OrionClient", FakeAsyncOrion):
-            fi.upsert_eo_index(TENANT, PARCEL, "NDVI", STATS, DAY, raster_url="s3://b/ndvi.tif",
-                               preview_url="s3://b/ndvi.png", cloud_cover="12.5")
-            bodies.append(FakeAsyncOrion.last_instance.entities[0])
-    assert bodies[0] == bodies[1] and bodies[0]["type"] == "EOProduct"
-    # The calculation hands the legacy writer the same arguments with the switch on or off.
-    calls = []
-    for switch in ("", TENANT):
-        monkeypatch.setenv("EO_SATIMG_WRITE_TENANTS", switch)
-        store.entities.clear()
-        _, legacy, _ = _calc()
-        calls.append(legacy.call_args.kwargs)
-    assert calls[0] == calls[1]
+    sent = []
+
+    class Recorder(FakeAsyncOrion):
+        async def upsert_entities_batch(self, entities):
+            sent.extend(copy.deepcopy(entities))
+            return await super().upsert_entities_batch(entities)
+
+    # The real legacy writer runs inside the calculation; what reaches the broker is the EOProduct.
+    payloads, calls = [], []
+    for composite in (False, True):
+        runs = []
+        for switch in ("", TENANT):
+            monkeypatch.setenv("EO_SATIMG_WRITE_TENANTS", switch)
+            store.entities.clear()
+            sent.clear()
+            with patch.object(fi, "OrionClient", Recorder):
+                _, legacy, _ = _calc(composite=composite, real_legacy=True)
+            runs.append(([e for e in sent if e.get("type") == "EOProduct"], legacy.call_args))
+        assert runs[0][0] and runs[0][0] == runs[1][0], composite
+        assert runs[0][1] == runs[1][1], composite
+        payloads.append(runs[0][0])
+    assert payloads[0][0]["type"] == "EOProduct"
+    assert (store.entities != {}) is True  # the last run had the switch on and wrote the new form
 
 
 def test_same_day_other_scene_replaces_whole_list(store):
@@ -854,3 +863,209 @@ def test_f7_job_family_day_survives_a_malformed_window():
     assert so.job_family_day({"is_composite": True, "date_range": {"end": "2026-06-21"}}) == (Family.S2_COMPOSITE, DAY)
     # and the delete path that calls it
     assert so.remove_job_index(TENANT, PARCEL, {"is_composite": True, "date_range": "oops"}, "NDVI") is True
+
+
+# ── F1: zone backfill ───────────────────────────────────────────────────────
+
+ZB_ZONE_EID = f"urn:ngsi-ld:EOSatelliteImagery:{TENANT}:zone:parcel-1:run-1:L1:s2-indices:2026-06-21"
+
+
+@pytest.fixture
+def zone_backfill(store, monkeypatch):
+    import app.jobs.zoning_multidate.dates as dates
+    import app.services.zone_backfill as zb
+    import app.services.zone_products as zp
+    from tests.test_zone_backfill import LEFT, PARCEL as ZB_PARCEL
+
+    zone = {"zone_id": "run-1-L1", "zone_urn": ZONE, "zone_version": "v", "geometry": LEFT,
+            "relation": zp.CURRENT_ZONE_RELATION, "level": "high", "run_id": "run-1"}
+    row = SimpleNamespace(job_id="j1", sensing_date=DAY, raster_path="x.tif", pending=False,
+                          created_at=datetime(2026, 6, 22, tzinfo=timezone.utc), scene_id=str(SCENE_UUID))
+    state = SimpleNamespace(zones=[zone], rows=[row], legacy=[], zb=zb)
+    monkeypatch.setattr(zp, "fetch_current_zones", lambda t, p: state.zones)
+    monkeypatch.setattr(dates, "load_raster_rows", lambda db, t, p, i: state.rows)
+    monkeypatch.setattr(zb, "_parcel_geometry", lambda t, p: ZB_PARCEL)
+    # rasterio is stubbed in this file: the zonal statistics are a fixed value
+    monkeypatch.setattr(zp, "zone_statistics", lambda *a, **k: {**STATS, "pixel_count": 40, "valid_fraction": 1.0})
+    monkeypatch.setattr(fi, "upsert_eo_zone_index", lambda *a, **k: state.legacy.append(a) or True)
+    state.db = MagicMock()
+    state.db.query.return_value.filter.return_value.first.return_value = _scene()
+    state.run = lambda: zb.backfill_current_zone_products(
+        state.db, TENANT, PARCEL, read_raster=lambda r, g: np.full(g.shape, 0.6, dtype="float32"))
+    return state
+
+
+def test_f1_zone_backfill_writes_the_zone_entity_of_the_rows_scene(zone_backfill, store):
+    assert zone_backfill.run() == 1 and len(zone_backfill.legacy) == 1
+    entity = store.entities[ZB_ZONE_EID]
+    assert entity["productID"]["value"] == PID_B and "ndvi" in _analytics(entity)
+    assert "localServerPath" not in entity
+    assert _analytics(entity)["cloudCoverage"] == "12.50"
+
+
+def test_f1_zone_backfill_switch_off_writes_only_the_old_form(zone_backfill, store, monkeypatch):
+    monkeypatch.setenv("EO_SATIMG_WRITE_TENANTS", "")
+    assert zone_backfill.run() == 1 and len(zone_backfill.legacy) == 1
+    assert store.entities == {} and store.upserts == []
+
+
+def test_f1_zone_backfill_skips_old_zones_and_a_day_the_parcel_holds_with_another_scene(
+        zone_backfill, store):
+    zone_backfill.zones[0]["relation"] = "refAgriManagementZone"
+    assert zone_backfill.run() == 1 and ZB_ZONE_EID not in store.entities
+    zone_backfill.zones[0]["relation"] = "hasAgriManagementZone"
+    _write_scene(PID_A, "NDVI", 0.5, 0.8)  # the parcel's day is scene A's
+    assert zone_backfill.run() == 1 and ZB_ZONE_EID not in store.entities
+
+
+def test_f1_zone_backfill_new_form_failure_changes_nothing(zone_backfill, store, monkeypatch):
+    monkeypatch.setattr(fi, "upsert_eo_satellite_imagery", lambda t, e: None)
+    assert zone_backfill.run() == 1 and len(zone_backfill.legacy) == 1
+    monkeypatch.setattr(so, "write_optical", MagicMock(side_effect=RuntimeError("boom")))
+    assert zone_backfill.run() == 1
+
+
+def test_f1_zone_backfill_scene_that_does_not_resolve_writes_old_form_only(zone_backfill, store):
+    zone_backfill.db.query.return_value.filter.return_value.first.return_value = None
+    assert zone_backfill.run() == 1 and ZB_ZONE_EID not in store.entities
+
+
+# ── F5, F6, F8, F9 ──────────────────────────────────────────────────────────
+
+
+def test_f5_recompute_without_valid_interior_drops_the_old_interior_group(store):
+    from app.jobs import interior_backfill as ib
+
+    _write_scene(PID_B, "NDVI", 0.6, 0.8, extra={"ndvi.interiorMedian": 0.6, "ndvi.interiorP10": 0.5,
+                                                  "ndvi.interiorP90": 0.7})
+    _write_scene(PID_B, "EVI", 0.4, 0.8)
+    before = _analytics(store.entities[PARCEL_ID])
+    assert "ndvi.interiorMean" in before and "ndvi.interiorP90" in before
+    empty = {"valid_fraction": 0.0, "valid_pixels": 0, "mask": "core",
+             "mean": None, "median": None, "p10": None, "p90": None}
+    ib.OrionBroker().upsert_satimg(TENANT, PARCEL, "NDVI", statistics=STATS, interior=empty,
+                                   raster_path="x/y/ndvi.tif", bucket="bucket", geometry=GEOM, scene=_scene())
+    values = _analytics(store.entities[PARCEL_ID])
+    assert values["ndvi.interiorValidFraction"] == "0.0000"
+    assert not {"ndvi.interiorMean", "ndvi.interiorMedian", "ndvi.interiorP10", "ndvi.interiorP90"} & set(values)
+    assert values["evi.interiorMean"] == before["evi.interiorMean"]  # other indices untouched
+
+
+def _reconcile_row(**kw):
+    base = dict(tenant_id=TENANT, entity_id=PARCEL, index_type="NDVI", statistics={"mean": 0.5, "valid_pixels": 9},
+                geometry=GEOM, interior=None, parcel_cloud_fraction=None, sensing_date="2026-06-21",
+                start_date=None, end_date=None, window_start=None, window_end=None, raster_path=None,
+                scene_product_id=None, scene_sensing_date=None, scene_acquisition_datetime=None,
+                scene_cloud_coverage=None, scene_footprint=None)
+    base.update(kw)
+    return SimpleNamespace(**base)
+
+
+def test_f6_job_whose_scene_no_longer_resolves_is_not_written_as_statistical_api(store, monkeypatch, caplog):
+    gone = _reconcile_row(job_scene_id=str(uuid.uuid4()))
+    with caplog.at_level(logging.WARNING):
+        assert _reconcile(monkeypatch, [gone]).main() == 0
+    assert store.entities == {}
+    assert any(r.levelno == logging.WARNING and "no longer resolves" in r.getMessage() for r in caplog.records)
+    # a job that never had a scene still is the Statistical API take
+    assert _reconcile(monkeypatch, [_reconcile_row(job_scene_id=None)]).main() == 0
+    assert "productID" not in store.entities[PARCEL_ID]
+
+
+def test_f8_retire_zeros_skips_foreign_ids_and_never_counts_new_form_failures(store, caplog):
+    from app.jobs import interior_backfill as ib
+
+    calls = []
+
+    class Broker:
+        def delete_attr(self, tenant, eid, key):
+            return "deleted"
+
+        def remove_satimg_index(self, tenant, parcel, day, idx):
+            calls.append((parcel, day, idx))
+            return False  # a failed removal of the new form
+
+    zeros = [
+        ("urn:ngsi-ld:EOProduct:acme:parcel-1:not-a-date", "ndvi", PARCEL),      # no date at the end
+        ("urn:ngsi-ld:EOProduct:acme:zone:parcel-1:run-1:L1:2026-06-21", "ndvi", PARCEL),  # zone product
+        ("urn:ngsi-ld:EOProduct:acme:parcel-1:GRD:2026-06-21", "ndvi", PARCEL),  # GRD product
+        ("urn:ngsi-ld:EOProduct:acme:parcel-1:2026-06-21", "ndvi", PARCEL),      # the parcel's optical product
+    ]
+    report = ib.BackfillReport()
+    with caplog.at_level(logging.ERROR):
+        ib._retire_zeros(TENANT, Broker(), True, report, zeros, set())
+    assert calls == [(PARCEL, DAY, "ndvi")]
+    assert report.zeros_retired == 4 and report.errors == 0
+    assert any(r.levelno == logging.ERROR and PARCEL in r.getMessage() for r in caplog.records)
+
+
+def test_f9_reconcile_and_baseline_new_form_never_raise(store, monkeypatch):
+    from app.tasks import historical_baseline as hb
+
+    mod = _reconcile(monkeypatch, [_reconcile_row(sensing_date="not-a-date")])
+    mod.publish_satimg(_reconcile_row(sensing_date="not-a-date"), {"mean": 0.5})  # must not raise
+    monkeypatch.setattr(so, "write_optical", MagicMock(side_effect=RuntimeError("boom")))
+    mod.publish_satimg(_reconcile_row(), {"mean": 0.5, "pixel_count": 4})
+    hb._write_satimg(TENANT, PARCEL, GEOM, "NDVI", dict(STATS), {"id": PID_A, "cloud_cover": 4}, DAY)
+    monkeypatch.setattr(hb, "satimg_enabled", MagicMock(side_effect=RuntimeError("env")))
+    hb._write_satimg(TENANT, PARCEL, GEOM, "NDVI", dict(STATS), {"id": PID_A}, DAY)
+
+
+# ── F10, F11 ────────────────────────────────────────────────────────────────
+
+COMPOSITE_ID = f"urn:ngsi-ld:EOSatelliteImagery:{TENANT}:parcel:parcel-1:s2-composite:2026-06-21"
+
+
+def _write_composite(start, index="NDVI", target=None, kind="parcel"):
+    take = so.composite_take(start, DAY)
+    a = so.index_analytics(index, STATS)
+    a["pixelCount"] = 40
+    tgt = target or (so.parcel_target(PARCEL, GEOM) if kind == "parcel" else so.zone_target(PARCEL, ZONE, GEOM))
+    return so.write_optical(TENANT, tgt, take, a, index_type=index)
+
+
+def test_f10_composite_carries_its_window_and_the_last_computed_window_wins(store):
+    assert _write_composite(date(2026, 6, 1)) == so.CREATE
+    text = store.entities[COMPOSITE_ID]["resultDescription"]["value"]
+    assert "2026-06-01" in text and "2026-06-21" in text  # start and end
+    assert _write_composite(date(2026, 6, 10), "EVI") == so.REPLACE  # other window, same end day
+    entity = store.entities[COMPOSITE_ID]
+    text = entity["resultDescription"]["value"]
+    assert "2026-06-10" in text and "2026-06-01" not in text and "2026-06-21" in text
+    assert set(_analytics(entity)) >= {"evi"} and "ndvi" not in _analytics(entity)
+    assert _write_composite(date(2026, 6, 10), "SAVI") == so.MERGE  # same window merges
+
+
+def test_f11_dry_run_reconcile_writes_nothing(store, monkeypatch, capsys):
+    monkeypatch.setenv("EO_SATIMG_WRITE_TENANTS", TENANT)
+    legacy = MagicMock(return_value="x")
+    mod = _reconcile(monkeypatch, [_reconcile_row(scene_product_id=PID_A, scene_sensing_date=DAY)])
+    monkeypatch.setattr(mod, "upsert_eo_index", legacy)
+    monkeypatch.setattr(mod, "publish_satimg", MagicMock())
+    monkeypatch.setattr(sys, "argv", ["x", "--tenants", TENANT, "--dry-run"])
+    assert mod.main() == 0
+    assert "would publish" in capsys.readouterr().out
+    legacy.assert_not_called()
+    mod.publish_satimg.assert_not_called()
+    assert store.entities == {} and store.upserts == [] and store.deleted == []
+
+
+def test_f11_delete_removes_zone_and_parcel_composites(store):
+    from app.services import zone_products as zp
+
+    zone = {"zone_id": "run-1-L1", "zone_urn": ZONE, "relation": zp.CURRENT_ZONE_RELATION}
+    zone_eid = f"urn:ngsi-ld:EOSatelliteImagery:{TENANT}:zone:parcel-1:run-1:L1:s2-composite:2026-06-21"
+    result = {"is_composite": True, "sensing_date": "2026-06-18",
+              "date_range": {"start": "2026-06-01", "end": "2026-06-21"}}
+    other = {**result, "date_range": {"start": "2026-06-10", "end": "2026-06-21"}}
+    _write_composite(date(2026, 6, 1))
+    _write_composite(date(2026, 6, 1), kind="zone")
+    assert {COMPOSITE_ID, zone_eid} <= set(store.entities)
+    with patch.object(zp, "fetch_zone_targets", return_value=[zone]), patch.object(fi, "delete_eo_index"):
+        zp.delete_zone_products(TENANT, PARCEL, "2026-06-18", "NDVI", job_result=other)  # another window
+        assert so.remove_job_index(TENANT, PARCEL, other, "NDVI")
+        assert {COMPOSITE_ID, zone_eid} <= set(store.entities)
+        zp.delete_zone_products(TENANT, PARCEL, "2026-06-18", "NDVI", job_result=result)
+        assert zone_eid not in store.entities and COMPOSITE_ID in store.entities
+        assert so.remove_job_index(TENANT, PARCEL, result, "NDVI")
+    assert COMPOSITE_ID not in store.entities

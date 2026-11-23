@@ -152,7 +152,7 @@ def _process_window(
         statistics=statistics,
         sensing_date=sensing_dt,
     )
-    if scene_day and satimg_enabled(tenant_id):
+    if scene_day:
         _write_satimg(tenant_id, parcel_urn, intersects, index, statistics, best, sensing_dt)
 
     return True
@@ -161,13 +161,19 @@ def _process_window(
 def _write_satimg(tenant_id: str, parcel_urn: str, geometry: dict, index: str, statistics: dict,
                   scene: dict, day: date) -> None:
     """EOSatelliteImagery of the window's scene (STAC metadata in hand, no stored raster). Never raises."""
-    from app.services import eo_satimg_optical as so
+    try:
+        if not satimg_enabled(tenant_id):
+            return
+        from app.services import eo_satimg_optical as so
 
-    analytics = so.index_analytics(index, statistics)
-    analytics["pixelCount"] = statistics.get("pixel_count")
-    analytics["cloudCoverage"] = so.cloud_coverage(scene.get("cloud_cover"))
-    so.write_optical(tenant_id, so.parcel_target(parcel_urn, geometry), so.stac_take(scene, day), analytics,
-                     index_type=index)
+        analytics = so.index_analytics(index, statistics)
+        analytics["pixelCount"] = statistics.get("pixel_count")
+        analytics["cloudCoverage"] = so.cloud_coverage(scene.get("cloud_cover"))
+        so.write_optical(tenant_id, so.parcel_target(parcel_urn, geometry), so.stac_take(scene, day), analytics,
+                         index_type=index)
+    except Exception as exc:
+        logger.error("eo_satimg: baseline tenant=%s target=%s index=%s day=%s failed: %s",
+                     tenant_id, parcel_urn, index, day, exc, exc_info=True)
 
 
 @celery_app.task(
