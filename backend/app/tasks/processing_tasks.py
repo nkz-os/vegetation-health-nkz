@@ -24,7 +24,8 @@ from app.services.radiometry import l2a_radiometry
 from app.services.storage import create_storage_service, generate_tenant_bucket_name
 from app.database import get_db_session
 from app.tasks.download_tasks import band_cleanup_key, band_copy_prefix
-from app.services.fiware_integration import existing_interior_observation, has_valid_pixels, upsert_eo_index
+from app.services.fiware_integration import (existing_interior_observation, has_valid_pixels, satimg_enabled,
+                                              upsert_eo_index)
 from app.services.interior_stats import cloud_fraction, interior_mask, interior_statistics, parcel_mask
 from app.services.eo_satellite_imagery import INDEX_NAMES
 
@@ -294,6 +295,52 @@ def _persist_results(
     else:
         logger.error("Failed to upsert EOProduct for %s/%s", job.entity_id, index_type)
     return bool(eid)
+
+
+def _publish_satimg_parcel(
+    tenant_id: str,
+    job: VegetationJob,
+    index_type: str,
+    statistics: Dict[str, Any],
+    primary_scene: VegetationScene,
+    *,
+    window: Optional[tuple],
+    raster_url: str,
+    interior: Optional[Dict[str, Any]],
+    parcel_cloud_fraction: Optional[float],
+    geometry: Optional[dict],
+    lost_day: bool,
+):
+    """Write the parcel's EOSatelliteImagery for this index; the zone write to follow, or None.
+
+    ``lost_day``: the legacy check kept a better scene, so this take may only complete its own entity.
+    Never raises: the legacy write and the job are already settled when this runs.
+    """
+    from app.services import eo_satimg_optical as so
+
+    family = "s2-composite" if window else "s2-indices"
+    day = window[1] if window else primary_scene.sensing_date
+    try:
+        bucket, _, key = raster_url[len("s3://"):].partition("/")
+        folder = so.raster_folder(bucket, key, index_type)
+        analytics = so.index_analytics(index_type, statistics, interior=interior)
+        analytics["pixelCount"] = statistics.get("pixel_count")
+        if window:
+            take = so.composite_take(date.fromisoformat(window[0]), date.fromisoformat(window[1]), folder)
+        else:
+            take = so.scene_take(primary_scene, folder)
+            analytics["cloudCoverage"] = so.cloud_coverage(getattr(primary_scene, "cloud_coverage", None))
+            analytics["parcelCloudFraction"] = parcel_cloud_fraction
+        verdict = so.write_optical(
+            tenant_id, so.parcel_target(job.entity_id, geometry), take, analytics,
+            index_type=index_type, interior_fraction=(interior or {}).get("valid_fraction"),
+            merge_only=lost_day,
+        )
+        return so.ZoneWrite(so.zone_take(take), verdict) if verdict in so.WRITTEN else None
+    except Exception as exc:
+        logger.error("eo_satimg: tenant=%s target=%s family=%s day=%s index=%s not written: %s",
+                     tenant_id, job.entity_id, family, day, index_type, exc, exc_info=True)
+        return None
 
 
 def _record_parcel_verdict(
@@ -812,8 +859,21 @@ def calculate_vegetation_index(
                 parcel_cloud_fraction=parcel_cloud_fraction,
             )
 
+        # EOSatelliteImagery (per-tenant switch, after the legacy write). One take holds the
+        # whole day: the legacy per-index loser may only complete an entity that is already its own.
+        satimg_zone = None
+        if (index_type != 'CUSTOM' and job.entity_id and has_valid_pixels(statistics)
+                and primary_scene.sensing_date and satimg_enabled(tenant_id)):
+            satimg_zone = _publish_satimg_parcel(
+                tenant_id, job, index_type, statistics, primary_scene,
+                window=(start_date[:10], end_date[:10]) if is_temporal_composite else None,
+                raster_url=f"s3://{bucket_name}/{remote_raster_path}",
+                interior=interior, parcel_cloud_fraction=parcel_cloud_fraction, geometry=parcel_geojson,
+                lost_day=better_scene_published,
+            )
+
         # Per-management-zone products: additive, never affects the parcel result.
-        if (not better_scene_published and index_type != 'CUSTOM'
+        if ((not better_scene_published or satimg_zone is not None) and index_type != 'CUSTOM'
                 and job.entity_id and primary_scene.sensing_date):
             try:
                 from app.services.zone_products import publish_zone_indices
@@ -825,6 +885,8 @@ def calculate_vegetation_index(
                     index_array=composite_array,
                     sensing_date=primary_scene.sensing_date,
                     cloud_cover=getattr(primary_scene, "cloud_coverage", None),
+                    legacy=not better_scene_published,
+                    satimg=satimg_zone,
                 )
             except Exception as zone_err:
                 logger.warning("Zone products skipped for %s: %s", job.entity_id, zone_err)
