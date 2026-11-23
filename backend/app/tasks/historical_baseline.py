@@ -11,7 +11,7 @@ import tempfile
 from datetime import date, timedelta
 
 from app.celery_app import celery_app
-from app.services.fiware_integration import upsert_eo_index
+from app.services.fiware_integration import satimg_enabled, upsert_eo_index
 
 logger = logging.getLogger(__name__)
 
@@ -136,21 +136,38 @@ def _process_window(
         if statistics["pixel_count"] == 0:
             return False
 
+    scene_day = True
     try:
         sensing_dt = date.fromisoformat(best["sensing_date"])
     except (ValueError, TypeError):
         sensing_dt = window_start
+        scene_day = False
 
+    parcel_urn = entity_id if entity_id.startswith("urn:ngsi-ld:AgriParcel:") else f"urn:ngsi-ld:AgriParcel:{entity_id}"
     # Persist to Orion-LD as EOProduct
     upsert_eo_index(
         tenant_id=tenant_id,
-        parcel_id=entity_id if entity_id.startswith("urn:ngsi-ld:AgriParcel:") else f"urn:ngsi-ld:AgriParcel:{entity_id}",
+        parcel_id=parcel_urn,
         index_type=index,
         statistics=statistics,
         sensing_date=sensing_dt,
     )
+    if scene_day and satimg_enabled(tenant_id):
+        _write_satimg(tenant_id, parcel_urn, intersects, index, statistics, best, sensing_dt)
 
     return True
+
+
+def _write_satimg(tenant_id: str, parcel_urn: str, geometry: dict, index: str, statistics: dict,
+                  scene: dict, day: date) -> None:
+    """EOSatelliteImagery of the window's scene (STAC metadata in hand, no stored raster). Never raises."""
+    from app.services import eo_satimg_optical as so
+
+    analytics = so.index_analytics(index, statistics)
+    analytics["pixelCount"] = statistics.get("pixel_count")
+    analytics["cloudCoverage"] = so.cloud_coverage(scene.get("cloud_cover"))
+    so.write_optical(tenant_id, so.parcel_target(parcel_urn, geometry), so.stac_take(scene, day), analytics,
+                     index_type=index)
 
 
 @celery_app.task(

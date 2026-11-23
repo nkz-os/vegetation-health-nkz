@@ -14,7 +14,10 @@ Copernicus for data that is already computed; this reconciler republishes it
 instead.
 
 Idempotent: publishing uses the same create-or-merge upsert as the live path,
-so running it twice is indistinguishable from running it once.
+so running it twice is indistinguishable from running it once. For tenants in
+EO_SATIMG_WRITE_TENANTS the EOSatelliteImagery is written too: a job with a
+window (its date columns or the date_range of its result) is a temporal
+composite dated by the window end.
 
 Dry-run:  python3 scripts/reconcile_eo_from_jobs.py --tenants acmefarm --dry-run
 Apply:    python3 scripts/reconcile_eo_from_jobs.py --tenants acmefarm
@@ -24,12 +27,13 @@ Window:   python3 scripts/reconcile_eo_from_jobs.py --tenants acmefarm --since 2
 import argparse
 import collections
 import sys
-from datetime import date
+from datetime import date, datetime
+from types import SimpleNamespace
 
 from sqlalchemy import text
 
 from app.database import SessionLocal
-from app.services.fiware_integration import upsert_eo_index
+from app.services.fiware_integration import satimg_enabled, upsert_eo_index
 
 # SAR products are written by their own publisher (backscatter/change-flag
 # attributes, a different statistics shape), so they are out of scope here.
@@ -38,22 +42,37 @@ SAR_PREFIX = "SAR"
 
 def _iter_jobs(db, tenants, since):
     sql = """
-        SELECT tenant_id,
-               entity_id,
-               parameters->>'index_type'   AS index_type,
-               result->>'sensing_date'     AS sensing_date,
-               result->'statistics'        AS statistics
-        FROM vegetation_jobs
-        WHERE deleted_at IS NULL
-          AND job_type = 'calculate_index'
-          AND status = 'completed'
-          AND entity_id IS NOT NULL
-          AND result ? 'statistics'
-          AND result->>'sensing_date' IS NOT NULL
-          AND parameters->>'index_type' NOT LIKE :sar
-          AND (:all_tenants OR tenant_id = ANY(:tenants))
-          AND (:since IS NULL OR (result->>'sensing_date')::date >= :since)
-        ORDER BY result->>'sensing_date', parameters->>'index_type'
+        SELECT j.tenant_id,
+               j.entity_id,
+               j.parameters->>'index_type'   AS index_type,
+               j.result->>'sensing_date'     AS sensing_date,
+               j.result->'statistics'        AS statistics,
+               j.start_date,
+               j.end_date,
+               j.result->'date_range'->>'start' AS window_start,
+               j.result->'date_range'->>'end'   AS window_end,
+               j.result->>'raster_path'      AS raster_path,
+               j.result->'interior'          AS interior,
+               j.result->'parcel_cloud_fraction' AS parcel_cloud_fraction,
+               COALESCE(j.parameters->'bounds', j.result->'geometry') AS geometry,
+               s.scene_id                  AS scene_product_id,
+               s.sensing_date              AS scene_sensing_date,
+               s.acquisition_datetime      AS scene_acquisition_datetime,
+               s.cloud_coverage            AS scene_cloud_coverage,
+               ST_AsGeoJSON(s.footprint)   AS scene_footprint
+        FROM vegetation_jobs j
+        LEFT JOIN vegetation_scenes s
+          ON s.tenant_id = j.tenant_id AND s.id::text = j.result->>'scene_id'
+        WHERE j.deleted_at IS NULL
+          AND j.job_type = 'calculate_index'
+          AND j.status = 'completed'
+          AND j.entity_id IS NOT NULL
+          AND j.result ? 'statistics'
+          AND j.result->>'sensing_date' IS NOT NULL
+          AND j.parameters->>'index_type' NOT LIKE :sar
+          AND (:all_tenants OR j.tenant_id = ANY(:tenants))
+          AND (:since IS NULL OR (j.result->>'sensing_date')::date >= :since)
+        ORDER BY j.result->>'sensing_date', j.parameters->>'index_type'
     """
     rows = db.execute(
         text(sql),
@@ -65,6 +84,46 @@ def _iter_jobs(db, tenants, since):
         },
     )
     return rows.fetchall()
+
+
+def publish_satimg(job, stats) -> None:
+    """EOSatelliteImagery of one job row; the optical writer logs and never raises."""
+    import os
+
+    from app.services import eo_satimg_optical as so
+    from app.services.storage import generate_tenant_bucket_name
+
+    if job.index_type.lower() not in so.INDEX_NAMES:
+        return
+    bucket = os.getenv("VEGETATION_COG_BUCKET") or generate_tenant_bucket_name(job.tenant_id)
+    folder = so.raster_folder(bucket, getattr(job, "raster_path", None), job.index_type)
+    # /calculate composites keep the window in the result only. parameters.start_date is
+    # NOT a window: single-date jobs carry the search range there.
+    start = getattr(job, "start_date", None) or getattr(job, "window_start", None)
+    end = getattr(job, "end_date", None) or getattr(job, "window_end", None)
+    interior = getattr(job, "interior", None)
+    analytics = so.index_analytics(job.index_type, stats)
+    analytics["pixelCount"] = stats.get("pixel_count")
+    if start and end:
+        take = so.composite_take(_as_date(start), _as_date(end), folder)
+    elif getattr(job, "scene_product_id", None):
+        take = so.scene_take(SimpleNamespace(
+            scene_id=job.scene_product_id, sensing_date=_as_date(job.scene_sensing_date),
+            acquisition_datetime=job.scene_acquisition_datetime, footprint=job.scene_footprint), folder)
+        analytics.update(so.index_analytics(job.index_type, stats, interior=interior))
+        analytics["cloudCoverage"] = so.cloud_coverage(job.scene_cloud_coverage)
+        analytics["parcelCloudFraction"] = getattr(job, "parcel_cloud_fraction", None)
+    else:
+        take = so.no_scene_take(date.fromisoformat(job.sensing_date[:10]))
+    so.write_optical(job.tenant_id, so.parcel_target(job.entity_id, getattr(job, "geometry", None)), take,
+                     analytics, index_type=job.index_type,
+                     interior_fraction=(interior or {}).get("valid_fraction") if take.scene else None)
+
+
+def _as_date(value) -> date:
+    if isinstance(value, datetime):
+        return value.date()
+    return value if isinstance(value, date) else date.fromisoformat(str(value)[:10])
 
 
 def main() -> int:
@@ -109,6 +168,8 @@ def main() -> int:
         )
         if entity_id:
             published[job.index_type] += 1
+            if satimg_enabled(job.tenant_id):
+                publish_satimg(job, stats)
         else:
             failures.append((job.tenant_id, job.index_type, job.sensing_date))
 

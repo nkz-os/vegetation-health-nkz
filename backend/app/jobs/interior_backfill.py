@@ -175,7 +175,8 @@ def _load_jobs(db, tenant_id: str, parcel: Optional[str] = None) -> List[dict]:
         if statistics is None:
             continue
         jobs.append({"entity_id": job.entity_id, "index_type": index_type, "sensing_date": sensing_date,
-                     "raster_path": result["raster_path"], "statistics": statistics})
+                     "raster_path": result["raster_path"], "statistics": statistics,
+                     "scene_id": result.get("scene_id")})
     return jobs
 
 
@@ -236,6 +237,37 @@ class OrionBroker:
     def upsert(self, tenant_id: str, parcel_id: str, index_type: str, **kwargs) -> Optional[str]:
         return fi.upsert_eo_index(tenant_id, parcel_id, index_type, **kwargs)
 
+    def remove_satimg_index(self, tenant_id: str, parcel_id: str, day: date, index_type: str) -> bool:
+        from app.services import eo_satimg_optical as so
+
+        return so.remove_index(tenant_id, "parcel", parcel_id, so.Family.S2_INDICES, day, index_type)
+
+    def upsert_satimg(self, tenant_id: str, parcel_id: str, index_type: str, *, statistics: dict,
+                      interior: dict, raster_path: str, bucket: str, geometry: dict, scene) -> Optional[str]:
+        """Merge the recomputed interior into the scene's EOSatelliteImagery (full list rewritten)."""
+        from app.services import eo_satimg_optical as so
+
+        take = so.scene_take(scene, so.raster_folder(bucket, raster_path, index_type))
+        analytics = so.index_analytics(index_type, statistics, interior=interior)
+        analytics["pixelCount"] = statistics.get("pixel_count")
+        analytics["cloudCoverage"] = so.cloud_coverage(getattr(scene, "cloud_coverage", None))
+        return so.write_optical(tenant_id, so.parcel_target(parcel_id, geometry), take, analytics,
+                                index_type=index_type, interior_fraction=interior.get("valid_fraction"))
+
+
+def _load_scene(db, tenant_id: str, scene_id):
+    """The calculation's VegetationScene (by its row id), or None."""
+    import uuid
+
+    from app.models import VegetationScene
+
+    try:
+        sid = uuid.UUID(str(scene_id))
+    except (TypeError, ValueError):
+        return None
+    return db.query(VegetationScene).filter(VegetationScene.tenant_id == tenant_id,
+                                            VegetationScene.id == sid).first()
+
 
 def _storage_reader(tenant_id: str) -> Callable[[str], bytes]:
     """Reader of stored rasters (bytes) from the bucket the calculation wrote to."""
@@ -273,7 +305,7 @@ def _group_jobs(jobs: List[dict]) -> Dict[tuple, List[dict]]:
 
 def backfill_tenant(db, tenant_id: str, *, parcel: Optional[str] = None, apply: bool = False,
                     reader: Optional[Callable[[str], bytes]] = None, broker=None,
-                    retire_zeros: bool = True) -> BackfillReport:
+                    retire_zeros: bool = True, scene_loader=None) -> BackfillReport:
     """Recompute the interior measure of the tenant's published EOProducts from stored rasters.
 
     With ``apply`` False nothing is written and ``updated``/``zeros_retired`` count what would be.
@@ -282,6 +314,7 @@ def backfill_tenant(db, tenant_id: str, *, parcel: Optional[str] = None, apply: 
     report = BackfillReport()
     broker = broker or OrionBroker()
     reader = reader or _storage_reader(tenant_id)
+    scene_loader = scene_loader or (lambda db_, scene_id: _load_scene(db_, tenant_id, scene_id))
     bucket = os.getenv("VEGETATION_COG_BUCKET") or _tenant_bucket(tenant_id)
     geometries: Dict[str, Optional[dict]] = {}
     touched = set()  # (entity_id, index short name) republished, or to be, in this run
@@ -364,6 +397,9 @@ def backfill_tenant(db, tenant_id: str, *, parcel: Optional[str] = None, apply: 
             if not eid:
                 report.updated -= 1
                 report.errors += 1
+            elif fi.satimg_enabled(tenant_id):
+                _republish_satimg(db, tenant_id, broker, scene_loader, parcel_urn, index_type, chosen,
+                                  interior, bucket, geometry, context)
         except Exception as exc:
             report.errors += 1
             logger.error("%s failed: %s", context, exc, exc_info=True)
@@ -372,14 +408,29 @@ def backfill_tenant(db, tenant_id: str, *, parcel: Optional[str] = None, apply: 
     return report
 
 
+def _republish_satimg(db, tenant_id, broker, scene_loader, parcel_urn, index_type, chosen, interior,
+                      bucket, geometry, context) -> None:
+    """New form of a republished index; its failure never changes the legacy report (logged)."""
+    try:
+        scene = scene_loader(db, chosen.get("scene_id"))
+        if scene is None:
+            logger.warning("%s EOSatelliteImagery not written (reason=scene_not_found)", context)
+            return
+        broker.upsert_satimg(tenant_id, parcel_urn, index_type, statistics=chosen["statistics"],
+                             interior=interior, raster_path=chosen["raster_path"], bucket=bucket,
+                             geometry=geometry, scene=scene)
+    except Exception as exc:
+        logger.error("%s EOSatelliteImagery not written: %s", context, exc, exc_info=True)
+
+
 def _zero_snapshot(tenant_id: str, broker, parcel: Optional[str], report: BackfillReport) -> list:
-    """``(entity_id, attribute key)`` of every zero-pixel index, restricted to ``parcel`` if given."""
+    """``(entity_id, attribute key, parcel URN)`` of every zero-pixel index, restricted to ``parcel`` if given."""
     zeros = []
     try:
         for entity in broker.list_products(tenant_id):
             if parcel and _product_parcel(entity) != parcel:
                 continue
-            zeros.extend((entity.get("id"), key) for key in zero_index_attributes(entity))
+            zeros.extend((entity.get("id"), key, _product_parcel(entity)) for key in zero_index_attributes(entity))
     except Exception as exc:
         report.errors += 1
         logger.error("zero listing for tenant %s failed: %s", tenant_id, exc, exc_info=True)
@@ -387,8 +438,8 @@ def _zero_snapshot(tenant_id: str, broker, parcel: Optional[str], report: Backfi
 
 
 def _retire_zeros(tenant_id: str, broker, apply: bool, report: BackfillReport, zeros: list, touched: set) -> None:
-    """Delete the listed zero attributes, except the indices this run republished."""
-    for entity_id, key in zeros:
+    """Delete the listed zero attributes, except the indices this run republished, in both forms."""
+    for entity_id, key, parcel_urn in zeros:
         if (entity_id, _short_name(key)) in touched:
             logger.info("%s: %s kept (republished in this run)", entity_id, key)
             continue
@@ -400,6 +451,11 @@ def _retire_zeros(tenant_id: str, broker, apply: bool, report: BackfillReport, z
         if outcome == "deleted":
             logger.info("%s: deleted %s (value 0, pixelCount 0)", entity_id, key)
             report.zeros_retired += 1
+            remover = getattr(broker, "remove_satimg_index", None)
+            if parcel_urn and remover:
+                day = date.fromisoformat(entity_id.rsplit(":", 1)[-1])
+                if not remover(tenant_id, parcel_urn, day, _short_name(key)):
+                    report.errors += 1
         elif outcome == "not_found":
             report.not_found += 1
         else:
