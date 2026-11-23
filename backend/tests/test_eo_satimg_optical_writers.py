@@ -449,6 +449,7 @@ def test_delete_paths_remove_both_forms_during_dual_write(store, monkeypatch):
     job = MagicMock()
     job.id = uuid.uuid4()
     job.entity_id = PARCEL
+    job.scene_id = PID_A  # the mocked session answers every query with the job: its STAC id resolves the scene
     job.parameters = {"index_type": "NDVI"}
     job.result = {"index_type": "NDVI", "sensing_date": DAY.isoformat(), "is_composite": False,
                   "scene_id": str(SCENE_UUID)}
@@ -471,7 +472,8 @@ def test_delete_paths_remove_both_forms_during_dual_write(store, monkeypatch):
                 asyncio.run(mp.delete_monitoring_period(PARCEL, str(uuid.uuid4()), cascade=True,
                                                         current_user={"tenant_id": TENANT}, db=db))
             else:
-                zp.delete_zone_products(TENANT, PARCEL, DAY.isoformat(), "NDVI", job_result=job.result)
+                zp.delete_zone_products(TENANT, PARCEL, DAY.isoformat(), "NDVI",
+                                         job_result={**job.result, "scene_product_id": PID_A})
         monkeypatch.setenv("EO_SATIMG_WRITE_TENANTS", TENANT)
         assert legacy.called, run
         assert zone_eid not in store.entities, run  # only index of the zone entity: gone
@@ -688,7 +690,8 @@ def test_deleting_another_takes_job_keeps_the_stored_values(store):
     assert so.remove_job_index(TENANT, PARCEL, {**single, "scene_id": str(uuid.uuid4())}, "NDVI")  # other scene
     assert so.remove_job_index(TENANT, PARCEL, single, "NDVI")  # Statistical API job, scene entity
     assert store.entities == before
-    assert so.remove_job_index(TENANT, PARCEL, {**single, "scene_id": str(SCENE_UUID)}, "NDVI")
+    assert so.remove_job_index(TENANT, PARCEL, {**single, "scene_id": str(SCENE_UUID),
+                                                "scene_product_id": PID_B}, "NDVI")
     assert store.entities == {}
     # Two composites ending the same day: only the stored window's job removes its values.
     take = so.composite_take(date(2026, 6, 1), DAY)
@@ -785,9 +788,6 @@ def test_f3_orion_delete_trusts_the_status_not_the_message():
 def test_f2_replace_upserts_first_and_prunes_only_leftovers(store, monkeypatch):
     _write_scene(PID_A, "NDVI", 0.6, folder="s3://bucket/a")
     _write_scene(PID_A, "EVI", 0.4, folder="s3://bucket/a")
-    # the broker may hand attributes back as full IRIs
-    stored = store.entities[PARCEL_ID]
-    stored["https://smartdatamodels.org/dataModel.SatelliteImagery/storageFormat"] = stored.pop("storageFormat", {"type": "Property", "value": "COG"})
     order = []
     real_upsert, real_prune = store.upsert, store.delete_attr
     monkeypatch.setattr(fi, "upsert_eo_satellite_imagery", lambda t, e: (order.append("upsert"), real_upsert(t, e))[1])
@@ -795,8 +795,7 @@ def test_f2_replace_upserts_first_and_prunes_only_leftovers(store, monkeypatch):
     assert _write_scene(PID_B, "NDVI", 0.7, 0.9) == so.REPLACE
     assert order[0] == "upsert" and set(order[1:]) == {"prune"}
     assert PARCEL_ID not in store.deleted
-    assert store.pruned and not set(store.pruned) & {"id", "type", "@context", "analytics", "productID"}
-    assert any(a.endswith("storageFormat") and a.startswith("https://") for a in store.pruned)
+    assert sorted(store.pruned) == ["contentInformation", "localServerPath", "storageFormat"]
     assert "evi" not in _analytics(store.entities[PARCEL_ID])
 
 
@@ -1069,3 +1068,92 @@ def test_f11_delete_removes_zone_and_parcel_composites(store):
         assert zone_eid not in store.entities and COMPOSITE_ID in store.entities
         assert so.remove_job_index(TENANT, PARCEL, result, "NDVI")
     assert COMPOSITE_ID not in store.entities
+
+
+# ── fix round 2: prune allowlist ────────────────────────────────────────────
+
+
+def _prune(raw, entity):
+    calls = []
+    with patch.object(fi, "delete_eo_attribute", side_effect=lambda t, e, a: calls.append(a) or "deleted"):
+        so._prune_leftovers(TENANT, PARCEL_ID, raw, entity, "ctx")
+    return calls
+
+
+def test_r2_prune_never_deletes_what_the_new_entity_carries_under_another_name():
+    prop = {"type": "Property", "value": 1}
+    raw = {"id": PARCEL_ID, "type": "EOSatelliteImagery", "refAgriParcel": prop,
+           "nkz:hasAgriManagementZone": prop,
+           "https://uri.etsi.org/ngsi-ld/default-context/hasAgriManagementZone": prop,
+           "https://smartdatamodels.org/dataModel.SatelliteImagery/productID": prop}
+    entity = {"id": PARCEL_ID, "type": "EOSatelliteImagery", "hasAgriParcel": prop, "hasAgriManagementZone": prop,
+              "productID": prop}
+    assert _prune(raw, entity) == []
+
+
+def test_r2_replace_without_raster_prunes_exactly_the_raster_attributes_by_short_name():
+    prop = {"type": "Property", "value": 1}
+    raw = {"id": PARCEL_ID, "type": "EOSatelliteImagery", "productID": prop, "platformName": prop,
+           "https://smartdatamodels.org/dataModel.SatelliteImagery/localServerPath": prop,
+           "storageFormat": prop, "contentInformation": prop, "hasAgriParcel": prop, "analytics": prop}
+    entity = {"id": PARCEL_ID, "type": "EOSatelliteImagery", "productID": prop, "platformName": prop,
+              "hasAgriParcel": prop, "analytics": prop}
+    assert sorted(_prune(raw, entity)) == ["contentInformation", "localServerPath", "storageFormat"]
+
+
+def test_r2_unknown_and_protected_stored_attributes_are_left_alone():
+    prop = {"type": "Property", "value": 1}
+    raw = {"id": PARCEL_ID, "type": "EOSatelliteImagery", "somethingElse": prop, "hasAgriParcel": prop,
+           "analysisType": prop, "provider": prop, "sensingDate": prop, "resultDescription": prop,
+           "analytics": prop, "productType": prop, "location": prop}
+    assert _prune(raw, {"id": PARCEL_ID, "type": "EOSatelliteImagery"}) == []
+
+
+def test_r2_prune_404_is_not_an_error_other_failures_are(caplog):
+    prop = {"type": "Property", "value": 1}
+    raw = {"id": PARCEL_ID, "productID": prop}
+    entity = {"id": PARCEL_ID}
+    http = MagicMock(status_code=404)
+    err = RuntimeError("404 gone")
+    err.response = http
+    with caplog.at_level(logging.WARNING):
+        with patch.object(fi, "SyncOrionClient") as client:
+            client.return_value.delete_entity_attr.side_effect = err
+            so._prune_leftovers(TENANT, PARCEL_ID, raw, entity, "ctx")
+        assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+        err.response = MagicMock(status_code=500)
+        with patch.object(fi, "SyncOrionClient") as client:
+            client.return_value.delete_entity_attr.side_effect = err
+            so._prune_leftovers(TENANT, PARCEL_ID, raw, entity, "ctx")
+    assert [r for r in caplog.records if r.levelno >= logging.ERROR and "productID" in r.getMessage()]
+
+
+def test_r2_with_scene_product_without_scene_id_neither_queries_nor_logs(caplog):
+    db = MagicMock()
+    with caplog.at_level(logging.WARNING):
+        out = so.with_scene_product(db, TENANT, {"is_composite": True, "date_range": {"start": "a", "end": "b"}})
+        assert so.with_scene_product(db, TENANT, None) == {}
+    assert not db.query.called and not caplog.records and out["is_composite"] is True
+
+
+def test_r2_unresolved_scene_never_removes_a_winner_on_a_guess(store, caplog):
+    _write_scene(PID_B, "NDVI", 0.6, 0.8, folder=f"s3://bucket/{TENANT}/entities/{PARCEL}/scenes/{SCENE_UUID}")
+    before = copy.deepcopy(store.entities)
+    job = {"sensing_date": DAY.isoformat(), "scene_id": str(SCENE_UUID)}  # no scene_product_id: lookup failed
+    with caplog.at_level(logging.WARNING):
+        assert so.remove_job_index(TENANT, PARCEL, job, "NDVI")
+    assert store.entities == before
+    assert any(r.levelno == logging.WARNING and "unresolved" in r.getMessage() for r in caplog.records)
+
+
+def test_r2_zone_backfill_reads_the_parcel_once_per_row(zone_backfill, store, monkeypatch):
+    from tests.test_zone_backfill import RIGHT
+
+    zone_backfill.zones.append({**zone_backfill.zones[0], "zone_id": "run-1-L2", "geometry": RIGHT,
+                                "zone_urn": ZONE.replace("L1", "L2")})
+    real = fi.get_eo_satellite_imagery
+    parcel_reads = []
+    monkeypatch.setattr(fi, "get_eo_satellite_imagery",
+                        lambda t, e: (parcel_reads.append(e) if ":parcel:" in e else None, real(t, e))[1])
+    assert zone_backfill.run() == 2
+    assert len(parcel_reads) == 1

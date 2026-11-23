@@ -116,7 +116,7 @@ def _satimg_takes(db, tenant_id: str, rows) -> Dict[Any, Any]:
 
 
 def _write_zone_satimg(tenant_id: str, parcel_urn: str, zone: Dict[str, Any], row, stats: Dict[str, Any],
-                       scene_take) -> None:
+                       scene_take, held: Dict[Any, bool]) -> None:
     """The zone's EOSatelliteImagery for the row's scene, by the rules of ``publish_zone_indices``
     (current zones only, never over a day the parcel holds with another scene). Never raises."""
     if scene_take is None:
@@ -128,7 +128,9 @@ def _write_zone_satimg(tenant_id: str, parcel_urn: str, zone: Dict[str, Any], ro
 
         if zone.get("relation") != CURRENT_ZONE_RELATION:
             return
-        if so.parcel_holds_other_take(tenant_id, parcel_urn, take):
+        if row.sensing_date not in held:  # one read of the parcel's entity per row, not per zone
+            held[row.sensing_date] = so.parcel_holds_other_take(tenant_id, parcel_urn, take)
+        if held[row.sensing_date]:
             logger.info("Zone backfill: %s on %s not written in the new form, the parcel holds another scene",
                         zone["zone_id"], row.sensing_date)
             return
@@ -177,6 +179,7 @@ def backfill_current_zone_products(db, tenant_id: str, parcel_urn: str, *, last_
         return 0
 
     published = 0
+    held: Dict[Any, bool] = {}
     for row in rows:
         try:
             array = reader(row, grid)
@@ -193,7 +196,7 @@ def backfill_current_zone_products(db, tenant_id: str, parcel_urn: str, *, last_
                 if upsert_eo_zone_index(tenant_id, parcel_short, zone, row.sensing_date,
                                         BACKFILL_INDEX.lower(), stats):
                     published += 1
-                _write_zone_satimg(tenant_id, parcel_urn, zone, row, stats, takes.get(row.sensing_date))
+                _write_zone_satimg(tenant_id, parcel_urn, zone, row, stats, takes.get(row.sensing_date), held)
             except Exception as exc:
                 logger.warning("Zone backfill: %s on %s failed for %s: %s",
                                zone["zone_id"], row.sensing_date, parcel_urn, exc)

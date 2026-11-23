@@ -350,32 +350,36 @@ def write_optical(tenant: str, target: Target, take: OpticalTake, analytics: Map
         return None
 
 
-_KEEP = frozenset({"id", "type", "@context"})
+# The only attributes a replace may remove: optional, not relationships, and dependent on the take
+# (contract §4). Anything else, whatever name the broker returns it under, is never deleted.
+_PRUNABLE = ("productID", "productURL", "productFormat", "platformName", "orbitNumber", "operationalMode",
+             "productBbox", "processedBbox", "localServerPath", "storageFormat", "contentInformation")
 
 
-def _local_name(key: str) -> str:
+def _last_part(key: str) -> str:
     return key.rsplit("/", 1)[-1].rsplit("#", 1)[-1]
 
 
 def _prune_leftovers(tenant: str, eid: str, raw: Mapping[str, Any], entity: Mapping[str, Any], context: str) -> None:
-    """After the upsert of a replacing take, drop the stored attributes the new entity does not carry.
+    """After the upsert of a replacing take, drop the stale optional attributes of the other take.
 
-    The upsert overwrites every attribute it sends, so only the leftovers of the other take
-    remain (e.g. its product and footprint). A failed prune is logged, never raised: the new
-    take is already written.
+    Candidates are the fixed allowlist minus what the new entity carries, kept only if the stored
+    entity has them (compared by the last part of its key; a miss only leaves a stale attribute).
+    Deleted by short name: the client's Link expands it. A 404 is fine; any other failure is logged
+    and never raised, the new take is already written.
     """
-    carried = {_local_name(k) for k in entity}
-    for key in raw:
-        if key in _KEEP or _local_name(key) in _KEEP or _local_name(key) in carried:
+    carried = {_last_part(k) for k in entity}
+    stored = {_last_part(k) for k in raw}
+    for name in _PRUNABLE:
+        if name in carried or name not in stored:
             continue
         try:
-            outcome = fi.delete_eo_attribute(tenant, eid, key)
+            outcome = fi.delete_eo_attribute(tenant, eid, name)
         except Exception as exc:
-            outcome = "error"
-            logger.error("eo_satimg: %s attribute %s not pruned: %s", context, key, exc)
+            logger.error("eo_satimg: %s attribute %s not pruned: %s", context, name, exc)
             continue
         if outcome == "error":
-            logger.error("eo_satimg: %s attribute %s of the replaced take not pruned", context, key)
+            logger.error("eo_satimg: %s attribute %s of the replaced take not pruned", context, name)
 
 
 # ── deletes (never gated by the switch) ─────────────────────────────────────
@@ -401,6 +405,8 @@ def with_scene_product(db, tenant_id: str, result: Optional[Mapping[str, Any]]) 
     Never raises: without the lookup the result is returned as it was.
     """
     out = dict(result or {})
+    if not out.get("scene_id"):
+        return out  # composite or Statistical API job: no scene to resolve
     try:
         import uuid
 
@@ -437,6 +443,11 @@ def _is_job_take(raw, obs, result: Mapping[str, Any]) -> bool:
             return False
     elif not has_scene:
         return obs.product_id is None  # neither has a scene: the Statistical API take
+    elif obs.product_id or not obs.raster_path:
+        # The job has a scene but its STAC id could not be resolved: never remove the winner's value on a guess.
+        logger.warning("eo_satimg: scene %s of a deleted job unresolved, entity %s kept", result.get("scene_id"),
+                       raw.get("id"))
+        return False
     elif obs.target == "zone":  # scene known by row id only; zones keep no raster
         return result.get("skip_reason") != "better_scene_same_date"
     if obs.target == "zone":
