@@ -69,6 +69,7 @@ EXIT_OK, EXIT_ERRORS, EXIT_REFUSED = 0, 1, 2
 
 # Values that belong to a whole raster product: stored, merged and compared as a group.
 RASTER_BASES = frozenset(INDEX_NAMES) | {"lst", "backscatterVV", "backscatterVH", "soilMoistureIndex"}
+PRIMARY_EXTRA = frozenset({"changeFlag", "changeConfidence", "deltaVV"})  # compared by verify as well
 OPTICAL = (Family.S2_INDICES.value, Family.S2_COMPOSITE.value)
 _SCENE_FOLDER = re.compile(r"/scenes/([^/]+)/")
 _COMPOSITE_FOLDER = re.compile(r"/composites/(\d{4}-\d{2}-\d{2})_(\d{4}-\d{2}-\d{2})/")
@@ -121,24 +122,24 @@ class SqlSources:
         self.db.execute(text("SELECT set_config('app.current_tenant', :t, true)"), {"t": tenant})
 
     def jobs(self, tenant: str, parcel: str) -> list:
-        from sqlalchemy import func
-
         from app.models.jobs import VegetationJob
 
         with self.db.begin_nested():
             self._set_tenant(tenant)
-            rows = self.db.query(VegetationJob, func.ST_AsGeoJSON(VegetationJob.bounds)).filter(
+            rows = self.db.query(VegetationJob).filter(
                 VegetationJob.tenant_id == tenant,
                 VegetationJob.entity_id == parcel,
                 VegetationJob.job_type == "calculate_index",
                 VegetationJob.status == "completed",
             ).all()
         out = []
-        for job, bounds in rows:
+        for job in rows:
             result = job.result if isinstance(job.result, Mapping) else {}
             params = job.parameters if isinstance(job.parameters, Mapping) else {}
             geometry = None
-            for candidate in (params.get("bounds"), result.get("geometry"), _json(bounds)):
+            # ASSUMPTION: parameters.bounds is the parcel polygon the analysis cropped to (window_crop,
+            # reconcile_eo_from_jobs use it the same way); the unused ``bounds`` column is not read.
+            for candidate in (params.get("bounds"), result.get("geometry")):
                 if isinstance(candidate, Mapping) and "coordinates" in candidate:
                     geometry = dict(candidate)
                     break
@@ -174,15 +175,6 @@ class SqlSources:
             raise
         location = fi._property_value(fi._attr_by_name(entity or {}, "location"))
         return location if isinstance(location, dict) and "coordinates" in location else None
-
-
-def _json(value: Any) -> Any:
-    if isinstance(value, str):
-        try:
-            return json.loads(value)
-        except ValueError:
-            return None
-    return value
 
 
 # ── reading the broker ──────────────────────────────────────────────────────
@@ -290,6 +282,12 @@ def _is_composite_job(job: JobRow) -> bool:
     return bool(job.result.get("is_composite")) or _job_window(job) is not None
 
 
+def _mean6(job: JobRow) -> Optional[float]:
+    stats = job.result.get("statistics")
+    mean = stats.get("mean") if isinstance(stats, Mapping) else None
+    return round(float(mean), 6) if isinstance(mean, (int, float)) and not isinstance(mean, bool) else None
+
+
 def _key_of(url: Optional[str]) -> Optional[tuple]:
     """``(bucket, key)`` of an ``s3://bucket/key`` URL."""
     if isinstance(url, str) and url.startswith("s3://") and "/" in url[5:]:
@@ -324,7 +322,13 @@ class Planner:
         return self._parcels[parcel]
 
     def geometry(self, parcel: str, jobs: Sequence[JobRow]) -> Optional[Mapping]:
-        """What the analysis used (a live job's), else the parcel's own location; never invented."""
+        """What the analysis used (a live job's), else the parcel's own location; never invented.
+
+        ASSUMPTION: the parcel's current location in the broker is an acceptable fallback when no job kept the geometry
+        it used (the brief's rule names the analysis' geometry or the zone's; zones are out of scope). Radar and
+        surface temperature have no such job (the SAR download job is not a ``calculate_index`` job), so they always
+        take the parcel's location.
+        """
         for job in jobs:
             if job.geometry and not job.deleted:
                 return job.geometry
@@ -399,6 +403,7 @@ class Planner:
                 else:
                     wide[name] = value
         jobs = self.jobs(parcel)
+        # ASSUMPTION: "no scene" is a take of its own (key None): it never mixes with a resolved scene's indices.
         groups: dict = {}  # (family, entity day, take key) -> dict
         for idx in INDEX_NAMES:
             rec = records.get(idx)
@@ -415,6 +420,7 @@ class Planner:
                 group["jobs"].extend(j for j in resolved["jobs"] if j not in group["jobs"])
             group["values"].update(rec["values"])
             group["urls"][idx] = rec["url"]
+            group["stat_api"] = group.get("stat_api", True) and resolved.get("stat_api", False)
         # one entity per family and day: the group holding the reference index wins
         by_entity: dict = defaultdict(list)
         for key, group in groups.items():
@@ -432,8 +438,7 @@ class Planner:
                                          "day": entity_day.isoformat(), "indices": dropped})
             values = dict(winner["values"])
             row = winner.get("scene_row")
-            sole = len(candidates) == 1
-            if sole:
+            if len(groups) == 1:  # take-wide values of the legacy entity belong to a take only when it is the only one
                 values.update(wide)
             if row is not None and so.cloud_coverage(row.cloud_coverage) is not None:
                 values["cloudCoverage"] = so.cloud_coverage(row.cloud_coverage)
@@ -444,12 +449,30 @@ class Planner:
             elif row is not None:
                 folder = self._folder(winner)
                 take = so.scene_take(row, folder)
-            else:
+            elif winner["stat_api"]:
                 folder = None
                 take = so.no_scene_take(entity_day)
+            else:
+                folder = None  # the scene could not be resolved: say so, never claim the Statistical API
+                take = so.OpticalTake(Family.S2_INDICES, Sensing(entity_day, None), None,
+                                      "Zonal vegetation indices of the day from Sentinel-2 L2A; the scene is not identified.")
             raster = RasterMeta(folder, [(n, so._EXPLANATION[n]) for n in INDEX_NAMES if n in values]) if folder else None
             self._add(legacy_id, parcel, family, take.scene, take.sensing, values, take.description,
                       self.geometry(parcel, winner["jobs"]), raster)
+
+    def _matching_jobs(self, idx: str, rec: dict, key: Optional[str], day: date, jobs: Sequence[JobRow]) -> list:
+        """The jobs this legacy index can come from: its raster's job alone; else the day's, narrowed by value."""
+        candidates = [j for j in jobs if j.index_type == idx and not so.job_wrote_nothing(j.result)]
+        by_path = [j for j in candidates if key is not None and j.result.get("raster_path") == key]
+        if by_path:
+            return by_path  # the raster names its job: it alone decides deleted against live
+        same_day = [j for j in candidates if _day_of(j.result.get("sensing_date")) == day]
+        mean = rec["values"].get(idx)
+        if len(same_day) > 1 and isinstance(mean, (int, float)):
+            exact = [j for j in same_day if _mean6(j) == round(float(mean), 6)]
+            if exact:
+                same_day = exact
+        return same_day
 
     def _folder(self, group: dict) -> Optional[str]:
         """The raster folder when EVERY kept index resolves to the same one, else none."""
@@ -467,14 +490,21 @@ class Planner:
         url = rec["url"]
         parsed = _key_of(url)
         key = parsed[1] if parsed else None
-        matching = [j for j in jobs if j.index_type == idx and (
-            (key is not None and j.result.get("raster_path") == key) or _day_of(j.result.get("sensing_date")) == day)]
+        matching = self._matching_jobs(idx, rec, key, day, jobs)
         live = [j for j in matching if not j.deleted]
         if matching and not live:
             plan.counters["job_deleted"] += 1
             return None
         if not matching:
             plan.counters["no_job"] += 1
+        takes = {("window", _job_window(j)) if _is_composite_job(j) else ("scene", str(j.result.get("scene_id") or ""))
+                 for j in live}
+        if len(takes) > 1:
+            if any(t[0] == "window" for t in takes):
+                plan.counters["ambiguous_take"] += 1  # a composite and another take fit: never guessed
+                return None
+            plan.counters["ambiguous_scene"] += 1
+            live = []  # several scenes fit and nothing tells which: no scene, as the rule says
         in_composite_folder = bool(url) and "/composites/" in url
         in_scene_folder = bool(url) and _SCENE_FOLDER.search(url) is not None
         composite_job = next((j for j in live if _is_composite_job(j)), None)
@@ -494,18 +524,23 @@ class Planner:
         else:
             job = next((j for j in live if j.result.get("scene_id")), None)
             scene_uuid = str(job.result["scene_id"]) if job else None
+        # The Statistical API is only claimed when a live job exists and holds no scene at all.
+        stat_api = bool(live) and not in_scene_folder and all(not j.result.get("scene_id") for j in live)
         row = self.scene(scene_uuid)
         if row is not None and row.sensing_date != day:
             plan.counters["scene_day_mismatch"] += 1  # never guessed: this index goes without a scene
             row = None
         if row is None:
             plan.counters["no_scene"] += 1
-        return {"key": (Family.S2_INDICES.value, day, row.scene_id if row else None), "scene_row": row, "jobs": live}
+        return {"key": (Family.S2_INDICES.value, day, row.scene_id if row else None), "scene_row": row, "jobs": live,
+                "stat_api": stat_api and row is None}
 
     # ── radar ───────────────────────────────────────────────────────────────
 
     def _sar_scene(self, parcel: str, day: date, stored_id: Optional[str]) -> tuple:
         """(scene id or None, job rows, deleted-only flag) of the day's Sentinel-1 pass."""
+        # ASSUMPTION: the deleted-job rule (not resurrected) extends to radar: a day whose SAR jobs are all deleted is
+        # not converted, for the three radar families alike. Two distinct live passes the same day: no scene.
         sar = [j for j in self.jobs(parcel) if j.index_type in ("sar-vv", "sar-vh")
                and _day_of(j.result.get("sensing_date")) == day]
         live = [j for j in sar if not j.deleted]
@@ -662,7 +697,7 @@ def verify_tenant(tenant: str, plan: Plan, new_entities: Sequence[Mapping[str, A
             skipped[item.family.value]["other_take"] += 1
             continue
         bad = False
-        for name in sorted(n for n in item.values if n in RASTER_BASES):
+        for name in sorted(n for n in item.values if n in RASTER_BASES or n in PRIMARY_EXTRA):
             if name not in obs.values:
                 diffs.append({**label, "kind": "missing_index", "name": name})
                 bad = True
@@ -692,6 +727,8 @@ def in_nightly_window(now: datetime) -> bool:
 
 
 def _review_tenants() -> Optional[set]:
+    # ASSUMPTION: the review tenant cannot be named in public code, so the guard reads it from the environment of
+    # the deployment; ``--apply`` refuses to run when the variable is absent (an empty value is allowed).
     raw = os.environ.get(REVIEW_ENV)
     return None if raw is None else {t.strip() for t in raw.split(",") if t.strip()}
 
@@ -782,6 +819,8 @@ def main(argv=None, db=None, sources=None, client_factory: Optional[Callable] = 
                               f"converted={row['converted']} skipped={json.dumps(row['skipped'], sort_keys=True)}\n")
                 for diff in report["diffs"]:
                     out.write(f"{label} DIFF {json.dumps(diff, sort_keys=True)}\n")
+                totals = " ".join(f"{k}={v}" for k, v in sorted(report["skipped_total"].items()))
+                out.write(f"{label} verify totals {totals}\n")
                 out.write(f"{label} verify diffs={len(report['diffs'])}\n")
             else:
                 out.write(_line(label, report["mode"], plan) + "\n")

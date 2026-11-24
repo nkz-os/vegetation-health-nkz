@@ -477,3 +477,110 @@ def test_sar_with_two_passes_the_same_day_is_not_guessed(store):
     code, report, _ = run([grd], Src(jobs), ["--apply"])
     assert report["counters"]["ambiguous_scene"] == 1
     assert "productID" not in store.entities[new_id(PARCEL, "s1-backscatter")]
+
+
+# ── review round: leaks, ambiguity, honest descriptions, verify coverage, SQL rows ──
+
+def test_take_wide_values_stay_with_the_only_take_of_the_whole_entity(store):
+    comp_url = f"s3://bucket/{TENANT}/entities/{PARCEL}/composites/2026-06-01_2026-06-15/ndre.tif"
+    entity = legacy({NKZ + "ndvi": index_attr(0.6), NKZ + "ndre": prop(0.5, min=0.2, max=0.8, std=0.1, rasterUrl=comp_url),
+                     NKZ + "cloudCoverPercentage": prop(99.0), NKZ + "pixelCount": prop(40)})
+    run([entity], Src([job("ndvi"), job("ndre", scene=None, result={"is_composite": True})]), ["--apply"])
+    composite = names(store.entities[new_id(PARCEL, "s2-composite", date(2026, 6, 15))])
+    assert "cloudCoverage" not in composite and "pixelCount" not in composite  # the scene's cloud is not the composite's
+    assert names(store.entities[new_id(PARCEL, "s2-indices")])["cloudCoverage"] == "12.50"  # the scene's own
+
+
+def _stats_job(index, scene, mean, **kw):
+    return job(index, scene=scene, result={"statistics": {"mean": mean, "pixel_count": 40}}, **kw)
+
+
+def test_several_live_jobs_the_same_day_are_told_apart_by_value_never_arbitrarily(store):
+    entity = legacy({NKZ + "ndvi": index_attr(0.61, with_url=False)})
+    jobs = [_stats_job("ndvi", U_B, 0.5), _stats_job("ndvi", U_A, 0.610000004)]
+    run([entity], Src(jobs), ["--apply"])
+    assert store.entities[new_id(PARCEL, "s2-indices")]["productID"]["value"] == PID_A
+
+
+def test_a_tie_between_scenes_gives_no_scene_and_never_claims_the_statistical_api(store):
+    entity = legacy({NKZ + "ndvi": index_attr(0.61, with_url=False)})
+    code, report, _ = run([entity], Src([_stats_job("ndvi", U_A, 0.61), _stats_job("ndvi", U_B, 0.61)]), ["--apply"])
+    stored = store.entities[new_id(PARCEL, "s2-indices")]
+    assert report["counters"]["ambiguous_scene"] == 1 and "productID" not in stored
+    assert "Statistical API" not in stored["resultDescription"]["value"]
+
+
+def test_the_statistical_api_is_claimed_only_for_a_live_job_without_a_scene(store):
+    entity = legacy({NKZ + "ndvi": index_attr(0.61, with_url=False)})
+    run([entity], Src([job("ndvi", scene=None)]), ["--apply"])
+    assert "Statistical API" in store.entities[new_id(PARCEL, "s2-indices")]["resultDescription"]["value"]
+    store.entities.clear()
+    run([entity], Src([]), ["--apply"])  # no job at all: nothing says which path produced it
+    assert "Statistical API" not in store.entities[new_id(PARCEL, "s2-indices")]["resultDescription"]["value"]
+    store.entities.clear()
+    run([entity], Src([job("ndvi", scene="44444444-4444-4444-4444-444444444444")]), ["--apply"])  # scene row is gone
+    assert "Statistical API" not in store.entities[new_id(PARCEL, "s2-indices")]["resultDescription"]["value"]
+
+
+def test_a_job_that_wrote_nothing_and_a_raster_named_job_decide_correctly(store):
+    entity = legacy({NKZ + "ndvi": index_attr(0.61, scene_uuid=U_A)})
+    path = f"{TENANT}/entities/{PARCEL}/scenes/{U_A}/ndvi.tif"
+    jobs = [job("ndvi", scene=U_A, deleted=True, result={"raster_path": path}),
+            job("ndvi", scene=U_B, result={"skip_reason": "no_valid_pixels"}), job("ndvi", scene=U_B)]
+    code, report, _ = run([entity], Src(jobs), ["--apply"])
+    assert report["counters"]["job_deleted"] == 1 and store.entities == {}  # the raster's own job is deleted
+
+
+def test_verify_also_compares_the_change_flag(store):
+    entities, src = [fused()], Src([job("ndvi"), job("evi")])
+    run(entities, src, ["--apply"])
+    for item in store.entities[new_id(PARCEL, "s1-change")]["analytics"]["value"]:
+        if item["name"] == "changeFlag":
+            item["value"] = "changed"
+    code, report, text = run(entities, src, ["--verify"], client=FakeClient(TENANT, entities, list(store.entities.values())))
+    assert code == 1 and [d["name"] for d in report["diffs"]] == ["changeFlag"]
+    plain = io.StringIO()
+    bf.main(["--tenant", TENANT, "--verify"], sources=src, clock=lambda: NOON, out=plain,
+            client_factory=lambda t: FakeClient(t, entities, list(store.entities.values())))
+    assert "verify totals" in plain.getvalue() and "old=1" in plain.getvalue()
+    assert "old=" in plain.getvalue() and "DIFF" in plain.getvalue()
+
+
+class RowsDb(FlakyDb):
+    def __init__(self, rows):
+        super().__init__()
+        self.queries, self.rows, self.criteria = 99, rows, []
+
+    def query(self, *columns):
+        rows, criteria = self.rows, self.criteria
+
+        class Q(_Q):
+            def filter(self_, *crit):
+                criteria.extend(crit)
+                return self_
+        return Q(rows)
+
+
+def _postgres(criteria):
+    import sqlalchemy as sa
+    from sqlalchemy.dialects import postgresql
+    return str(sa.and_(*criteria).compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}))
+
+
+def test_sql_sources_map_rows_and_the_queries_compile_for_postgres():
+    rows = [SimpleNamespace(id=uuid.UUID(U_A), result={"index_type": "NDVI", "sensing_date": "2026-06-21"},
+                            parameters={"bounds": GEOM}, deleted_at=None, start_date=None, end_date=None),
+            SimpleNamespace(id=uuid.UUID(U_B), result={}, parameters={"index_type": "NDRE"},
+                            deleted_at=datetime(2026, 7, 1, tzinfo=timezone.utc), start_date=date(2026, 6, 1),
+                            end_date=date(2026, 6, 15))]
+    db = RowsDb(rows)
+    mapped = bf.SqlSources(db).jobs(TENANT, PARCEL)
+    assert [(j.index_type, j.deleted, j.geometry) for j in mapped] == [("ndvi", False, GEOM), ("ndre", True, None)]
+    assert mapped[1].start_date == date(2026, 6, 1)
+    sql = _postgres(db.criteria)
+    assert "vegetation_jobs.status = 'completed'" in sql and "deleted_at" not in sql  # deleted rows ARE listed
+    scene_db = RowsDb([("S2A_x", DAY, None, "12.5", json.dumps(FOOT))])
+    row = bf.SqlSources(scene_db).scene(TENANT, U_A)
+    assert (row.scene_id, row.sensing_date, row.cloud_coverage) == ("S2A_x", DAY, "12.5")
+    assert row.footprint == json.dumps(FOOT) and "vegetation_scenes.id" in _postgres(scene_db.criteria)
+    assert RowsDb([]).rows == [] and bf.SqlSources(RowsDb([])).scene(TENANT, U_A) is None
