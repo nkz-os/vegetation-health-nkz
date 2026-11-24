@@ -590,3 +590,173 @@ def test_fix1_better_scene_job_protects_the_value_it_owns():
     assert so.other_job_holds_value(FakeDb([target], [holder]), TENANT, target, target.result, "NDVI") is True
     skipped = _job(result_extra={"skip_reason": "no_valid_pixels"})
     assert so.other_job_holds_value(FakeDb([target], [skipped]), TENANT, target, target.result, "NDVI") is False
+
+
+# ── fix round 1: complete the take from the other completed jobs of the scene ──
+
+from datetime import datetime, timedelta, timezone  # noqa: E402
+import app.tasks.processing_tasks as pt  # noqa: E402
+
+B_UUID = ow.SCENE_UUID
+_T0 = datetime(2026, 6, 21, 12, 0, tzinfo=timezone.utc)
+
+
+def _stats(mean):
+    return {"mean": mean, "min": mean - 0.2, "max": mean + 0.2, "std": 0.1, "pixel_count": 40}
+
+
+def _interior(frac, mean):
+    return {"valid_fraction": frac, "valid_pixels": 30, "mask": "core", "mean": mean, "median": mean,
+            "p10": mean - 0.1, "p90": mean + 0.1}
+
+
+def _idx_job(index, mean, frac=0.9, *, scene=B_UUID, tenant=TENANT, status="completed", deleted=None,
+             minutes=0, extra=None, entity=ow.PARCEL, composite=False):
+    result = {"index_type": index, "sensing_date": ow.DAY.isoformat(), "is_composite": composite,
+              "scene_id": str(scene), "statistics": _stats(mean), "interior": _interior(frac, mean), **(extra or {})}
+    return SimpleNamespace(id=uuid.uuid4(), tenant_id=tenant, entity_id=entity, status=status, deleted_at=deleted,
+                           result=result, parameters={"index_type": index}, job_type="calculate_index",
+                           completed_at=_T0 + timedelta(minutes=minutes))
+
+
+class JobsDb:
+    def __init__(self, rows, fail=False):
+        self.rows, self.fail, self.evaluated = list(rows), fail, 0
+
+    def query(self, model):
+        self.evaluated += 1
+        if self.fail:
+            raise RuntimeError("db down")
+        return _Q(lambda: None, lambda: list(self.rows))
+
+
+def _publish(db, index, mean, frac, *, pid=PID_B, scene_uuid=B_UUID):
+    scene = ow._scene(pid=pid, scene_uuid=scene_uuid)
+    job = SimpleNamespace(id=uuid.uuid4(), entity_id=ow.PARCEL)
+    stats = _stats(mean)
+    folder = f"{TENANT}/entities/{ow.PARCEL}/scenes/{scene_uuid}/{index.lower()}.tif"
+    return pt._publish_satimg_parcel(
+        TENANT, job, index, stats, scene, window=None, raster_url=f"s3://bucket/{folder}",
+        interior=_interior(frac, mean), parcel_cloud_fraction=None, geometry=ow.GEOM, lost_day=False, db=db)
+
+
+def _means(store):
+    v = _vals(store)
+    return {n: v[n] for n in v if n in ("ndvi", "ndre", "ndmi", "evi")}
+
+
+def test_fix1_reference_arriving_last_ends_with_all_of_bs_indices_and_none_of_as(store):
+    ow._write_scene(PID_A, "NDVI", 0.6, 0.80)
+    ow._write_scene(PID_A, "NDRE", 0.5, 0.84)
+    ow._write_scene(PID_A, "NDMI", 0.4, 0.84)
+    db = JobsDb([_idx_job("NDRE", 0.55, 0.85), _idx_job("NDMI", 0.45, 0.85)])
+    assert _publish(db, "NDRE", 0.55, 0.85) is None  # skip (not the reference index)
+    zone = _publish(db, "NDVI", 0.7, 0.90)
+    assert zone is not None and zone.parcel_verdict == so.REPLACE
+    entity = store.entities[PARCEL_ID]
+    assert entity["productID"]["value"] == PID_B
+    assert _means(store) == {"ndvi": "0.700000", "ndre": "0.550000", "ndmi": "0.450000"}
+    assert _vals(store)["ndre.interiorValidFraction"] == "0.8500"
+
+
+def test_fix1_failed_previous_write_is_healed_by_the_next_index(store):
+    ow._write_scene(PID_B, "NDVI", 0.7, 0.9)  # B's NDRE write failed earlier: only NDVI is stored
+    db = JobsDb([_idx_job("NDRE", 0.55, 0.85), _idx_job("NDVI", 0.7, 0.9)])
+    assert _publish(db, "EVI", 0.35, 0.9).parcel_verdict == so.MERGE
+    assert _means(store) == {"ndvi": "0.700000", "ndre": "0.550000", "evi": "0.350000"}
+
+
+def test_fix1_index_added_to_an_old_scene_without_entity_creates_it_whole(store):
+    db = JobsDb([_idx_job("NDVI", 0.7), _idx_job("NDRE", 0.55)])
+    assert _publish(db, "EVI", 0.35, 0.9).parcel_verdict == so.CREATE
+    assert _means(store) == {"ndvi": "0.700000", "ndre": "0.550000", "evi": "0.350000"}
+
+
+@pytest.mark.parametrize("row", [
+    dict(deleted=_T0), dict(status="failed"), dict(tenant="other"), dict(scene=uuid.uuid4()),
+    dict(entity="urn:ngsi-ld:AgriParcel:parcel-2"), dict(extra={"skipped": True}),
+    dict(extra={"skip_reason": "no_valid_pixels"}), dict(composite=True), dict(extra={"is_custom": True}),
+    dict(index="CUSTOM"), dict(index="VRA_ZONES"),
+])
+def test_fix1_rows_that_are_not_this_scenes_completed_jobs_are_not_used(store, row):
+    row = dict(row)
+    index = row.pop("index", "NDRE")
+    db = JobsDb([_idx_job(index, 0.55, **row)])
+    _publish(db, "NDVI", 0.7, 0.9)
+    assert _means(store) == {"ndvi": "0.700000"}
+
+
+def test_fix1_better_scene_job_counts_and_latest_of_an_index_wins(store):
+    db = JobsDb([_idx_job("NDRE", 0.50, minutes=0), _idx_job("NDRE", 0.55, minutes=5),
+                 _idx_job("NDMI", 0.45, extra={"skip_reason": "better_scene_same_date"})])
+    _publish(db, "NDVI", 0.7, 0.9)
+    assert _means(store) == {"ndvi": "0.700000", "ndre": "0.550000", "ndmi": "0.450000"}
+
+
+def test_fix1_take_wide_values_do_not_come_from_jobs(store):
+    row = _idx_job("NDRE", 0.55)
+    row.result["statistics"]["pixel_count"] = 999
+    row.result["interior"]["valid_fraction"] = 0.99
+    _publish(JobsDb([row]), "NDVI", 0.7, 0.9)
+    v = _vals(store)
+    assert v["pixelCount"] == "40" and v["ndre.interiorValidFraction"] == "0.9900"
+    assert "validPixelFraction" not in v and "parcelCloudFraction" not in v
+
+
+def test_fix1_stored_value_is_never_overwritten_by_a_job(store):
+    ow._write_scene(PID_B, "NDRE", 0.52, 0.8)  # same take, stored by an earlier write
+    _publish(JobsDb([_idx_job("NDRE", 0.55, 0.9)]), "NDVI", 0.7, 0.9)
+    v = _vals(store)
+    assert v["ndre"] == "0.520000" and v["ndre.interiorValidFraction"] == "0.8000"
+
+
+def test_fix1_complete_is_not_evaluated_on_skip_or_switch_off(store, monkeypatch):
+    ow._write_scene(PID_A, "NDVI", 0.6, 0.9)
+    db = JobsDb([_idx_job("NDRE", 0.55)])
+    assert _publish(db, "NDVI", 0.5, 0.5) is None  # worse reference: skip
+    assert _publish(db, "NDRE", 0.5, 0.99) is None  # non-reference: skip
+    assert db.evaluated == 0
+    monkeypatch.setenv("EO_SATIMG_WRITE_TENANTS", "")
+    _publish(db, "NDVI", 0.9, 0.99)
+    assert db.evaluated == 0
+
+
+def test_fix1_query_failure_warns_and_writes_without_it(store, caplog):
+    with caplog.at_level(logging.WARNING):
+        zone = _publish(JobsDb([], fail=True), "NDVI", 0.7, 0.9)
+    assert zone.parcel_verdict == so.CREATE and _means(store) == {"ndvi": "0.700000"}
+    assert any("not completed from the jobs" in r.getMessage() for r in caplog.records)
+
+
+def test_fix1_composite_is_left_as_it_was(store):
+    db = JobsDb([_idx_job("NDRE", 0.55)])
+    job = SimpleNamespace(id=uuid.uuid4(), entity_id=ow.PARCEL)
+    scene = ow._scene(pid=PID_B, scene_uuid=B_UUID)
+    pt._publish_satimg_parcel(TENANT, job, "NDVI", _stats(0.7), scene, window=("2026-06-01", "2026-06-21"),
+                              raster_url="s3://bucket/x/composites/w/ndvi.tif", interior=None,
+                              parcel_cloud_fraction=None, geometry=ow.GEOM, lost_day=False, db=db)
+    assert db.evaluated == 0
+
+
+def test_fix1_owner_query_sql_is_compilable(store):
+    from sqlalchemy.dialects import postgresql
+    seen = []
+
+    class Db:
+        def query(self, model):
+            class Q:
+                def filter(self, *c):
+                    seen.extend(str(x.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}))
+                                for x in c)
+                    return self
+
+                def order_by(self, *c):
+                    return self
+
+                def all(self):
+                    return []
+            return Q()
+
+    so.completing_analytics(Db(), TENANT, SimpleNamespace(id=uuid.uuid4(), entity_id=ow.PARCEL), B_UUID, "NDVI")
+    text = " ".join(seen)
+    assert "tenant_id" in text and "completed" in text and "deleted_at IS NULL" in text and str(B_UUID) in text
