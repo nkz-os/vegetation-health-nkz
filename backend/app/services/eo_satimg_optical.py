@@ -258,6 +258,11 @@ def _stored_fraction(values: Mapping[str, Any], idx: str) -> Optional[float]:
     return float(max(others)) if others else None
 
 
+def _reference_index(values: Mapping[str, Any], default: str) -> str:
+    """First of INDEX_NAMES the stored entity holds: the only index allowed to displace it."""
+    return next((n for n in INDEX_NAMES if n in values), default)
+
+
 def _verdict(raw, obs, take: OpticalTake, idx: str, fraction: Optional[float], follow: Optional[str]) -> str:
     if raw is None:
         return CREATE
@@ -272,6 +277,8 @@ def _verdict(raw, obs, take: OpticalTake, idx: str, fraction: Optional[float], f
         return REPLACE
     if take.scene is None:
         return SKIP  # the Statistical API never displaces a scene
+    if idx != _reference_index(obs.values, idx):
+        return SKIP  # only the reference index of a take may displace another product's entity
     if obs.product_id is None:
         return REPLACE  # a scene over the Statistical API
     stored = _stored_fraction(obs.values, idx)
@@ -332,6 +339,10 @@ def write_optical(tenant: str, target: Target, take: OpticalTake, analytics: Map
         raster = None
         if folder:
             raster = RasterMeta(folder, [(n, _EXPLANATION[n]) for n in INDEX_NAMES if n in values])
+        if verdict == REPLACE and obs is not None:
+            dropped = [n for n in INDEX_NAMES if n in obs.values and n not in values]
+            if dropped:
+                logger.info("eo_satimg: %s replaced another take, indices dropped: %s", context, ", ".join(dropped))
         entity = build_entity(
             tenant=tenant, target=target, family=take.family, sensing=sensing, analytics=values,
             scene=take.scene, raster=raster,

@@ -501,7 +501,7 @@ def test_composite_job_delete_targets_window_end():
 def test_written_entities_parse_with_sdk_without_warnings(store, caplog):
     _calc()
     _calc(composite=True)
-    _write_scene(PID_A, "EVI", 0.4, 0.8)
+    _write_scene(PID_B, "EVI", 0.4, 0.8)
     so.write_optical(TENANT, so.zone_target(PARCEL, ZONE, GEOM), so.scene_take(_scene()),
                      {**so.index_analytics("NDVI", STATS), "pixelCount": 40, "validPixelFraction": 0.7},
                      index_type="NDVI", follow=so.CREATE)
