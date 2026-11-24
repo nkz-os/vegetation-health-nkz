@@ -584,3 +584,49 @@ def test_sql_sources_map_rows_and_the_queries_compile_for_postgres():
     assert (row.scene_id, row.sensing_date, row.cloud_coverage) == ("S2A_x", DAY, "12.5")
     assert row.footprint == json.dumps(FOOT) and "vegetation_scenes.id" in _postgres(scene_db.criteria)
     assert RowsDb([]).rows == [] and bf.SqlSources(RowsDb([])).scene(TENANT, U_A) is None
+
+
+# ── fix round 1, item 1: verify compares every name, lists other takes, reports unplanned ──
+
+def _applied(entities=None, jobs=None):
+    entities = entities or [optical()]
+    src = Src(jobs or [job("ndvi"), job("evi")])
+    return entities, src
+
+
+def _verify(entities, src, store, extra=(), args=()):
+    return run(entities, src, ["--verify", *args], client=FakeClient(TENANT, entities, [*store.entities.values(), *extra]))
+
+
+def test_verify_fails_on_a_missing_statistic_and_a_different_cloud_cover(store):
+    entities, src = _applied()
+    run(entities, src, ["--apply"])
+    stored = store.entities[new_id(PARCEL, "s2-indices")]
+    stored["analytics"]["value"] = [i for i in stored["analytics"]["value"] if i["name"] != "ndvi.min"]
+    for i in stored["analytics"]["value"]:
+        if i["name"] == "cloudCoverage":
+            i["value"] = "55.00"
+    code, report, _ = _verify(entities, src, store)
+    assert code == 1
+    assert {(d["kind"], d["name"]) for d in report["diffs"]} == {("missing_value", "ndvi.min"), ("value_differs", "cloudCoverage")}
+
+
+def test_verify_lists_a_wrong_scene_with_expected_and_found_and_accepts_it_only_on_request(store):
+    entities, src = _applied()
+    run(entities, src, ["--apply"])
+    store.entities[new_id(PARCEL, "s2-indices")]["productID"]["value"] = PID_B
+    code, report, _ = _verify(entities, src, store)
+    other = [d for d in report["diffs"] if d["kind"] == "other_take"]
+    assert code == 1 and other[0]["expected"] == PID_A and other[0]["found"] == PID_B
+    code, report, _ = _verify(entities, src, store, args=["--accept-other-take"])
+    assert code == 0 and report["families"]["s2-indices"]["skipped"]["other_take"] == 1
+
+
+def test_verify_counts_unplanned_entities_without_failing(store):
+    entities, src = _applied()
+    run(entities, src, ["--apply"])
+    extra = copy.deepcopy(store.entities[new_id(PARCEL, "s2-indices")])
+    extra["id"] = new_id(PARCEL, "s2-indices", date(2026, 7, 1))
+    extra["sensingDate"]["value"] = "2026-07-01"
+    code, report, _ = _verify(entities, src, store, extra=[extra])
+    assert code == 0 and len(report["unplanned"]) == 1 and report["unplanned"][0]["day"] == "2026-07-01"

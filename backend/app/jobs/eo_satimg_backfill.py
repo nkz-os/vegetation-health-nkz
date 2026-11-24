@@ -676,7 +676,7 @@ def execute(tenant: str, plan: Plan, apply: bool, guard: Callable[[], None]) -> 
 # ── verify ──────────────────────────────────────────────────────────────────
 
 
-def verify_tenant(tenant: str, plan: Plan, new_entities: Sequence[Mapping[str, Any]]) -> dict:
+def verify_tenant(tenant: str, plan: Plan, new_entities: Sequence[Mapping[str, Any]], accept_other_take: bool = False) -> dict:
     """Old against new per family, and per parcel-day the index names and values at the contract's decimals."""
     raw_by_id = {str(e.get("id")): e for e in new_entities}
     new = {}
@@ -685,7 +685,7 @@ def verify_tenant(tenant: str, plan: Plan, new_entities: Sequence[Mapping[str, A
         if obs.shape == "sdm" and obs.target == "parcel":
             new[(obs.parcel_id, obs.family, obs.sensing_day)] = obs
             per_family_new[obs.family] += 1
-    diffs, matched = [], Counter()
+    diffs, matched, planned = [], Counter(), set()
     skipped: dict = defaultdict(Counter)
     for item in plan.items:
         obs = new.get((item.parcel, item.family.value, item.day))
@@ -693,13 +693,19 @@ def verify_tenant(tenant: str, plan: Plan, new_entities: Sequence[Mapping[str, A
         if obs is None:
             diffs.append({**label, "kind": "missing_entity"})
             continue
+        planned.add((item.parcel, item.family.value, item.day))
         if not _same_take(raw_by_id[obs.entity_id], obs, item):
             skipped[item.family.value]["other_take"] += 1
+            if not accept_other_take:
+                composite = item.family is Family.S2_COMPOSITE
+                diffs.append({**label, "kind": "other_take",
+                              "expected": item.description if composite else (item.scene.product_id if item.scene else None),
+                              "found": so._description(raw_by_id[obs.entity_id]) if composite else obs.product_id})
             continue
         bad = False
-        for name in sorted(n for n in item.values if n in RASTER_BASES or n in PRIMARY_EXTRA):
+        for name in sorted(item.values):  # EVERY name: statistics, interior, counts and quality values too
             if name not in obs.values:
-                diffs.append({**label, "kind": "missing_index", "name": name})
+                diffs.append({**label, "kind": "missing_index" if name in RASTER_BASES else "missing_value", "name": name})
                 bad = True
             elif format_value(name, item.values[name]) != format_value(name, obs.values[name]):
                 diffs.append({**label, "kind": "value_differs", "name": name, "old": format_value(name, item.values[name]),
@@ -715,7 +721,9 @@ def verify_tenant(tenant: str, plan: Plan, new_entities: Sequence[Mapping[str, A
             reasons["unconvertible"] = counts["unconvertible"]
         families[family] = {"old": counts.get("old", 0), "new": per_family_new.get(family, 0),
                             "converted": matched.get(family, 0), "skipped": dict(reasons)}
-    return {"families": families, "skipped_total": dict(plan.counters), "diffs": diffs}
+    unplanned = [{"entity": _anon(o.entity_id, tenant), "family": k[1], "day": k[2].isoformat()}
+                 for k, o in sorted(new.items(), key=lambda kv: kv[1].entity_id) if k not in planned]
+    return {"families": families, "skipped_total": dict(plan.counters), "diffs": diffs, "unplanned": unplanned}
 
 
 # ── command line ────────────────────────────────────────────────────────────
@@ -748,6 +756,8 @@ def main(argv=None, db=None, sources=None, client_factory: Optional[Callable] = 
     parser.add_argument("--tenant", action="append", required=True, help="a tenant (repeatable; no discovery)")
     parser.add_argument("--apply", action="store_true", help="write (default: dry run)")
     parser.add_argument("--verify", action="store_true", help="compare old and new per tenant and family")
+    parser.add_argument("--accept-other-take", action="store_true",
+                        help="--verify: an entity holding another take is a counted reason, not a failure")
     parser.add_argument("--allow-review", action="store_true", help="allow a tenant listed in " + REVIEW_ENV)
     parser.add_argument("--json", action="store_true", help="one JSON object per tenant instead of text")
     args = parser.parse_args(argv)
@@ -792,7 +802,7 @@ def main(argv=None, db=None, sources=None, client_factory: Optional[Callable] = 
                 plan = plan_tenant(tenant, read_all(client, EOPRODUCT_TYPE), sources)
                 report: dict = {"tenant": label, "mode": "apply" if args.apply else "verify" if args.verify else "dry-run"}
                 if args.verify:
-                    result = verify_tenant(tenant, plan, read_all(client, EOSATIMG_TYPE))
+                    result = verify_tenant(tenant, plan, read_all(client, EOSATIMG_TYPE), args.accept_other_take)
                     report.update(result)
                     if result["diffs"] or plan.counters.get("errors"):
                         code = max(code, EXIT_ERRORS)
@@ -821,6 +831,9 @@ def main(argv=None, db=None, sources=None, client_factory: Optional[Callable] = 
                     out.write(f"{label} DIFF {json.dumps(diff, sort_keys=True)}\n")
                 totals = " ".join(f"{k}={v}" for k, v in sorted(report["skipped_total"].items()))
                 out.write(f"{label} verify totals {totals}\n")
+                out.write(f"{label} verify unplanned={len(report['unplanned'])}\n")
+                for entry in report["unplanned"]:
+                    out.write(f"{label} UNPLANNED {json.dumps(entry, sort_keys=True)}\n")
                 out.write(f"{label} verify diffs={len(report['diffs'])}\n")
             else:
                 out.write(_line(label, report["mode"], plan) + "\n")
