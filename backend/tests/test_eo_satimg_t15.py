@@ -508,3 +508,67 @@ def test_radar_zone_follows_a_winning_parcel_and_is_written_after_it(rstore):
     ids = [u["id"] for u in rstore.upserts]
     assert ids.index(sl.BS_ID) < ids.index(ZONE_ID)
     assert sl._prop(rstore.entities[ZONE_ID], "productID") == sl.S1_A  # follows the parcel, not its own count
+
+
+# ── LST: larger coverage, then the most recent ──────────────────────────────
+
+def _lst_stats(n):
+    return {"mean": 30.0, "min": 29.0, "max": 31.0, "std": 0.5, "pixel_count": n}
+
+
+def _clms(hour, suffix=None, date_only=False):
+    when = "2026-06-20" if date_only else f"2026-06-20T{hour:02d}:00:00Z"
+    return rl.clms_take({"id": f"{sl.CLMS_ID}-{suffix or hour}", "geometry": sl.FOOT, "properties": {"datetime": when}})
+
+
+def _cl(store):
+    return store.entities[sl.CL_ID]
+
+
+def test_clms_equal_coverage_latest_hour_wins_in_both_arrival_orders(rstore):
+    target = rl.parcel_target(sl.PARCEL, sl.GEOM)
+    assert rl.write_lst(TENANT, target, _clms(11), _lst_stats(1)) == rl.CREATE
+    assert rl.write_lst(TENANT, target, _clms(12), _lst_stats(1)) == rl.REPLACE
+    assert sl._prop(_cl(rstore), "sensingDate") == "2026-06-20T12:00:00Z"
+    assert sl._prop(_cl(rstore), "productID").endswith("-12")
+    rstore.entities.clear()
+    assert rl.write_lst(TENANT, target, _clms(12), _lst_stats(1)) == rl.CREATE
+    assert rl.write_lst(TENANT, target, _clms(11), _lst_stats(1)) == rl.SKIP
+    assert sl._prop(_cl(rstore), "sensingDate") == "2026-06-20T12:00:00Z"
+    assert sl._prop(_cl(rstore), "productID").endswith("-12")
+
+
+def test_lst_larger_coverage_beats_a_later_hour(rstore):
+    target = rl.parcel_target(sl.PARCEL, sl.GEOM)
+    rl.write_lst(TENANT, target, _clms(12), _lst_stats(1))
+    assert rl.write_lst(TENANT, target, _clms(9), _lst_stats(2)) == rl.REPLACE
+    assert sl._prop(_cl(rstore), "sensingDate") == "2026-06-20T09:00:00Z"
+    assert rl.write_lst(TENANT, target, _clms(15), _lst_stats(1)) == rl.SKIP
+
+
+def test_lst_tie_without_time_never_displaces_one_with_time(rstore):
+    target = rl.parcel_target(sl.PARCEL, sl.GEOM)
+    rl.write_lst(TENANT, target, _clms(11), _lst_stats(1))
+    assert rl.write_lst(TENANT, target, _clms(0, "notime", date_only=True), _lst_stats(1)) == rl.SKIP
+    assert sl._prop(_cl(rstore), "sensingDate") == "2026-06-20T11:00:00Z"
+    rstore.entities.clear()
+    rl.write_lst(TENANT, target, _clms(0, "notime", date_only=True), _lst_stats(1))
+    assert sl._prop(_cl(rstore), "sensingDate") == "2026-06-20"
+    assert rl.write_lst(TENANT, target, _clms(0, "other", date_only=True), _lst_stats(1)) == rl.SKIP  # both untimed
+    assert rl.write_lst(TENANT, target, _clms(8), _lst_stats(1)) == rl.REPLACE  # a time over none
+
+
+def test_landsat_lst_uses_the_same_rule(rstore):
+    target = rl.parcel_target(sl.PARCEL, sl.GEOM)
+    item = lambda pid, t: rl.landsat_take({"id": pid, "geometry": sl.FOOT,  # noqa: E731
+                                           "properties": {"datetime": f"2026-06-20T{t}Z", "platform": "landsat-9"}})
+    assert rl.write_lst(TENANT, target, item(sl.LANDSAT_ID, "10:50:12"), _lst_stats(4)) == rl.CREATE
+    assert rl.write_lst(TENANT, target, item("LC08_L2SP_200031_20260620_20260621_02_T1_ST", "10:51:00"),
+                        _lst_stats(4)) == rl.REPLACE
+    assert rl.write_lst(TENANT, target, item(sl.LANDSAT_ID, "10:50:12"), _lst_stats(4)) == rl.SKIP
+
+
+def test_radar_tie_still_keeps_the_stored_take(rstore):
+    a, b, target = _takes()  # b is the later pass
+    rl.write_backscatter(TENANT, target, a, _bs(40, 0.8))
+    assert rl.write_backscatter(TENANT, target, b, _bs(40, 0.8)) == rl.SKIP

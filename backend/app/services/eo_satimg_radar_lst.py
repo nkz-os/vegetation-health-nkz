@@ -13,7 +13,7 @@ replaces it), so each call reads the stored entity through the SDK reader and de
   ``pixelCount``, then the most recent; for ``s1-change``, the take whose
   backscatter won): the whole list and the product attributes are rewritten, then the optional
   attributes only the losing take had are pruned (upsert first, prune afterwards).
-- ``skip``: another take that loses (smaller or equal ``pixelCount``: a tie keeps the stored one).
+- ``skip``: another take that loses (radar: a tie keeps the stored one; LST: a tie goes to the latest ``sensingDate``).
 
 No raster is declared (``localServerPath`` / ``contentInformation``): the stored SAR COG names do not
 follow the contract's ``{name}.tif`` rule. Read-modify-write is not atomic: correct while one worker
@@ -247,6 +247,29 @@ def _by_coverage(raw, obs, product_id: str, fresh: Mapping[str, Any]) -> str:
     return REPLACE if fresh["pixelCount"] > stored else SKIP
 
 
+def _lst_decider(sensing: Sensing) -> Decide:
+    """Surface temperature: the larger ``pixelCount`` wins; on equal coverage the most recent ``sensingDate``
+    (time included). A take without a time never displaces one with a time on a tie; a full tie keeps the stored."""
+    def decide(raw, obs, product_id: str, fresh: Mapping[str, Any]) -> str:
+        if raw is None:
+            return CREATE
+        if obs is None:
+            return REPLACE
+        if obs.product_id == product_id:
+            return MERGE
+        stored = _number(obs.values.get("pixelCount"))
+        if stored is None:
+            return REPLACE
+        if fresh["pixelCount"] != stored:
+            return REPLACE if fresh["pixelCount"] > stored else SKIP
+        if sensing.time_utc is None:
+            return SKIP
+        if obs.sensing_time is None:
+            return REPLACE
+        return REPLACE if sensing.time_utc > obs.sensing_time else SKIP
+    return decide
+
+
 def _follows_backscatter(raw, obs, product_id: str, fresh: Mapping[str, Any]) -> str:
     """The change entity of a take whose backscatter won the day: it is the day's state, so another take goes."""
     if raw is None:
@@ -387,4 +410,4 @@ def write_lst(tenant: str, target: Target, take: LstTake, stats: Mapping[str, An
         "pixelCount": stats.get("pixel_count"),
     }
     return _write(tenant, target, take.family, take.sensing, take.scene, analytics, take.description,
-                  _by_coverage)
+                  _lst_decider(take.sensing))

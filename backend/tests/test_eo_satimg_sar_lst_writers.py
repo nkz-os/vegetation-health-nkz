@@ -755,7 +755,7 @@ def test_merge_keeps_the_smaller_coverage_when_a_stored_polarisation_is_kept(sto
     assert _analytics(store.entities[BS_ID])["pixelCount"] == "60"
 
 
-def test_landsat_replacement_parses_and_clms_tie_keeps_the_stored(store, rl):
+def test_landsat_replacement_parses_and_clms_tie_goes_to_the_latest_hour(store, rl):
     target = rl.parcel_target(PARCEL, GEOM)
     item_a = {"id": LANDSAT_ID, "geometry": FOOT, "properties": {"datetime": "2026-06-20T10:50:12Z",
                                                                  "platform": "landsat-9"}}
@@ -769,5 +769,6 @@ def test_landsat_replacement_parses_and_clms_tie_keeps_the_stored(store, rl):
     c1 = {"id": CLMS_ID, "geometry": FOOT, "properties": {"datetime": "2026-06-20T11:00:00Z"}}
     c2 = {"id": CLMS_ID + "-b", "geometry": FOOT, "properties": {"datetime": "2026-06-20T12:00:00Z"}}
     assert rl.write_lst(TENANT, target, rl.clms_take(c1), stats(2)) == rl.CREATE
-    assert rl.write_lst(TENANT, target, rl.clms_take(c2), stats(2)) == rl.SKIP
-    assert _prop(store.entities[CL_ID], "productID") == CLMS_ID
+    assert rl.write_lst(TENANT, target, rl.clms_take(c2), stats(2)) == rl.REPLACE  # equal coverage: the latest hour
+    assert _prop(store.entities[CL_ID], "productID") == CLMS_ID + "-b"
+    assert _prop(store.entities[CL_ID], "sensingDate") == "2026-06-20T12:00:00Z"
