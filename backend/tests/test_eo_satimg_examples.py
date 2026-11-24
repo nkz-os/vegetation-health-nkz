@@ -114,7 +114,10 @@ def build_examples() -> dict:
         "VV": {"mean": -11.2, "pixel_count": 900, "valid_fraction": 0.98},
         "VH": {"mean": -17.5, "pixel_count": 880, "valid_fraction": 0.97},
     })
-    bs_zone = rad._backscatter_analytics({"VV": {"mean": -10.8, "pixel_count": 60, "valid_fraction": 0.95}})
+    bs_zone = rad._backscatter_analytics({  # a zone is written only with both polarisations
+        "VV": {"mean": -10.8, "pixel_count": 60, "valid_fraction": 0.95},
+        "VH": {"mean": -17.1, "pixel_count": 60, "valid_fraction": 0.95},
+    })
     sm = {"soilMoistureIndex": 0.29, "soilMoistureIndex.min": 0.1, "soilMoistureIndex.max": 0.45,
           "soilMoistureIndex.std": 0.06, "pixelCount": 900}
     change = {"changeFlag": "harvest", "changeConfidence": 0.8, "deltaVV": -2.1}
@@ -124,7 +127,7 @@ def build_examples() -> dict:
         "properties": {"datetime": "2026-11-12T10:56:21Z", "platform": "landsat-9"},
     })
     clms = rad.clms_take({
-        "id": CLMS_ID, "geometry": SCENE_GEOM, "properties": {"datetime": "2026-11-12T07:00:00Z"},
+        "id": CLMS_ID, "geometry": SCENE_GEOM, "properties": {"datetime": "2026-11-12T07:00:00.000000Z", "product:type": "land_surface_temperature"},
     })
     lst = {"lst": 21.4, "lst.min": 19.0, "lst.max": 23.5, "lst.std": 1.2, "pixelCount": 40}
 

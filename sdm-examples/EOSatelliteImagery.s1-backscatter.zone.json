@@ -21,6 +21,10 @@
     "type": "Property",
     "value": [
       {
+        "name": "backscatterVH",
+        "value": "-17.1000"
+      },
+      {
         "name": "backscatterVV",
         "value": "-10.8000"
       },

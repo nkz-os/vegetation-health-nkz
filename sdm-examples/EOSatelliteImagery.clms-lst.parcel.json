@@ -84,6 +84,10 @@
     "type": "Property",
     "value": "https://catalogue.dataspace.copernicus.eu/stac/collections/clms_lst_global_3km_hourly_v3_cog/items/c_gls_LST_202611120700_GLOBE_GEO_V3.0.1_cog"
   },
+  "productType": {
+    "type": "Property",
+    "value": "land_surface_temperature"
+  },
   "productBbox": {
     "type": "GeoProperty",
     "value": {
