@@ -240,7 +240,28 @@ def _job(index="NDVI", tenant=TENANT, status="completed", deleted=None, result_e
                            crop_season_id=None, celery_task_id=None, deleted=None)
 
 
-class FakeDb:
+class _Savepoints:
+    """Session double: records every savepoint and whether an error went through it."""
+
+    savepoints = 0
+    rolled_back = 0
+
+    def begin_nested(self):
+        import contextlib
+        db = self
+
+        @contextlib.contextmanager
+        def nested():
+            db.savepoints += 1
+            try:
+                yield
+            except Exception:
+                db.rolled_back += 1
+                raise
+        return nested()
+
+
+class FakeDb(_Savepoints):
     """first() walks ``targets`` (the jobs being deleted); all() answers the owners query with ``others``."""
 
     def __init__(self, targets, others):
@@ -394,7 +415,7 @@ def test_i3_owner_query_compiles_for_postgres():
     from sqlalchemy.dialects import postgresql
     seen = []
 
-    class Db:
+    class Db(_Savepoints):
         def query(self, model):
             class Q:
                 def filter(self, *clauses):
@@ -619,7 +640,7 @@ def _idx_job(index, mean, frac=0.9, *, scene=B_UUID, tenant=TENANT, status="comp
                            completed_at=_T0 + timedelta(minutes=minutes))
 
 
-class JobsDb:
+class JobsDb(_Savepoints):
     def __init__(self, rows, fail=False):
         self.rows, self.fail, self.evaluated = list(rows), fail, 0
 
@@ -742,7 +763,7 @@ def test_fix1_owner_query_sql_is_compilable(store):
     from sqlalchemy.dialects import postgresql
     seen = []
 
-    class Db:
+    class Db(_Savepoints):
         def query(self, model):
             class Q:
                 def filter(self, *c):
@@ -798,3 +819,30 @@ def test_fix1_reader_returns_the_day_when_the_reference_index_arrives_last(store
     _publish(db, "NDVI", 0.7, 0.90)
     obs = _read_day(store)
     assert obs.product_id == PID_B and obs.values["ndvi"] == 0.7 and obs.values["ndre"] == 0.55
+
+
+# ── controller: a failed query must not poison the job's session; no index is half filled ──
+
+def test_fix2_failed_completion_query_is_rolled_back_to_its_savepoint(store):
+    db = JobsDb([], fail=True)
+    _publish(db, "NDVI", 0.7, 0.9)
+    assert (db.savepoints, db.rolled_back) == (1, 1)
+    assert _means(store) == {"ndvi": "0.700000"}
+
+
+def test_fix2_failed_owner_and_scene_queries_are_rolled_back_to_their_savepoints():
+    target = _job()
+    db = JobsDb([], fail=True)
+    assert so.other_job_holds_value(db, TENANT, target, target.result, "NDVI") is True
+    so.with_scene_product(db, TENANT, {"scene_id": str(B_UUID)})
+    assert (db.savepoints, db.rolled_back) == (2, 2)
+
+
+def test_fix2_jobs_never_fill_part_of_an_index_that_is_already_stored(store):
+    so.write_optical(TENANT, so.parcel_target(ow.PARCEL, ow.GEOM), so.scene_take(ow._scene(pid=PID_B, scene_uuid=B_UUID)),
+                     {"ndvi": 0.7, "pixelCount": 40}, index_type="NDVI")  # no interior: deliberately without it
+    _publish(JobsDb([_idx_job("NDVI", 0.1), _idx_job("NDRE", 0.55)]), "EVI", 0.35, 0.9)
+    values = _vals(store)
+    assert not [n for n in values if n.startswith("ndvi.")]
+    assert _means(store) == {"ndvi": "0.700000", "ndre": "0.550000", "evi": "0.350000"}
+    assert values["ndre.interiorValidFraction"] == "0.9000"

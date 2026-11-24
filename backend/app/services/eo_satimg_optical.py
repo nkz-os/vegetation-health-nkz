@@ -312,7 +312,7 @@ def write_optical(tenant: str, target: Target, take: OpticalTake, analytics: Map
     that finds no valid interior must not leave the old mean/median/percentiles beside fraction 0);
     ``fill_missing`` completes the same take with the names it lacks and never overwrites a stored one;
     ``complete`` (evaluated only when an entity is going to be written) gives the analytics of the take's other
-    completed jobs: fresh > stored (same take) > jobs, so a stored value is never overwritten by a job.
+    completed jobs: only indices the entity does not hold yet are taken, whole, so a stored one never changes.
     """
     if not fi.satimg_enabled(tenant):
         return None
@@ -332,15 +332,15 @@ def write_optical(tenant: str, target: Target, take: OpticalTake, analytics: Map
             logger.info("eo_satimg: %s %s not written, another take wins the day", context, idx)
             return SKIP
         merging = verdict == MERGE
-        values = {}
+        values = dict(obs.values) if merging else {}
         if complete is not None:
             try:
-                values = {k: v for k, v in complete().items() if _present(v) and k not in fresh}
+                # Whole indices only: one already stored keeps exactly the statistics it was written with.
+                held = {n for n in INDEX_NAMES if n in values} | {idx}
+                values.update({k: v for k, v in complete().items()
+                               if _present(v) and k.split(".", 1)[0] not in held})
             except Exception as exc:
                 logger.warning("eo_satimg: %s take not completed from the jobs, written without: %s", context, exc)
-                values = {}
-        if merging:
-            values.update(obs.values)
         if merging and replace_interior:
             values = {n: v for n, v in values.items() if not n.startswith(f"{idx}.interior")}
         if merging and fill_missing:
@@ -437,10 +437,11 @@ def with_scene_product(db, tenant_id: str, result: Optional[Mapping[str, Any]]) 
 
         from app.models import VegetationScene
 
-        row = db.query(VegetationScene).filter(
-            VegetationScene.tenant_id == tenant_id,
-            VegetationScene.id == uuid.UUID(str(out["scene_id"])),
-        ).first()
+        with db.begin_nested():  # a failed query must not leave the caller's session unusable
+            row = db.query(VegetationScene).filter(
+                VegetationScene.tenant_id == tenant_id,
+                VegetationScene.id == uuid.UUID(str(out["scene_id"])),
+            ).first()
         if row is not None and isinstance(row.scene_id, str) and row.scene_id:
             out["scene_product_id"] = row.scene_id
     except Exception as exc:
@@ -584,18 +585,20 @@ def other_job_holds_value(db, tenant_id: str, job, result: Mapping[str, Any], in
         if key is None:
             return False
         skip = {str(i) for i in exclude_ids} | {str(job.id)}
-        query = db.query(VegetationJob).filter(
-            VegetationJob.tenant_id == tenant_id,
-            VegetationJob.entity_id == job.entity_id,
-            VegetationJob.status == "completed",
-            VegetationJob.deleted_at.is_(None),
-        )
-        if key[0] == "composite":
-            query = query.filter(VegetationJob.result["date_range"]["end"].astext == key[2])
-        else:
-            query = query.filter(VegetationJob.result["sensing_date"].astext == key[1])
+        with db.begin_nested():  # a failed query must not leave the caller's session unusable
+            query = db.query(VegetationJob).filter(
+                VegetationJob.tenant_id == tenant_id,
+                VegetationJob.entity_id == job.entity_id,
+                VegetationJob.status == "completed",
+                VegetationJob.deleted_at.is_(None),
+            )
+            if key[0] == "composite":
+                query = query.filter(VegetationJob.result["date_range"]["end"].astext == key[2])
+            else:
+                query = query.filter(VegetationJob.result["sensing_date"].astext == key[1])
+            rows = query.all()
         idx = index_type.lower()
-        for row in query.all():
+        for row in rows:
             res = row.result if isinstance(row.result, Mapping) else {}
             if (str(row.id) in skip or row.tenant_id != tenant_id or row.entity_id != job.entity_id
                     or row.status != "completed" or row.deleted_at is not None or job_wrote_nothing(res)):
@@ -627,15 +630,16 @@ def completing_analytics(db, tenant_id: str, job, scene_row_id, exclude_index: s
     from app.models.jobs import VegetationJob
 
     scene = str(scene_row_id)
-    rows = db.query(VegetationJob).filter(
-        VegetationJob.tenant_id == tenant_id,
-        VegetationJob.entity_id == job.entity_id,
-        VegetationJob.job_type == "calculate_index",
-        VegetationJob.status == "completed",
-        VegetationJob.deleted_at.is_(None),
-        VegetationJob.id != job.id,
-        VegetationJob.result["scene_id"].astext == scene,
-    ).order_by(VegetationJob.completed_at.desc()).all()
+    with db.begin_nested():  # a failed query must not leave the job's session unusable
+        rows = db.query(VegetationJob).filter(
+            VegetationJob.tenant_id == tenant_id,
+            VegetationJob.entity_id == job.entity_id,
+            VegetationJob.job_type == "calculate_index",
+            VegetationJob.status == "completed",
+            VegetationJob.deleted_at.is_(None),
+            VegetationJob.id != job.id,
+            VegetationJob.result["scene_id"].astext == scene,
+        ).order_by(VegetationJob.completed_at.desc()).all()
     skip, latest = exclude_index.lower(), {}
     for row in rows:
         res = row.result if isinstance(row.result, Mapping) else {}
