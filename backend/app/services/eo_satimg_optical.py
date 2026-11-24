@@ -25,7 +25,7 @@ import numbers
 import re
 from dataclasses import dataclass, replace as dc_replace
 from datetime import date, datetime, timezone
-from typing import Any, Mapping, Optional
+from typing import Any, Callable, Mapping, Optional
 
 from nkz_platform_sdk import parse_eo_entities
 
@@ -469,12 +469,14 @@ def _is_job_take(raw, obs, result: Mapping[str, Any]) -> bool:
 
 
 def remove_index(tenant: str, target_kind: str, target_urn: str, family: Family, day: date,
-                 index_type: str, job_result: Optional[Mapping[str, Any]] = None) -> bool:
+                 index_type: str, job_result: Optional[Mapping[str, Any]] = None,
+                 keep_if: Optional[Callable[[], bool]] = None) -> bool:
     """Drop one index and its statistics from the entity; delete the entity once no index is left.
 
     Same rule as the legacy ``delete_eo_index``: one index job removes its own values,
     never the other indices of the take. With ``job_result`` the entity is left alone when it
-    holds another take. Missing entity = done. Never raises.
+    holds another take. ``keep_if`` (evaluated only when the entity holds this job's take) leaves the
+    value alone when another live job owns it. Missing entity = done. Never raises.
     """
     idx = index_type.lower()
     context = f"tenant={tenant} target={target_urn} family={Family(family).value} day={day.isoformat()}"
@@ -491,6 +493,9 @@ def remove_index(tenant: str, target_kind: str, target_urn: str, family: Family,
             return True
         values = {n: v for n, v in obs.values.items() if n.split(".", 1)[0] != idx}
         if len(values) == len(obs.values):
+            return True
+        if keep_if is not None and keep_if():
+            logger.info("eo_satimg: %s %s kept, another live job owns the value", context, idx)
             return True
         if not any(n in values for n in INDEX_NAMES):
             return fi.delete_eo_satellite_imagery(tenant, eid)
@@ -519,12 +524,71 @@ def remove_index(tenant: str, target_kind: str, target_urn: str, family: Family,
         return False
 
 
-def remove_job_index(tenant: str, parcel_urn: str, result: Mapping[str, Any], index_type: str) -> bool:
+def job_wrote_nothing(result: Optional[Mapping[str, Any]]) -> bool:
+    """A skipped calculation (idempotent re-run, no valid pixels, a better scene won) owns no value."""
+    return bool(result) and bool(result.get("skipped") or result.get("skip_reason"))
+
+
+def remove_job_index(tenant: str, parcel_urn: str, result: Mapping[str, Any], index_type: str,
+                     keep_if: Optional[Callable[[], bool]] = None) -> bool:
     """Remove a deleted calculation's index from its parcel entity (the zones go with delete_zone_products)."""
+    if job_wrote_nothing(result):
+        return True
     family_day = job_family_day(result or {})
     if family_day is None or not parcel_urn:
         return True
-    return remove_index(tenant, "parcel", parcel_urn, family_day[0], family_day[1], index_type, result)
+    return remove_index(tenant, "parcel", parcel_urn, family_day[0], family_day[1], index_type, result, keep_if)
+
+
+def _take_key(result: Mapping[str, Any]) -> Optional[tuple]:
+    """(composite window or sensing day, scene row id) of a calculation's take."""
+    if result.get("is_composite"):
+        window = result.get("date_range")
+        if not isinstance(window, Mapping):
+            return None
+        return ("composite", str(window.get("start"))[:10], str(window.get("end"))[:10], None)
+    sensing = result.get("sensing_date")
+    return ("scene", str(sensing)[:10], None, result.get("scene_id")) if sensing else None
+
+
+def other_job_holds_value(db, tenant_id: str, job, result: Mapping[str, Any], index_type: str,
+                          exclude_ids=()) -> bool:
+    """Whether another completed, non-deleted job of the tenant owns the same value of the entity.
+
+    Same parcel, index, scene and day (a composite: same window). ``exclude_ids`` are the jobs being
+    deleted in the same request: they do not protect each other. Anything unreadable counts as "yes":
+    a value another job may own is never removed on a guess. Never raises.
+    """
+    try:
+        from app.models.jobs import VegetationJob
+
+        key = _take_key(result or {})
+        if key is None:
+            return False
+        skip = {str(i) for i in exclude_ids} | {str(job.id)}
+        query = db.query(VegetationJob).filter(
+            VegetationJob.tenant_id == tenant_id,
+            VegetationJob.entity_id == job.entity_id,
+            VegetationJob.status == "completed",
+            VegetationJob.deleted_at.is_(None),
+        )
+        if key[0] == "composite":
+            query = query.filter(VegetationJob.result["date_range"]["end"].astext == key[2])
+        else:
+            query = query.filter(VegetationJob.result["sensing_date"].astext == key[1])
+        idx = index_type.lower()
+        for row in query.all():
+            res = row.result if isinstance(row.result, Mapping) else {}
+            if (str(row.id) in skip or row.tenant_id != tenant_id or row.entity_id != job.entity_id
+                    or row.status != "completed" or row.deleted_at is not None or job_wrote_nothing(res)):
+                continue
+            row_index = res.get("index_type") or (row.parameters or {}).get("index_type")
+            if str(row_index or "").lower() == idx and _take_key(res) == key:
+                return True
+        return False
+    except Exception as exc:
+        logger.warning("eo_satimg: owners of a deleted job's value not checked, value kept: %s", exc)
+        return True
 
 
 def parcel_holds_other_take(tenant: str, parcel_urn: str, take: OpticalTake) -> bool:

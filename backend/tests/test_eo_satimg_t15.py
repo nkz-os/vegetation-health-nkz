@@ -221,3 +221,190 @@ def test_i4_get_raises_after_three_failures_and_never_retries_4xx(monkeypatch):
     with pytest.raises(Exception):
         fi.get_eo_satellite_imagery("acme", "e")
     assert len(http.calls["get"]) == 1
+
+
+# ── I3 deletes must not remove another live job's value ─────────────────────
+
+from types import SimpleNamespace  # noqa: E402
+import uuid  # noqa: E402
+from app.services import zone_products as zp  # noqa: E402
+from app.models import VegetationJob, VegetationScene  # noqa: E402
+
+
+def _job(index="NDVI", tenant=TENANT, status="completed", deleted=None, result_extra=None, entity=ow.PARCEL):
+    result = {"index_type": index, "sensing_date": ow.DAY.isoformat(), "is_composite": False,
+              "scene_id": str(ow.SCENE_UUID), **(result_extra or {})}
+    return SimpleNamespace(id=uuid.uuid4(), tenant_id=tenant, entity_id=entity, status=status, deleted_at=deleted,
+                           result=result, parameters={"index_type": index}, job_type="calculate_index",
+                           crop_season_id=None, celery_task_id=None, deleted=None)
+
+
+class FakeDb:
+    """first() walks ``targets`` (the jobs being deleted); all() answers the owners query with ``others``."""
+
+    def __init__(self, targets, others):
+        self.targets, self.others, self._i = list(targets), list(others), 0
+        self.queries = 0
+
+    def query(self, model):
+        db = self
+        if model is VegetationScene:
+            return _Q(lambda: SimpleNamespace(scene_id=PID_A), lambda: [])
+        db.queries += 1
+
+        def first():
+            row = db.targets[min(db._i, len(db.targets) - 1)]
+            db._i += 1
+            return row
+        return _Q(first, lambda: list(db.others))
+
+    def commit(self):
+        pass
+
+
+class _Q:
+    def __init__(self, first, all_):
+        self._first, self._all = first, all_
+
+    def filter(self, *a, **k):
+        return self
+
+    def order_by(self, *a, **k):
+        return self
+
+    def first(self):
+        return self._first()
+
+    def all(self):
+        return self._all()
+
+
+def _seed_entity():
+    ow._write_scene(PID_A, "NDVI", 0.6, 0.8)
+    ow._write_scene(PID_A, "EVI", 0.4, 0.8)
+
+
+def _bulk(db, jobs):
+    import asyncio
+    from app.api import jobs as jobs_api
+    zone = {"zone_id": "z", "zone_urn": ow.ZONE, "relation": zp.CURRENT_ZONE_RELATION}
+    from unittest.mock import patch
+    with patch.object(fi, "delete_eo_index"), patch.object(zp, "fetch_zone_targets", return_value=[zone]):
+        return asyncio.run(jobs_api.bulk_delete_jobs(
+            jobs_api.BulkDeleteRequest(ids=[str(j.id) for j in jobs]), current_user={"tenant_id": TENANT}, db=db))
+
+
+def _ndvi_present(store):
+    return "ndvi" in _vals(store)
+
+
+def test_i3_skipped_job_does_not_remove_the_winners_value(store):
+    _seed_entity()
+    for extra in ({"skipped": True}, {"skip_reason": "better_scene_same_date"}, {"skip_reason": "no_valid_pixels"}):
+        job = _job(result_extra=extra)
+        assert so.remove_job_index(TENANT, ow.PARCEL, {**job.result, "scene_product_id": PID_A}, "NDVI") is True
+        assert _ndvi_present(store), extra
+    reads = store.reads
+    so.remove_job_index(TENANT, ow.PARCEL, {**_job(result_extra={"skipped": True}).result}, "NDVI")
+    assert store.reads == reads  # decided before touching the broker
+
+
+def test_i3_zone_deletion_of_a_skipped_job_keeps_the_zone_value(store):
+    _seed_entity()
+    zone_eid = f"urn:ngsi-ld:EOSatelliteImagery:{TENANT}:zone:parcel-1:run-1:L1:s2-indices:2026-06-21"
+    za = so.index_analytics("NDVI", ow.STATS)
+    za["pixelCount"] = 40
+    so.write_optical(TENANT, so.zone_target(ow.PARCEL, ow.ZONE, ow.GEOM), so.scene_take(ow._scene(pid=PID_A)), za,
+                     index_type="NDVI", follow=so.CREATE)
+    zone = {"zone_id": "z", "zone_urn": ow.ZONE, "relation": zp.CURRENT_ZONE_RELATION}
+    from unittest.mock import patch
+    result = {**_job(result_extra={"skip_reason": "better_scene_same_date"}).result, "scene_product_id": PID_A}
+    with patch.object(fi, "delete_eo_index"), patch.object(zp, "fetch_zone_targets", return_value=[zone]):
+        zp.delete_zone_products(TENANT, ow.PARCEL, ow.DAY.isoformat(), "NDVI", job_result=result)
+    assert zone_eid in store.entities
+    with patch.object(fi, "delete_eo_index"), patch.object(zp, "fetch_zone_targets", return_value=[zone]):
+        zp.delete_zone_products(TENANT, ow.PARCEL, ow.DAY.isoformat(), "NDVI",
+                                job_result={**result, "skip_reason": None}, keep_if=lambda: True)
+    assert zone_eid in store.entities  # another live job owns it
+    with patch.object(fi, "delete_eo_index"), patch.object(zp, "fetch_zone_targets", return_value=[zone]):
+        zp.delete_zone_products(TENANT, ow.PARCEL, ow.DAY.isoformat(), "NDVI",
+                                job_result={**result, "skip_reason": None}, keep_if=lambda: False)
+    assert zone_eid not in store.entities
+
+
+def test_i3_bulk_delete_keeps_the_value_while_another_live_job_owns_it(store):
+    _seed_entity()
+    target, other = _job(), _job()
+    _bulk(FakeDb([target], [other]), [target])
+    assert _ndvi_present(store)
+
+
+def test_i3_jobs_deleted_together_do_not_protect_each_other(store):
+    _seed_entity()
+    a, b = _job(), _job()
+    _bulk(FakeDb([a, b], [a, b]), [a, b])
+    assert not _ndvi_present(store) and "evi" in _vals(store)
+
+
+@pytest.mark.parametrize("kw", [{"tenant": "other"}, {"status": "failed"}, {"deleted": "yes"},
+                                {"result_extra": {"skipped": True}}, {"result_extra": {"sensing_date": "2026-06-20"}},
+                                {"result_extra": {"scene_id": "other-scene"}}, {"index": "EVI"},
+                                {"entity": "urn:ngsi-ld:AgriParcel:parcel-2"}])
+def test_i3_rows_that_do_not_own_the_same_value_do_not_protect(store, kw):
+    _seed_entity()
+    target = _job()
+    kw = dict(kw)
+    deleted = kw.pop("deleted", None)
+    other = _job(**kw)
+    if deleted:
+        from datetime import datetime, timezone
+        other.deleted_at = datetime.now(timezone.utc)
+    _bulk(FakeDb([target], [other]), [target])
+    assert not _ndvi_present(store)
+
+
+def test_i3_period_delete_honours_the_guard(store):
+    import asyncio
+    from app.api import monitoring_periods as mp
+    from app.models.crop_seasons import VegetationMonitoringPeriod
+    from unittest.mock import MagicMock, patch
+    _seed_entity()
+    target, other = _job(), _job()
+    zone = {"zone_id": "z", "zone_urn": ow.ZONE, "relation": zp.CURRENT_ZONE_RELATION}
+
+    class Db(FakeDb):
+        def query(self, model):
+            if model is VegetationMonitoringPeriod:
+                return _Q(lambda: MagicMock(), lambda: [])
+            if model is VegetationJob:
+                self.queries += 1
+                # the cascade lists the period's jobs with .all(); the guard asks .all() too: tell them apart
+                return _Q(lambda: target, lambda: [target] if self.queries == 1 else [other])
+            return super().query(model)
+
+    with patch.object(fi, "delete_eo_index"), patch.object(zp, "fetch_zone_targets", return_value=[zone]), \
+            patch("app.services.fiware_integration.delete_eo_product"):
+        asyncio.run(mp.delete_monitoring_period(ow.PARCEL, str(uuid.uuid4()), cascade=True,
+                                                current_user={"tenant_id": TENANT}, db=Db([target], [other])))
+    assert _ndvi_present(store)
+
+
+def test_i3_owner_query_compiles_for_postgres():
+    from sqlalchemy.dialects import postgresql
+    seen = []
+
+    class Db:
+        def query(self, model):
+            class Q:
+                def filter(self, *clauses):
+                    seen.extend(str(c.compile(dialect=postgresql.dialect())) for c in clauses)
+                    return self
+
+                def all(self):
+                    return []
+            return Q()
+
+    target = _job()
+    assert so.other_job_holds_value(Db(), TENANT, target, target.result, "NDVI") is False
+    text = " ".join(seen)
+    assert "tenant_id" in text and "deleted_at IS NULL" in text and "status" in text
