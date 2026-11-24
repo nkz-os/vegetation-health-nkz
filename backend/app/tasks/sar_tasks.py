@@ -6,6 +6,7 @@ Creates two VegetationJob records (job_type=calculate_index, index_type=SAR-VV/S
 so they appear automatically in the frontend's available_indices.
 """
 
+import json
 import logging
 import os
 from pathlib import Path
@@ -22,8 +23,10 @@ from app.celery_app import celery_app
 from app.models import VegetationJob, VegetationScene
 from app.database import get_db_session
 from app.services.copernicus_client import CopernicusDataSpaceClient
+from app.services import fiware_integration as fi
 from app.services.platform_credentials import get_copernicus_credentials_with_fallback
 from app.services.fiware_integration import upsert_eo_product
+from app.services import eo_satimg_radar_lst as satimg
 from app.services.sar_smi_processor import DEFAULT_INCIDENCE_DEG
 from app.services.storage import create_storage_service, generate_tenant_bucket_name
 
@@ -151,6 +154,9 @@ def _calibrated_parcel(band_path: str, calibration_path: str, parcel_geom, workd
     stats = sar_calibration.zonal_db(db[mask[r0:r1 + 1, c0:c1 + 1] == 1])
     if stats["pixel_count"] == 0:
         return stats, None
+    # Coverage of the parcel by usable pixels (radar geometry); the contract's validPixelFraction.
+    stats["parcel_pixels"] = int(rows.size)
+    stats["valid_fraction"] = stats["pixel_count"] / stats["parcel_pixels"]
 
     stem = Path(band_path).stem
     window_path = os.path.join(workdir, f"{stem}_db_window.tif")
@@ -195,8 +201,11 @@ def _zone_sigma0_stats(parcel_raster_path: str, zone_geom, exact: bool = False) 
 
 
 def _publish_zone_sar_products(tenant_id: str, entity_id: str, calibrated_paths: Dict[str, str],
-                               acq_date) -> int:
+                               acq_date, take=None) -> int:
     """Per-management-zone VV/VH EOProducts. Never raises; one zone failing skips only it.
+
+    ``take`` (a ``RadarTake``, only when the tenant writes EOSatelliteImagery) also writes the zone's
+    ``s1-backscatter``, for the current management zones only.
 
     sarMoisture / sarChangeFlag are NOT published per zone: the SMI needs the
     VV raster and DEM, and the change flag needs per-zone history.
@@ -222,6 +231,11 @@ def _publish_zone_sar_products(tenant_id: str, entity_id: str, calibrated_paths:
             if upsert_eo_zone_product(tenant_id, parcel_short, zone, acq_date,
                                       vv["mean"], vh["mean"], stats):
                 published += 1
+            if take is not None and zone.get("relation") == CURRENT_ZONE_RELATION:
+                satimg.write_backscatter(
+                    tenant_id, satimg.zone_target(entity_id, zone["zone_urn"], zone["geometry"]), take,
+                    {"VV": vv, "VH": vh},
+                )
         except Exception as exc:
             logger.warning("SAR zone %s product failed for %s: %s", zone["zone_id"], entity_id, exc)
     return published
@@ -434,6 +448,16 @@ def download_sentinel1_scene(
         copernicus = CopernicusDataSpaceClient()
         copernicus.set_credentials(creds["client_id"], creds["client_secret"])
 
+        # Scene metadata (orbit direction, time, platform...) comes with the job; a job queued before the
+        # dispatchers sent it asks the catalogue instead.
+        if not (parameters.get("orbit_direction") and parameters.get("scene_datetime")):
+            summary = None
+            try:
+                summary = copernicus.get_s1_scene_summary(scene_id)
+            except Exception as exc:
+                logger.warning("S1 scene %s metadata not read from the catalogue: %s", scene_id, exc)
+            parameters = satimg.complete_params(parameters, summary)
+
         # ── Download bands ───────────────────────────────────────────
         self.update_state(
             state="PROGRESS",
@@ -497,6 +521,7 @@ def download_sentinel1_scene(
 
             # ── Zonal stats for each polarization ─────────────────────
             stats_by_pol: dict[str, dict] = {}
+            raw_by_pol: dict[str, dict] = {}
 
             for pol, raster_path in [("VV", vv_path), ("VH", vh_path)]:
                 if not raster_path or not os.path.isfile(raster_path):
@@ -521,6 +546,7 @@ def download_sentinel1_scene(
                         "unit": "dB",
                     }
                     stats_by_pol[pol] = stats
+                    raw_by_pol[pol] = raw
                     calibrated_paths[pol] = parcel_raster
 
                     # ── Create calculate_index VegetationJob (visible in frontend) ──
@@ -577,6 +603,23 @@ def download_sentinel1_scene(
                     db.add(calc_job)
                     db.commit()
 
+            # ── EOSatelliteImagery (tenants that have it on): never changes the old form or the job ──
+            satimg_take = None
+            backscatter_verdict = None
+            if fi.satimg_enabled(tenant_id):
+                try:
+                    satimg_take = satimg.radar_take(scene_id, parameters)
+                    if satimg_take is not None and raw_by_pol:
+                        backscatter_verdict = satimg.write_backscatter(
+                            tenant_id,
+                            satimg.parcel_target(entity_id, json.loads(json.dumps(geom.__geo_interface__))),
+                            satimg_take, raw_by_pol,
+                        )
+                except Exception as exc:
+                    logger.error("eo_satimg: backscatter of scene %s for %s not written: %s",
+                                 scene_id, entity_id, exc, exc_info=True)
+                    satimg_take = None
+
             # ── Publish EOProduct when both VV and VH are ready ──────
             if "VV" in stats_by_pol and "VH" in stats_by_pol:
                 vv_mean = stats_by_pol["VV"]["mean"]
@@ -604,7 +647,7 @@ def download_sentinel1_scene(
                 # Per-zone products from the same calibrated rasters (additive).
                 try:
                     if calibrated_paths.get("VV") and calibrated_paths.get("VH"):
-                        _publish_zone_sar_products(tenant_id, entity_id, calibrated_paths, acq_date)
+                        _publish_zone_sar_products(tenant_id, entity_id, calibrated_paths, acq_date, take=satimg_take)
                 except Exception as exc:
                     logger.warning("SAR zone products skipped for %s: %s", entity_id, exc)
 
@@ -612,10 +655,15 @@ def download_sentinel1_scene(
                 try:
                     from app.services.sar_smi_processor import compute_smi
                     from app.services.fiware_integration import upsert_eo_smi
+                    orbit_direction = parameters.get("orbit_direction")
+                    if not orbit_direction:
+                        logger.warning("SAR orbit direction of scene %s unknown, SMI computed as ASCENDING",
+                                       scene_id)
+                        orbit_direction = "ASCENDING"
                     smi_stats = compute_smi(
                         vv_path=calibrated_paths["VV"],
                         geometry_geojson=parcel_geometry,
-                        orbit_direction=parameters.get("orbit_direction", "ASCENDING"),
+                        orbit_direction=orbit_direction,
                         nominal_incidence_deg=parameters.get(
                             "incidence_deg", DEFAULT_INCIDENCE_DEG
                         ),
@@ -634,6 +682,12 @@ def download_sentinel1_scene(
                             logger.info(
                                 "Published SMI %.3f for %s",
                                 smi_stats["mean"], entity_id,
+                            )
+                        if satimg_take is not None:
+                            satimg.write_soil_moisture(
+                                tenant_id,
+                                satimg.parcel_target(entity_id, json.loads(json.dumps(geom.__geo_interface__))),
+                                satimg_take, smi_stats,
                             )
                 except Exception as exc:
                     logger.warning("SMI computation skipped for %s: %s", entity_id, exc)
@@ -717,6 +771,12 @@ def download_sentinel1_scene(
                             sensing_date=sdate,
                             scene_id=scene_id,
                         )
+                        if satimg_take is not None:
+                            satimg.write_change(
+                                tenant_id,
+                                satimg.parcel_target(entity_id, json.loads(json.dumps(geom.__geo_interface__))),
+                                satimg_take, ch, backscatter_verdict,
+                            )
                         # Webhook field-operations
                         _notify_field_operations(
                             tenant_id=tenant_id,

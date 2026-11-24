@@ -533,3 +533,12 @@ def parcel_holds_other_take(tenant: str, parcel_urn: str, take: OpticalTake) -> 
 def zone_take(take: OpticalTake) -> OpticalTake:
     """Zone entities keep no raster."""
     return dc_replace(take, raster_folder=None)
+
+
+# Public names for the helpers the radar and surface temperature writer reuses.
+footprint_geojson = _geojson
+make_sensing = _sensing
+read_entity = _read
+present = _present
+prune_leftovers = _prune_leftovers
+NO_GEOMETRY = _NO_GEOMETRY

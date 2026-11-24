@@ -110,6 +110,51 @@ def compute_lst_zonal_stats(
         }
 
 
+def process_parcel_lst_item(
+    latitude: float,
+    longitude: float,
+    geometry_geojson: dict,
+    *,
+    auth_headers: dict[str, str] | None = None,
+    window_days: int = 32,
+) -> tuple[dict[str, float] | None, str | None, str | None, dict[str, Any] | None]:
+    """End-to-end LST extraction for one parcel, with the catalogue item it came from.
+
+    Returns:
+        (statistics, sensing_date YYYY-MM-DD, scene_id, item) or four Nones. ``item`` carries the
+        STAC ``id``, ``properties`` and ``geometry`` of the scene.
+    """
+    feature = search_latest_lst_scene(
+        latitude, longitude, window_days=window_days, auth_headers=auth_headers,
+    )
+    if not feature:
+        return None, None, None, None
+
+    assets = feature.get("assets", {})
+    st_b10 = assets.get("ST_B10") or assets.get("st_b10")
+    if not st_b10 or not st_b10.get("href"):
+        logger.warning("LST scene %s has no ST_B10 asset", feature.get("id"))
+        return None, None, None, None
+
+    scene_id = feature.get("id", "unknown")
+    sensing_date = (feature.get("properties", {}).get("datetime") or "")[:10]
+    href = st_b10["href"]
+    item = {"id": feature.get("id"), "properties": feature.get("properties") or {},
+            "geometry": feature.get("geometry")}
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tif_path = os.path.join(tmpdir, "ST_B10.tif")
+        try:
+            _download_asset(href, tif_path, auth_headers)
+        except Exception as exc:
+            logger.warning("LST band download failed for %s: %s", scene_id, exc)
+            return None, None, None, None
+        stats = compute_lst_zonal_stats(tif_path, geometry_geojson)
+        if stats["pixel_count"] == 0:
+            return None, None, None, None
+        return stats, sensing_date or None, scene_id, item
+
+
 def process_parcel_lst(
     latitude: float,
     longitude: float,
@@ -123,30 +168,7 @@ def process_parcel_lst(
     Returns:
         (statistics, sensing_date YYYY-MM-DD, scene_id) or (None, None, None).
     """
-    feature = search_latest_lst_scene(
-        latitude, longitude, window_days=window_days, auth_headers=auth_headers,
+    stats, sensing_date, scene_id, _ = process_parcel_lst_item(
+        latitude, longitude, geometry_geojson, auth_headers=auth_headers, window_days=window_days,
     )
-    if not feature:
-        return None, None, None
-
-    assets = feature.get("assets", {})
-    st_b10 = assets.get("ST_B10") or assets.get("st_b10")
-    if not st_b10 or not st_b10.get("href"):
-        logger.warning("LST scene %s has no ST_B10 asset", feature.get("id"))
-        return None, None, None
-
-    scene_id = feature.get("id", "unknown")
-    sensing_date = (feature.get("properties", {}).get("datetime") or "")[:10]
-    href = st_b10["href"]
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        tif_path = os.path.join(tmpdir, "ST_B10.tif")
-        try:
-            _download_asset(href, tif_path, auth_headers)
-        except Exception as exc:
-            logger.warning("LST band download failed for %s: %s", scene_id, exc)
-            return None, None, None
-        stats = compute_lst_zonal_stats(tif_path, geometry_geojson)
-        if stats["pixel_count"] == 0:
-            return None, None, None
-        return stats, sensing_date or None, scene_id
+    return stats, sensing_date, scene_id

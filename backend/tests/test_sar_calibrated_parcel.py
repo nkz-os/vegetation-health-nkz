@@ -46,3 +46,23 @@ def test_no_signal_pixels_are_left_out(tmp_path):
     xml.write_bytes(LUT)
     stats, _ = sar_tasks._calibrated_parcel(str(band), str(xml), box(-1.57, 42.83, -1.53, 42.87), str(tmp_path))
     assert stats["pixel_count"] == 0 and stats["mean"] is None
+
+
+def test_clip_reports_valid_fraction_of_parcel_pixels(tmp_path):
+    parcel = box(-1.57, 42.83, -1.53, 42.87)
+    full_band, xml = tmp_path / "full.tif", tmp_path / "vv.xml"
+    _grd(full_band)
+    xml.write_bytes(LUT)
+    full, _ = sar_tasks._calibrated_parcel(str(full_band), str(xml), parcel, str(tmp_path))
+    assert full["valid_fraction"] == 1.0 and full["parcel_pixels"] == full["pixel_count"]
+
+    holed_band = tmp_path / "holed.tif"
+    _grd(holed_band)
+    with rasterio.open(holed_band, "r+") as dst:
+        data = dst.read(1)
+        data[:, 100:110] = 0  # a strip of the parcel without signal
+        dst.write(data, 1)
+    holed, _ = sar_tasks._calibrated_parcel(str(holed_band), str(xml), parcel, str(tmp_path))
+    assert holed["parcel_pixels"] == full["parcel_pixels"]
+    assert 0 < holed["pixel_count"] < holed["parcel_pixels"]
+    assert holed["valid_fraction"] == holed["pixel_count"] / holed["parcel_pixels"] < 1.0

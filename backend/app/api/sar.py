@@ -17,6 +17,7 @@ from app.database import get_db_with_tenant
 from app.middleware.auth import require_auth
 from app.models import VegetationJob
 from app.services.copernicus_client import CopernicusDataSpaceClient
+from app.services.eo_satimg_radar_lst import scene_job_params
 from app.services.platform_credentials import get_copernicus_credentials_with_fallback
 from app.tasks.sar_tasks import download_sentinel1_scene
 from nkz_platform_sdk import SyncOrionClient
@@ -136,6 +137,7 @@ async def analyze_sar(
             "bbox": bbox,
             "sensing_date": s1_scene["sensing_date"],
             "entity_id": entity_id,
+            **scene_job_params(s1_scene),
         }
         job = VegetationJob(
             id=uuid.uuid4(),

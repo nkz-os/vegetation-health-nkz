@@ -18,6 +18,15 @@ import json
 logger = logging.getLogger(__name__)
 
 
+def _s1_orbit_fields(properties: Dict[str, Any]) -> Dict[str, Any]:
+    """Platform, relative orbit and orbit direction of a Sentinel-1 STAC item, as the catalogue gives them."""
+    return {
+        "platform": properties.get("platform"),
+        "relative_orbit": properties.get("sat:relative_orbit"),
+        "orbit_state": properties.get("sat:orbit_state"),
+    }
+
+
 class CopernicusDataSpaceClient:
     """Client for Copernicus Data Space Ecosystem API."""
     
@@ -303,6 +312,7 @@ class CopernicusDataSpaceClient:
                     "geometry": feature.get("geometry"),
                     "assets": feature.get("assets", {}),
                     "links": feature.get("links", []),
+                    **_s1_orbit_fields(feature["properties"]),
                 }
                 scenes.append(scene)
             logger.info("Found %d Sentinel-1 GRD scenes matching criteria", len(scenes))
@@ -310,6 +320,22 @@ class CopernicusDataSpaceClient:
         except requests.RequestException as e:
             logger.error("Failed to search S1 scenes: %s", str(e))
             raise Exception(f"S1 scene search failed: {str(e)}")
+
+    def get_s1_scene_summary(self, scene_id: str) -> Dict[str, Any]:
+        """The catalogue's own facts about one Sentinel-1 GRD item, in the shape of ``search_s1_scenes``.
+
+        For jobs queued before the dispatchers passed the scene metadata along.
+        """
+        item = self.get_scene_item(scene_id, collection="sentinel-1-grd")
+        props = item.get("properties") or {}
+        return {
+            "id": item["id"],
+            "sensing_date": item["sensing_date"],
+            "datetime": item["datetime"],
+            "instrument_mode": props.get("sar:instrument_mode", ""),
+            "geometry": item.get("geometry"),
+            **_s1_orbit_fields(props),
+        }
 
     def get_scene_item(self, scene_id: str, collection: str = "sentinel-2-l2a") -> Dict[str, Any]:
         """Fetch a single STAC item by id (public, no auth required).
@@ -333,6 +359,7 @@ class CopernicusDataSpaceClient:
             'geometry': feature.get('geometry'),
             'assets': feature.get('assets', {}),
             'links': feature.get('links', []),
+            'properties': feature.get('properties') or {},
         }
 
     def download_band(
