@@ -27,7 +27,7 @@ export default defineModule({
   main: MainWrapper,
   api: { basePath: '/api/vegetation' },
   data: {
-    entities: ['VegetationIndex', 'AgriParcelRecord', 'VegetationScene', 'EOProduct'],
+    entities: ['VegetationIndex', 'AgriParcelRecord', 'VegetationScene', 'EOProduct', 'EOSatelliteImagery'],
     timeseries: [],
   },
   slots: withModuleProvider(vegetationPrimeSlots) as never,
