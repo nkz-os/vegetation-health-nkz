@@ -301,14 +301,15 @@ def _present(value: Any) -> bool:
 def write_optical(tenant: str, target: Target, take: OpticalTake, analytics: Mapping[str, Any], *,
                   index_type: str, interior_fraction: Optional[float] = None,
                   follow: Optional[str] = None, merge_only: bool = False,
-                  replace_interior: bool = False) -> Optional[str]:
+                  replace_interior: bool = False, fill_missing: bool = False) -> Optional[str]:
     """Write one optical value set into the take's entity.
 
     Returns the verdict (create/merge/replace/skip), or None when the tenant is
     switched off or the write failed (logged). ``follow`` is the parcel's verdict
     for a zone write; ``merge_only`` allows nothing but completing the same take;
     ``replace_interior`` swaps the index's whole ``{index}.interior*`` group for the new one (a recompute
-    that finds no valid interior must not leave the old mean/median/percentiles beside fraction 0).
+    that finds no valid interior must not leave the old mean/median/percentiles beside fraction 0);
+    ``fill_missing`` completes the same take with the names it lacks and never overwrites a stored one.
     """
     if not fi.satimg_enabled(tenant):
         return None
@@ -331,6 +332,8 @@ def write_optical(tenant: str, target: Target, take: OpticalTake, analytics: Map
         values = dict(obs.values) if merging else {}
         if merging and replace_interior:
             values = {n: v for n, v in values.items() if not n.startswith(f"{idx}.interior")}
+        if merging and fill_missing:
+            fresh = {k: v for k, v in fresh.items() if k not in values}
         values.update(fresh)
         sensing = take.sensing
         if merging and sensing.time_utc is None and obs.sensing_time is not None:

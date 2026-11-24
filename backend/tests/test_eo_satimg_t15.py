@@ -408,3 +408,23 @@ def test_i3_owner_query_compiles_for_postgres():
     assert so.other_job_holds_value(Db(), TENANT, target, target.result, "NDVI") is False
     text = " ".join(seen)
     assert "tenant_id" in text and "deleted_at IS NULL" in text and "status" in text
+
+
+# ── baseline: never leave old interior values next to a new mean ────────────
+
+def _baseline(index, mean):
+    from app.tasks import historical_baseline as hb
+    scene = {"id": PID_A, "datetime": "2026-06-21T11:06:21Z", "geometry": ow.FOOT, "cloud_cover": 10.0}
+    hb._write_satimg(TENANT, ow.PARCEL, ow.GEOM, index, {**ow.STATS, "mean": mean}, scene, ow.DAY)
+
+
+def test_baseline_over_the_same_scene_keeps_the_stored_index_values(store):
+    ow._write_scene(PID_A, "NDVI", 0.6, 0.8)
+    before = dict(_vals(store))
+    _baseline("NDVI", 0.55)
+    values = _vals(store)
+    assert values["ndvi"] == "0.600000" and values["ndvi.interiorMean"] == before["ndvi.interiorMean"]
+    assert values["ndvi.interiorValidFraction"] == "0.8000"
+    _baseline("EVI", 0.35)  # an index the entity lacks is added whole
+    values = _vals(store)
+    assert values["evi"] == "0.350000" and values["ndvi"] == "0.600000"
