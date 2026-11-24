@@ -12,6 +12,7 @@ Follows the platform convention:
 """
 
 import logging
+import time
 from urllib.parse import quote
 import os
 import re
@@ -60,11 +61,38 @@ def satimg_enabled(tenant_id: str) -> bool:
     return "*" in names or tenant_id in names
 
 
+_RETRY_ATTEMPTS = 3
+_RETRY_BACKOFF = (0.5, 1.5)  # seconds before the 2nd and 3rd attempt: 2 s of extra delay at most
+
+
+def _transient(exc: Exception) -> bool:
+    """Connection errors, timeouts and 5xx are worth another attempt; 4xx never."""
+    import requests
+
+    if isinstance(exc, (requests.ConnectionError, requests.Timeout)):
+        return True
+    status = getattr(getattr(exc, "response", None), "status_code", None)
+    return isinstance(status, int) and status >= 500
+
+
+def _with_retry(call, what: str):
+    """Run ``call`` up to 3 times with a short backoff on transient failures; the last error is raised."""
+    for attempt in range(_RETRY_ATTEMPTS):
+        try:
+            return call()
+        except Exception as exc:
+            if attempt == _RETRY_ATTEMPTS - 1 or not _transient(exc):
+                raise
+            logger.warning("%s failed (attempt %d/%d), retrying: %s", what, attempt + 1, _RETRY_ATTEMPTS, exc)
+            time.sleep(_RETRY_BACKOFF[attempt])
+
+
 def get_eo_satellite_imagery(tenant_id: str, entity_id: str) -> Optional[dict]:
     """The whole entity in normalized form, None on 404. Any other broker error raises:
-    a failed read must never be taken for an empty entity."""
+    a failed read must never be taken for an empty entity. Transient errors are retried (3 attempts)."""
     try:
-        return SyncOrionClient(tenant_id).get_entity(entity_id)
+        return _with_retry(lambda: SyncOrionClient(tenant_id).get_entity(entity_id),
+                           f"EOSatelliteImagery read {entity_id}")
     except Exception as exc:
         if getattr(getattr(exc, "response", None), "status_code", None) == 404:
             return None
@@ -76,7 +104,8 @@ def upsert_eo_satellite_imagery(tenant_id: str, entity: dict) -> Optional[str]:
     entity_id = entity.get("id")
     try:
         # Synchronous client: callable from async endpoints (asyncio.run fails inside a running loop).
-        result = SyncOrionClient(tenant_id).upsert_entities_batch([entity])
+        result = _with_retry(lambda: SyncOrionClient(tenant_id).upsert_entities_batch([entity]),
+                             f"EOSatelliteImagery upsert {entity_id}")
         if result.get("upserted", 0) >= 1 and not result.get("errors"):
             logger.info("Upserted EOSatelliteImagery %s", entity_id)
             return entity_id

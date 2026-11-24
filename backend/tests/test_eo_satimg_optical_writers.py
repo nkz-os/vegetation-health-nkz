@@ -728,7 +728,8 @@ def _http_error(code):
     return exc
 
 
-def test_broker_calls_of_the_new_form(caplog):
+def test_broker_calls_of_the_new_form(caplog, monkeypatch):
+    monkeypatch.setattr("time.sleep", lambda s: None)
     entity = {"id": PARCEL_ID, "type": "EOSatelliteImagery"}
     sync = MagicMock()
     sync.upsert_entities_batch.return_value = {"upserted": 1, "errors": [], "entity_ids": [PARCEL_ID]}
