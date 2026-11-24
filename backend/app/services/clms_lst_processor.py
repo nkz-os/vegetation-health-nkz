@@ -113,34 +113,37 @@ def compute_clms_lst_zonal(
         }
 
 
-def process_clms_lst(
+def process_clms_lst_item(
     latitude: float,
     longitude: float,
     geometry_geojson: dict,
     *,
     auth_headers: dict[str, str] | None = None,
     window_hours: int = 24,
-) -> tuple[dict | None, str | None, str | None]:
-    """End-to-end CLMS LST extraction for one parcel.
+) -> tuple[dict | None, str | None, str | None, dict[str, Any] | None]:
+    """End-to-end CLMS LST extraction for one parcel, with the catalogue item it came from.
 
     Returns:
-        (statistics, sensing_datetime ISO8601, scene_id) or (None, None, None).
+        (statistics, sensing_datetime ISO8601, scene_id, item) or four Nones. ``item`` carries the
+        STAC ``id``, ``properties`` and ``geometry`` of the scene.
     """
     feature = search_latest_clms_lst(
         latitude, longitude, window_hours=window_hours, auth_headers=auth_headers,
     )
     if not feature:
-        return None, None, None
+        return None, None, None, None
 
     assets = feature.get("assets", {})
     lst_asset = assets.get("LST") or assets.get("data") or list(assets.values())[0] if assets else None
     if not lst_asset or not lst_asset.get("href"):
         logger.warning("CLMS LST scene %s has no data asset", feature.get("id"))
-        return None, None, None
+        return None, None, None, None
 
     scene_id = feature.get("id", "unknown")
     sensing_dt = feature.get("properties", {}).get("datetime", "")
     href = lst_asset["href"]
+    item = {"id": feature.get("id"), "properties": feature.get("properties") or {},
+            "geometry": feature.get("geometry")}
 
     with tempfile.TemporaryDirectory() as tmpdir:
         tif_path = os.path.join(tmpdir, "clms_lst.tif")
@@ -154,8 +157,27 @@ def process_clms_lst(
                             fh.write(chunk)
         except Exception as exc:
             logger.warning("CLMS LST download failed for %s: %s", scene_id, exc)
-            return None, None, None
+            return None, None, None, None
         stats = compute_clms_lst_zonal(tif_path, geometry_geojson)
         if stats["pixel_count"] == 0:
-            return None, None, None
-        return stats, sensing_dt or None, scene_id
+            return None, None, None, None
+        return stats, sensing_dt or None, scene_id, item
+
+
+def process_clms_lst(
+    latitude: float,
+    longitude: float,
+    geometry_geojson: dict,
+    *,
+    auth_headers: dict[str, str] | None = None,
+    window_hours: int = 24,
+) -> tuple[dict | None, str | None, str | None]:
+    """End-to-end CLMS LST extraction for one parcel.
+
+    Returns:
+        (statistics, sensing_datetime ISO8601, scene_id) or (None, None, None).
+    """
+    stats, sensing_dt, scene_id, _ = process_clms_lst_item(
+        latitude, longitude, geometry_geojson, auth_headers=auth_headers, window_hours=window_hours,
+    )
+    return stats, sensing_dt, scene_id

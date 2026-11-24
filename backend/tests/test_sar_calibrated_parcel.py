@@ -46,3 +46,61 @@ def test_no_signal_pixels_are_left_out(tmp_path):
     xml.write_bytes(LUT)
     stats, _ = sar_tasks._calibrated_parcel(str(band), str(xml), box(-1.57, 42.83, -1.53, 42.87), str(tmp_path))
     assert stats["pixel_count"] == 0 and stats["mean"] is None
+
+
+def test_clip_reports_valid_fraction_of_parcel_pixels(tmp_path):
+    parcel = box(-1.57, 42.83, -1.53, 42.87)
+    full_band, xml = tmp_path / "full.tif", tmp_path / "vv.xml"
+    _grd(full_band)
+    xml.write_bytes(LUT)
+    full, _ = sar_tasks._calibrated_parcel(str(full_band), str(xml), parcel, str(tmp_path))
+    assert full["valid_fraction"] == 1.0 and full["parcel_pixels"] == full["pixel_count"]
+
+    holed_band = tmp_path / "holed.tif"
+    _grd(holed_band)
+    with rasterio.open(holed_band, "r+") as dst:
+        data = dst.read(1)
+        data[:, 100:110] = 0  # a strip of the parcel without signal
+        dst.write(data, 1)
+    holed, _ = sar_tasks._calibrated_parcel(str(holed_band), str(xml), parcel, str(tmp_path))
+    assert holed["parcel_pixels"] == full["parcel_pixels"]
+    assert 0 < holed["pixel_count"] < holed["parcel_pixels"]
+    assert holed["valid_fraction"] == holed["pixel_count"] / holed["parcel_pixels"] < 1.0
+
+
+def test_valid_fraction_counts_the_whole_footprint_when_the_parcel_crosses_the_raster_edge(tmp_path):
+    band, xml = tmp_path / "vv.tif", tmp_path / "vv.xml"
+    _grd(band)  # covers -1.6 .. -1.5 E
+    xml.write_bytes(LUT)
+    inside = box(-1.59, 42.83, -1.55, 42.87)
+    crossing = box(-1.63, 42.83, -1.55, 42.87)  # 3/8 of the width lies west of the raster
+    a, _ = sar_tasks._calibrated_parcel(str(band), str(xml), inside, str(tmp_path))
+    b, _ = sar_tasks._calibrated_parcel(str(band), str(xml), crossing, str(tmp_path))
+    # same rows, 8 degrees-hundredths wide instead of 4: about twice the footprint pixels
+    assert 1.8 < b["parcel_pixels"] / a["parcel_pixels"] < 2.2
+    assert b["parcel_pixels"] > b["pixel_count"]
+    assert b["valid_fraction"] == b["pixel_count"] / b["parcel_pixels"] < 0.65
+
+
+def test_a_failing_footprint_count_never_loses_the_calibrated_parcel(tmp_path, monkeypatch):
+    band, xml = tmp_path / "vv.tif", tmp_path / "vv.xml"
+    _grd(band)
+    xml.write_bytes(LUT)
+
+    def boom(*_args):
+        raise RuntimeError("no footprint")
+
+    monkeypatch.setattr(sar_tasks, "_footprint_pixels", boom)
+    parcel = box(-1.57, 42.83, -1.53, 42.87)
+    stats, raster = sar_tasks._calibrated_parcel(str(band), str(xml), parcel, str(tmp_path))
+    assert stats["pixel_count"] > 0 and raster is not None
+    assert stats["valid_fraction"] is None
+
+
+def test_the_footprint_is_never_smaller_than_the_pixels_found_inside(tmp_path, monkeypatch):
+    band, xml = tmp_path / "vv.tif", tmp_path / "vv.xml"
+    _grd(band)
+    xml.write_bytes(LUT)
+    monkeypatch.setattr(sar_tasks, "_footprint_pixels", lambda *_args: 1)
+    stats, _ = sar_tasks._calibrated_parcel(str(band), str(xml), box(-1.57, 42.83, -1.53, 42.87), str(tmp_path))
+    assert stats["valid_fraction"] == 1.0

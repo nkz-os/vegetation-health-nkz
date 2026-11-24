@@ -18,6 +18,16 @@ import json
 logger = logging.getLogger(__name__)
 
 
+def _s1_orbit_fields(properties: Dict[str, Any]) -> Dict[str, Any]:
+    """Platform, relative orbit and orbit direction of a Sentinel-1 STAC item, as the catalogue gives them."""
+    return {
+        "platform": properties.get("platform"),
+        "relative_orbit": properties.get("sat:relative_orbit"),
+        "orbit_state": properties.get("sat:orbit_state"),
+        "product_type": properties.get("product:type"),  # the catalogue's own code, verbatim
+    }
+
+
 class CopernicusDataSpaceClient:
     """Client for Copernicus Data Space Ecosystem API."""
     
@@ -303,6 +313,7 @@ class CopernicusDataSpaceClient:
                     "geometry": feature.get("geometry"),
                     "assets": feature.get("assets", {}),
                     "links": feature.get("links", []),
+                    **_s1_orbit_fields(feature["properties"]),
                 }
                 scenes.append(scene)
             logger.info("Found %d Sentinel-1 GRD scenes matching criteria", len(scenes))
@@ -310,6 +321,30 @@ class CopernicusDataSpaceClient:
         except requests.RequestException as e:
             logger.error("Failed to search S1 scenes: %s", str(e))
             raise Exception(f"S1 scene search failed: {str(e)}")
+
+    def _s1_item(self, scene_id: str) -> Dict[str, Any]:
+        """The Sentinel-1 item, fetched once per client: bands, calibration and summary share it."""
+        cache = self.__dict__.setdefault("_s1_items", {})
+        if scene_id not in cache:
+            cache[scene_id] = self.get_scene_item(scene_id, collection="sentinel-1-grd")
+        return cache[scene_id]
+
+    def get_s1_scene_summary(self, scene_id: str) -> Dict[str, Any]:
+        """The catalogue's own facts about one Sentinel-1 GRD item, in the shape of ``search_s1_scenes``.
+
+        For jobs queued before the dispatchers passed the scene metadata along. After
+        ``download_s1_bands`` it costs no request: the item is already held.
+        """
+        item = self._s1_item(scene_id)
+        props = item.get("properties") or {}
+        return {
+            "id": item["id"],
+            "sensing_date": item["sensing_date"],
+            "datetime": item["datetime"],
+            "instrument_mode": props.get("sar:instrument_mode", ""),
+            "geometry": item.get("geometry"),
+            **_s1_orbit_fields(props),
+        }
 
     def get_scene_item(self, scene_id: str, collection: str = "sentinel-2-l2a") -> Dict[str, Any]:
         """Fetch a single STAC item by id (public, no auth required).
@@ -333,6 +368,7 @@ class CopernicusDataSpaceClient:
             'geometry': feature.get('geometry'),
             'assets': feature.get('assets', {}),
             'links': feature.get('links', []),
+            'properties': feature.get('properties') or {},
         }
 
     def download_band(
@@ -416,7 +452,7 @@ class CopernicusDataSpaceClient:
         """
         polarizations = polarizations or ["vv", "vh"]
 
-        scene = self.get_scene_item(scene_id, collection="sentinel-1-grd")
+        scene = self._s1_item(scene_id)
         assets = scene.get("assets", {})
 
         band_paths: dict[str, str] = {}
@@ -457,7 +493,7 @@ class CopernicusDataSpaceClient:
         backscatter (see ``sar_calibration``). Missing assets are omitted from the result.
         """
         polarizations = polarizations or ["vv", "vh"]
-        assets = self.get_scene_item(scene_id, collection="sentinel-1-grd").get("assets", {})
+        assets = self._s1_item(scene_id).get("assets", {})
         paths: dict[str, str] = {}
         for pol in polarizations:
             pol_lower = pol.lower()

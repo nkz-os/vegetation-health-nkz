@@ -7,12 +7,30 @@ from datetime import date
 
 from app.celery_app import celery_app
 from app.database import get_db_session
+from app.services import eo_satimg_radar_lst as satimg
+from app.services import fiware_integration as fi
 from app.services.fiware_integration import upsert_eo_lst
-from app.services.lst_processor import process_parcel_lst
-from app.services.clms_lst_processor import process_clms_lst
+from app.services.lst_processor import process_parcel_lst_item
+from app.services.clms_lst_processor import process_clms_lst_item
 from app.services.platform_credentials import get_copernicus_credentials_with_fallback
 
 logger = logging.getLogger(__name__)
+
+
+def _write_satimg(tenant_id: str, parcel_id: str, geometry_geojson: dict, build_take, item, stats: dict) -> None:
+    """EOSatelliteImagery of one LST take, for tenants that have it on. Never raises, never fails the task.
+
+    ``build_take(item)`` runs inside the guard and only when the tenant has the new form on.
+    """
+    try:
+        if not fi.satimg_enabled(tenant_id):
+            return
+        take = build_take(item)
+        if take is not None:
+            satimg.write_lst(tenant_id, satimg.parcel_target(parcel_id, geometry_geojson), take, stats)
+    except Exception as exc:
+        logger.error("eo_satimg: tenant=%s target=%s LST not written: %s", tenant_id, parcel_id, exc,
+                     exc_info=True)
 
 
 def _auth_headers() -> dict[str, str]:
@@ -43,7 +61,7 @@ def process_parcel_lst_task(
 ):
     """Fetch Landsat LST for a parcel and upsert EOProduct.lst."""
     try:
-        stats, sensing_date_str, scene_id = process_parcel_lst(
+        stats, sensing_date_str, scene_id, item = process_parcel_lst_item(
             latitude,
             longitude,
             geometry_geojson,
@@ -63,6 +81,7 @@ def process_parcel_lst_task(
         )
         if not entity_id:
             raise RuntimeError(f"EOProduct LST upsert failed for {parcel_id}")
+        _write_satimg(tenant_id, parcel_id, geometry_geojson, satimg.landsat_take, item, stats)
 
         logger.info(
             "Published LST %.1f°C for parcel %s (scene %s)",
@@ -97,7 +116,7 @@ def process_parcel_clms_lst_task(
 ):
     """Fetch CLMS LST (hourly, 3 km) for a parcel and upsert EOProduct.lst."""
     try:
-        stats, sensing_dt_str, scene_id = process_clms_lst(
+        stats, sensing_dt_str, scene_id, item = process_clms_lst_item(
             latitude, longitude, geometry_geojson,
             auth_headers=_auth_headers(),
         )
@@ -116,6 +135,7 @@ def process_parcel_clms_lst_task(
         )
         if not entity_id:
             raise RuntimeError(f"EOProduct CLMS LST upsert failed for {parcel_id}")
+        _write_satimg(tenant_id, parcel_id, geometry_geojson, satimg.clms_take, item, stats)
 
         logger.info(
             "Published CLMS LST %.1f°C for %s (%s)",

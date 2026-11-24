@@ -236,6 +236,7 @@ def _dispatch_sar(
     """
     job_ids: list[str] = []
     try:
+        from app.services.eo_satimg_radar_lst import scene_job_params
         from app.tasks.sar_tasks import download_sentinel1_scene
 
         s1_scenes = copernicus.search_s1_scenes(
@@ -252,6 +253,7 @@ def _dispatch_sar(
                 "bbox": bbox,
                 "sensing_date": s1_scene["sensing_date"],
                 "entity_id": entity_id,
+                **scene_job_params(s1_scene),
             }
             if crop_season_id:
                 s1_params["crop_season_id"] = crop_season_id

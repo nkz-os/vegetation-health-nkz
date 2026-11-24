@@ -289,6 +289,7 @@ def check_and_process_entity(self, subscription_id, start_date, end_date):
         # jobs with index_type "SAR-VV" and "SAR-VH", integrating into the
         # same VegetationJob pipeline and frontend available_indices.
         try:
+            from app.services.eo_satimg_radar_lst import scene_job_params
             s1_scenes = client.search_s1_scenes(
                 intersects=intersects_geojson,
                 start_date=sar_start,
@@ -320,6 +321,7 @@ def check_and_process_entity(self, subscription_id, start_date, end_date):
                             "bbox": bbox,
                             "sensing_date": s1_scene["sensing_date"],
                             "entity_id": sub.entity_id,
+                            **scene_job_params(s1_scene),
                         }
                         s1_job = VegetationJob(
                             id=uuid.uuid4(),

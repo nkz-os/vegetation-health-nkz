@@ -128,6 +128,8 @@ async def analyze_sar(
 
     # Create and dispatch download_sar jobs
 
+    from app.services.eo_satimg_radar_lst import scene_job_params
+
     job_ids = []
     for s1_scene in s1_scenes:
         s1_params = {
@@ -136,6 +138,7 @@ async def analyze_sar(
             "bbox": bbox,
             "sensing_date": s1_scene["sensing_date"],
             "entity_id": entity_id,
+            **scene_job_params(s1_scene),
         }
         job = VegetationJob(
             id=uuid.uuid4(),
