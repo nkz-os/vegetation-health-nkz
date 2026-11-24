@@ -232,11 +232,12 @@ def _zone_sigma0_stats(parcel_raster_path: str, zone_geom, exact: bool = False) 
 
 
 def _publish_zone_sar_products(tenant_id: str, entity_id: str, calibrated_paths: Dict[str, str],
-                               acq_date, take=None) -> int:
+                               acq_date, take=None, parcel_verdict=None) -> int:
     """Per-management-zone VV/VH EOProducts. Never raises; one zone failing skips only it.
 
     ``take`` (a ``RadarTake``, only when the tenant writes EOSatelliteImagery) also writes the zone's
-    ``s1-backscatter``, for the current management zones only.
+    ``s1-backscatter``, for the current management zones only, and only when the parcel's take of the same
+    scene was written (``parcel_verdict``): a zone follows its parcel, never wins on its own coverage.
 
     sarMoisture / sarChangeFlag are NOT published per zone: the SMI needs the
     VV raster and DEM, and the change flag needs per-zone history.
@@ -263,10 +264,14 @@ def _publish_zone_sar_products(tenant_id: str, entity_id: str, calibrated_paths:
                                       vv["mean"], vh["mean"], stats):
                 published += 1
             if take is not None and zone.get("relation") == CURRENT_ZONE_RELATION:
-                satimg.write_backscatter(
-                    tenant_id, satimg.zone_target(entity_id, zone["zone_urn"], zone["geometry"]), take,
-                    {"VV": vv, "VH": vh},
-                )
+                if parcel_verdict in satimg.WRITTEN:
+                    satimg.write_backscatter(
+                        tenant_id, satimg.zone_target(entity_id, zone["zone_urn"], zone["geometry"]), take,
+                        {"VV": vv, "VH": vh}, follow_parcel=True,
+                    )
+                else:
+                    logger.info("eo_satimg: zone %s backscatter not written, the parcel take was not (%s)",
+                                zone["zone_id"], parcel_verdict)
         except Exception as exc:
             logger.warning("SAR zone %s product failed for %s: %s", zone["zone_id"], entity_id, exc)
     return published
@@ -644,6 +649,24 @@ def download_sentinel1_scene(
                     logger.error("eo_satimg: scene %s of %s not described: %s", scene_id, entity_id, exc,
                                  exc_info=True)
 
+            def _write_parcel_backscatter():
+                """New form of the parcel backscatter (once); its verdict decides the zones' new form."""
+                nonlocal backscatter_verdict, backscatter_done
+                if backscatter_done or satimg_take is None or not raw_by_pol:
+                    return
+                backscatter_done = True
+                try:
+                    backscatter_verdict = satimg.write_backscatter(
+                        tenant_id,
+                        satimg.parcel_target(entity_id, json.loads(json.dumps(geom.__geo_interface__))),
+                        satimg_take, raw_by_pol,
+                    )
+                except Exception as exc:
+                    logger.error("eo_satimg: backscatter of scene %s for %s not written: %s",
+                                 scene_id, entity_id, exc, exc_info=True)
+
+            backscatter_done = False
+
             # ── Publish EOProduct when both VV and VH are ready ──────
             if "VV" in stats_by_pol and "VH" in stats_by_pol:
                 vv_mean = stats_by_pol["VV"]["mean"]
@@ -668,10 +691,13 @@ def download_sentinel1_scene(
                 else:
                     logger.warning("Failed to publish EOProduct for %s", entity_id)
 
+                _write_parcel_backscatter()  # after the old form, before the zones' new form
+
                 # Per-zone products from the same calibrated rasters (additive).
                 try:
                     if calibrated_paths.get("VV") and calibrated_paths.get("VH"):
-                        _publish_zone_sar_products(tenant_id, entity_id, calibrated_paths, acq_date, take=satimg_take)
+                        _publish_zone_sar_products(tenant_id, entity_id, calibrated_paths, acq_date, take=satimg_take,
+                                                   parcel_verdict=backscatter_verdict)
                 except Exception as exc:
                     logger.warning("SAR zone products skipped for %s: %s", entity_id, exc)
 
@@ -716,17 +742,7 @@ def download_sentinel1_scene(
                 except Exception as exc:
                     logger.warning("SMI computation skipped for %s: %s", entity_id, exc)
 
-            # New form of the parcel backscatter, after the old form above.
-            if satimg_take is not None and raw_by_pol:
-                try:
-                    backscatter_verdict = satimg.write_backscatter(
-                        tenant_id,
-                        satimg.parcel_target(entity_id, json.loads(json.dumps(geom.__geo_interface__))),
-                        satimg_take, raw_by_pol,
-                    )
-                except Exception as exc:
-                    logger.error("eo_satimg: backscatter of scene %s for %s not written: %s",
-                                 scene_id, entity_id, exc, exc_info=True)
+            _write_parcel_backscatter()  # when the old form above did not reach it
 
             # ── SAR Change Detection ──────────────────────────────────
             try:

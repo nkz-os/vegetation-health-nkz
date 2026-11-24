@@ -170,7 +170,7 @@ def _write_satimg(tenant_id: str, parcel_urn: str, geometry: dict, index: str, s
         analytics["pixelCount"] = statistics.get("pixel_count")
         analytics["cloudCoverage"] = so.cloud_coverage(scene.get("cloud_cover"))
         so.write_optical(tenant_id, so.parcel_target(parcel_urn, geometry), so.stac_take(scene, day), analytics,
-                         index_type=index)
+                         index_type=index, fill_missing=True)
     except Exception as exc:
         logger.error("eo_satimg: baseline tenant=%s target=%s index=%s day=%s failed: %s",
                      tenant_id, parcel_urn, index, day, exc, exc_info=True)

@@ -310,6 +310,7 @@ def _publish_satimg_parcel(
     parcel_cloud_fraction: Optional[float],
     geometry: Optional[dict],
     lost_day: bool,
+    db=None,
 ):
     """Write the parcel's EOSatelliteImagery for this index; the zone write to follow, or None.
 
@@ -335,6 +336,10 @@ def _publish_satimg_parcel(
             tenant_id, so.parcel_target(job.entity_id, geometry), take, analytics,
             index_type=index_type, interior_fraction=(interior or {}).get("valid_fraction"),
             merge_only=lost_day,
+            # A single-scene entity is the whole scene: complete it with the scene's other completed jobs.
+            # (A composite is left as it was: its jobs are not matched by window here.)
+            complete=(None if window or db is None else
+                      (lambda: so.completing_analytics(db, tenant_id, job, primary_scene.id, index_type))),
         )
         return so.ZoneWrite(so.zone_take(take), verdict) if verdict in so.WRITTEN else None
     except Exception as exc:
@@ -869,7 +874,7 @@ def calculate_vegetation_index(
                 window=(start_date[:10], end_date[:10]) if is_temporal_composite else None,
                 raster_url=f"s3://{bucket_name}/{remote_raster_path}",
                 interior=interior, parcel_cloud_fraction=parcel_cloud_fraction, geometry=parcel_geojson,
-                lost_day=better_scene_published,
+                lost_day=better_scene_published, db=db,
             )
 
         # Per-management-zone products: additive, never affects the parcel result.

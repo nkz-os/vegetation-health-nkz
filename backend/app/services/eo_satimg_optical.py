@@ -25,7 +25,7 @@ import numbers
 import re
 from dataclasses import dataclass, replace as dc_replace
 from datetime import date, datetime, timezone
-from typing import Any, Mapping, Optional
+from typing import Any, Callable, Mapping, Optional
 
 from nkz_platform_sdk import parse_eo_entities
 
@@ -258,6 +258,11 @@ def _stored_fraction(values: Mapping[str, Any], idx: str) -> Optional[float]:
     return float(max(others)) if others else None
 
 
+def _reference_index(values: Mapping[str, Any], default: str) -> str:
+    """First of INDEX_NAMES the stored entity holds: the only index allowed to displace it."""
+    return next((n for n in INDEX_NAMES if n in values), default)
+
+
 def _verdict(raw, obs, take: OpticalTake, idx: str, fraction: Optional[float], follow: Optional[str]) -> str:
     if raw is None:
         return CREATE
@@ -272,6 +277,8 @@ def _verdict(raw, obs, take: OpticalTake, idx: str, fraction: Optional[float], f
         return REPLACE
     if take.scene is None:
         return SKIP  # the Statistical API never displaces a scene
+    if idx != _reference_index(obs.values, idx):
+        return SKIP  # only the reference index of a take may displace another product's entity
     if obs.product_id is None:
         return REPLACE  # a scene over the Statistical API
     stored = _stored_fraction(obs.values, idx)
@@ -294,14 +301,18 @@ def _present(value: Any) -> bool:
 def write_optical(tenant: str, target: Target, take: OpticalTake, analytics: Mapping[str, Any], *,
                   index_type: str, interior_fraction: Optional[float] = None,
                   follow: Optional[str] = None, merge_only: bool = False,
-                  replace_interior: bool = False) -> Optional[str]:
+                  replace_interior: bool = False, fill_missing: bool = False,
+                  complete: Optional[Callable[[], Mapping[str, Any]]] = None) -> Optional[str]:
     """Write one optical value set into the take's entity.
 
     Returns the verdict (create/merge/replace/skip), or None when the tenant is
     switched off or the write failed (logged). ``follow`` is the parcel's verdict
     for a zone write; ``merge_only`` allows nothing but completing the same take;
     ``replace_interior`` swaps the index's whole ``{index}.interior*`` group for the new one (a recompute
-    that finds no valid interior must not leave the old mean/median/percentiles beside fraction 0).
+    that finds no valid interior must not leave the old mean/median/percentiles beside fraction 0);
+    ``fill_missing`` completes the same take with the names it lacks and never overwrites a stored one;
+    ``complete`` (evaluated only when an entity is going to be written) gives the analytics of the take's other
+    completed jobs: only indices the entity does not hold yet are taken, whole, so a stored one never changes.
     """
     if not fi.satimg_enabled(tenant):
         return None
@@ -322,8 +333,18 @@ def write_optical(tenant: str, target: Target, take: OpticalTake, analytics: Map
             return SKIP
         merging = verdict == MERGE
         values = dict(obs.values) if merging else {}
+        if complete is not None:
+            try:
+                # Whole indices only: one already stored keeps exactly the statistics it was written with.
+                held = {n for n in INDEX_NAMES if n in values} | {idx}
+                values.update({k: v for k, v in complete().items()
+                               if _present(v) and k.split(".", 1)[0] not in held})
+            except Exception as exc:
+                logger.warning("eo_satimg: %s take not completed from the jobs, written without: %s", context, exc)
         if merging and replace_interior:
             values = {n: v for n, v in values.items() if not n.startswith(f"{idx}.interior")}
+        if merging and fill_missing:
+            fresh = {k: v for k, v in fresh.items() if k not in values}
         values.update(fresh)
         sensing = take.sensing
         if merging and sensing.time_utc is None and obs.sensing_time is not None:
@@ -332,6 +353,10 @@ def write_optical(tenant: str, target: Target, take: OpticalTake, analytics: Map
         raster = None
         if folder:
             raster = RasterMeta(folder, [(n, _EXPLANATION[n]) for n in INDEX_NAMES if n in values])
+        if verdict == REPLACE and obs is not None:
+            dropped = [n for n in INDEX_NAMES if n in obs.values and n not in values]
+            if dropped:
+                logger.info("eo_satimg: %s replaced another take, indices dropped: %s", context, ", ".join(dropped))
         entity = build_entity(
             tenant=tenant, target=target, family=take.family, sensing=sensing, analytics=values,
             scene=take.scene, raster=raster,
@@ -412,10 +437,11 @@ def with_scene_product(db, tenant_id: str, result: Optional[Mapping[str, Any]]) 
 
         from app.models import VegetationScene
 
-        row = db.query(VegetationScene).filter(
-            VegetationScene.tenant_id == tenant_id,
-            VegetationScene.id == uuid.UUID(str(out["scene_id"])),
-        ).first()
+        with db.begin_nested():  # a failed query must not leave the caller's session unusable
+            row = db.query(VegetationScene).filter(
+                VegetationScene.tenant_id == tenant_id,
+                VegetationScene.id == uuid.UUID(str(out["scene_id"])),
+            ).first()
         if row is not None and isinstance(row.scene_id, str) and row.scene_id:
             out["scene_product_id"] = row.scene_id
     except Exception as exc:
@@ -458,12 +484,14 @@ def _is_job_take(raw, obs, result: Mapping[str, Any]) -> bool:
 
 
 def remove_index(tenant: str, target_kind: str, target_urn: str, family: Family, day: date,
-                 index_type: str, job_result: Optional[Mapping[str, Any]] = None) -> bool:
+                 index_type: str, job_result: Optional[Mapping[str, Any]] = None,
+                 keep_if: Optional[Callable[[], bool]] = None) -> bool:
     """Drop one index and its statistics from the entity; delete the entity once no index is left.
 
     Same rule as the legacy ``delete_eo_index``: one index job removes its own values,
     never the other indices of the take. With ``job_result`` the entity is left alone when it
-    holds another take. Missing entity = done. Never raises.
+    holds another take. ``keep_if`` (evaluated only when the entity holds this job's take) leaves the
+    value alone when another live job owns it. Missing entity = done. Never raises.
     """
     idx = index_type.lower()
     context = f"tenant={tenant} target={target_urn} family={Family(family).value} day={day.isoformat()}"
@@ -480,6 +508,9 @@ def remove_index(tenant: str, target_kind: str, target_urn: str, family: Family,
             return True
         values = {n: v for n, v in obs.values.items() if n.split(".", 1)[0] != idx}
         if len(values) == len(obs.values):
+            return True
+        if keep_if is not None and keep_if():
+            logger.info("eo_satimg: %s %s kept, another live job owns the value", context, idx)
             return True
         if not any(n in values for n in INDEX_NAMES):
             return fi.delete_eo_satellite_imagery(tenant, eid)
@@ -508,12 +539,127 @@ def remove_index(tenant: str, target_kind: str, target_urn: str, family: Family,
         return False
 
 
-def remove_job_index(tenant: str, parcel_urn: str, result: Mapping[str, Any], index_type: str) -> bool:
+def job_wrote_nothing(result: Optional[Mapping[str, Any]]) -> bool:
+    """A calculation with no valid pixels (or an idempotent re-run) owns no value.
+
+    A ``better_scene_same_date`` job does not count here: its values are real and may be in the
+    entity (the take is completed from the jobs), so ``_is_job_take`` decides for it.
+    """
+    return bool(result) and bool(result.get("skipped") or result.get("skip_reason") == "no_valid_pixels")
+
+
+def remove_job_index(tenant: str, parcel_urn: str, result: Mapping[str, Any], index_type: str,
+                     keep_if: Optional[Callable[[], bool]] = None) -> bool:
     """Remove a deleted calculation's index from its parcel entity (the zones go with delete_zone_products)."""
+    if job_wrote_nothing(result):
+        return True
     family_day = job_family_day(result or {})
     if family_day is None or not parcel_urn:
         return True
-    return remove_index(tenant, "parcel", parcel_urn, family_day[0], family_day[1], index_type, result)
+    return remove_index(tenant, "parcel", parcel_urn, family_day[0], family_day[1], index_type, result, keep_if)
+
+
+def _take_key(result: Mapping[str, Any]) -> Optional[tuple]:
+    """(composite window or sensing day, scene row id) of a calculation's take."""
+    if result.get("is_composite"):
+        window = result.get("date_range")
+        if not isinstance(window, Mapping):
+            return None
+        return ("composite", str(window.get("start"))[:10], str(window.get("end"))[:10], None)
+    sensing = result.get("sensing_date")
+    return ("scene", str(sensing)[:10], None, result.get("scene_id")) if sensing else None
+
+
+def other_job_holds_value(db, tenant_id: str, job, result: Mapping[str, Any], index_type: str,
+                          exclude_ids=()) -> bool:
+    """Whether another completed, non-deleted job of the tenant owns the same value of the entity.
+
+    Same parcel, index, scene and day (a composite: same window). ``exclude_ids`` are the jobs being
+    deleted in the same request: they do not protect each other. Anything unreadable counts as "yes":
+    a value another job may own is never removed on a guess. Never raises.
+    """
+    try:
+        from app.models.jobs import VegetationJob
+
+        key = _take_key(result or {})
+        if key is None:
+            return False
+        skip = {str(i) for i in exclude_ids} | {str(job.id)}
+        with db.begin_nested():  # a failed query must not leave the caller's session unusable
+            query = db.query(VegetationJob).filter(
+                VegetationJob.tenant_id == tenant_id,
+                VegetationJob.entity_id == job.entity_id,
+                VegetationJob.status == "completed",
+                VegetationJob.deleted_at.is_(None),
+            )
+            if key[0] == "composite":
+                query = query.filter(VegetationJob.result["date_range"]["end"].astext == key[2])
+            else:
+                query = query.filter(VegetationJob.result["sensing_date"].astext == key[1])
+            rows = query.all()
+        idx = index_type.lower()
+        for row in rows:
+            res = row.result if isinstance(row.result, Mapping) else {}
+            if (str(row.id) in skip or row.tenant_id != tenant_id or row.entity_id != job.entity_id
+                    or row.status != "completed" or row.deleted_at is not None or job_wrote_nothing(res)):
+                continue
+            row_index = res.get("index_type") or (row.parameters or {}).get("index_type")
+            if str(row_index or "").lower() == idx and _take_key(res) == key:
+                return True
+        return False
+    except Exception as exc:
+        logger.warning("eo_satimg: owners of a deleted job's value not checked, value kept: %s", exc)
+        return True
+
+
+_NOT_SCENE_INDEX = ("CUSTOM", "VRA_ZONES")
+
+
+def _job_index(row, res: Mapping[str, Any]) -> str:
+    return str(res.get("index_type") or (row.parameters or {}).get("index_type") or "").lower()
+
+
+def completing_analytics(db, tenant_id: str, job, scene_row_id, exclude_index: str) -> dict:
+    """Analytics of the OTHER completed, non-deleted index jobs of the same tenant, parcel and scene.
+
+    Built from ``result.statistics`` and ``result.interior`` with ``index_analytics``; take-wide values
+    (pixelCount, validPixelFraction, cloudCoverage, parcelCloudFraction) are never taken from jobs.
+    Single-scene jobs only (not composite, custom or radar). Several jobs of one index: the latest
+    completed. Raises on a failed query: the caller writes without it.
+    """
+    from app.models.jobs import VegetationJob
+
+    scene = str(scene_row_id)
+    with db.begin_nested():  # a failed query must not leave the job's session unusable
+        rows = db.query(VegetationJob).filter(
+            VegetationJob.tenant_id == tenant_id,
+            VegetationJob.entity_id == job.entity_id,
+            VegetationJob.job_type == "calculate_index",
+            VegetationJob.status == "completed",
+            VegetationJob.deleted_at.is_(None),
+            VegetationJob.id != job.id,
+            VegetationJob.result["scene_id"].astext == scene,
+        ).order_by(VegetationJob.completed_at.desc()).all()
+    skip, latest = exclude_index.lower(), {}
+    for row in rows:
+        res = row.result if isinstance(row.result, Mapping) else {}
+        idx = _job_index(row, res)
+        if (row.id == job.id or row.tenant_id != tenant_id or row.entity_id != job.entity_id
+                or row.status != "completed" or row.deleted_at is not None or job_wrote_nothing(res)
+                or res.get("is_composite") or res.get("is_custom") or str(res.get("scene_id")) != scene
+                or idx not in INDEX_NAMES or idx == skip or not isinstance(res.get("statistics"), Mapping)
+                or not fi.has_valid_pixels(res["statistics"])):
+            continue
+        moment = row.completed_at
+        if idx not in latest or (moment is not None and (latest[idx][0] is None or moment > latest[idx][0])):
+            latest[idx] = (moment, res)
+    out: dict = {}
+    for idx in INDEX_NAMES:
+        if idx in latest:
+            res = latest[idx][1]
+            interior = res.get("interior") if isinstance(res.get("interior"), Mapping) else None
+            out.update(index_analytics(idx, res["statistics"], interior=interior))
+    return out
 
 
 def parcel_holds_other_take(tenant: str, parcel_urn: str, take: OpticalTake) -> bool:

@@ -214,11 +214,12 @@ def _publish_zone_satimg(tenant_id, parcel_urn, zone, index_type, stats, cloud_c
 
 
 def delete_zone_products(tenant_id: str, parcel_urn: str, sensing_date, index_type: str,
-                         job_result: Optional[Dict[str, Any]] = None) -> None:
+                         job_result: Optional[Dict[str, Any]] = None, keep_if=None) -> None:
     """Remove ``index_type`` from the parcel's zone products of one date, both forms. Fail-safe, never raises.
 
     ``job_result`` dates the EOSatelliteImagery take (a composite by its window end);
-    without it the single-scene take of ``sensing_date`` is assumed.
+    without it the single-scene take of ``sensing_date`` is assumed. The new form is left alone when
+    the job wrote nothing (skipped) or ``keep_if()`` says another live job owns the value.
     """
     from app.services import eo_satimg_optical as so
     from app.services.fiware_integration import delete_eo_index
@@ -232,8 +233,8 @@ def delete_zone_products(tenant_id: str, parcel_urn: str, sensing_date, index_ty
                                 index_type)
             except Exception as exc:
                 logger.warning("Zone product cleanup failed for %s: %s", zone["zone_id"], exc)
-            if family_day and zone.get("relation") == CURRENT_ZONE_RELATION:
+            if family_day and zone.get("relation") == CURRENT_ZONE_RELATION and not so.job_wrote_nothing(job_result):
                 so.remove_index(tenant_id, "zone", zone["zone_urn"], family_day[0], family_day[1], index_type,
-                                job_result)
+                                job_result, keep_if)
     except Exception as exc:
         logger.warning("Zone product cleanup failed for %s: %s", parcel_urn, exc)

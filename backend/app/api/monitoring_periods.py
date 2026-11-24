@@ -276,12 +276,19 @@ async def delete_monitoring_period(
                 from app.services.fiware_integration import _entity_id_for_acquisition, delete_eo_index
                 eo_id = _entity_id_for_acquisition(tenant_id, entity_id, sensing_str)
                 delete_eo_index(tenant_id, eo_id, job_index)
-                from app.services.eo_satimg_optical import remove_job_index, with_scene_product
+                from app.services.eo_satimg_optical import (
+                    other_job_holds_value, remove_job_index, with_scene_product,
+                )
                 job_result = with_scene_product(db, tenant_id, job.result)
-                remove_job_index(tenant_id, entity_id, job_result, job_index)
+
+                def keep_if(job=job, job_result=job_result, job_index=job_index):
+                    return other_job_holds_value(db, tenant_id, job, job_result, job_index,
+                                                 [j.id for j in jobs])
+
+                remove_job_index(tenant_id, entity_id, job_result, job_index, keep_if)
                 from app.services.zone_products import delete_zone_products
                 delete_zone_products(tenant_id, entity_id, sensing_str, job_index,
-                                     job_result=job_result)
+                                     job_result=job_result, keep_if=keep_if)
 
             # Delete raster from MinIO
             raster_url = (job.parameters or {}).get("raster_url", "")

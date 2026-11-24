@@ -493,7 +493,7 @@ def test_replace_prunes_leftover_attributes_of_the_losing_take(store, rl):
     assert rl.write_backscatter(TENANT, target, first, {"VV": {"mean": -10.0, "pixel_count": 10,
                                                                 "valid_fraction": 0.9}}) == rl.CREATE
     assert rl.write_backscatter(TENANT, target, bare, {"VV": {"mean": -9.0, "pixel_count": 20,
-                                                               "valid_fraction": 0.9}}) == rl.REPLACE
+                                                               "valid_fraction": 0.95}}) == rl.REPLACE
     entity = store.entities[BS_ID]
     assert _prop(entity, "productID") == S1_B
     for gone in ("orbitNumber", "productBbox"):
@@ -593,8 +593,8 @@ def test_terrain_zone_skipped(store, rl):
 def test_zone_same_day_larger_coverage_wins(store, rl):
     take_b = rl.radar_take(S1_B, {"scene_id": S1_B, "sensing_date": "2026-06-21"})
     target = rl.zone_target(PARCEL, ZONE, GEOM)
-    both = lambda n: {"VV": {"mean": -9.0, "pixel_count": n, "valid_fraction": 0.9},  # noqa: E731
-                      "VH": {"mean": -9.0, "pixel_count": n, "valid_fraction": 0.9}}
+    both = lambda n: {"VV": {"mean": -9.0, "pixel_count": n, "valid_fraction": n / 32},  # noqa: E731
+                      "VH": {"mean": -9.0, "pixel_count": n, "valid_fraction": n / 32}}
     run_s1(zones=[CURRENT_ZONE])
     assert rl.write_backscatter(TENANT, target, take_b, both(10)) == rl.SKIP
     assert rl.write_backscatter(TENANT, target, take_b, both(31)) == rl.REPLACE
@@ -755,7 +755,7 @@ def test_merge_keeps_the_smaller_coverage_when_a_stored_polarisation_is_kept(sto
     assert _analytics(store.entities[BS_ID])["pixelCount"] == "60"
 
 
-def test_landsat_replacement_parses_and_clms_tie_keeps_the_stored(store, rl):
+def test_landsat_replacement_parses_and_clms_tie_goes_to_the_latest_hour(store, rl):
     target = rl.parcel_target(PARCEL, GEOM)
     item_a = {"id": LANDSAT_ID, "geometry": FOOT, "properties": {"datetime": "2026-06-20T10:50:12Z",
                                                                  "platform": "landsat-9"}}
@@ -769,5 +769,6 @@ def test_landsat_replacement_parses_and_clms_tie_keeps_the_stored(store, rl):
     c1 = {"id": CLMS_ID, "geometry": FOOT, "properties": {"datetime": "2026-06-20T11:00:00Z"}}
     c2 = {"id": CLMS_ID + "-b", "geometry": FOOT, "properties": {"datetime": "2026-06-20T12:00:00Z"}}
     assert rl.write_lst(TENANT, target, rl.clms_take(c1), stats(2)) == rl.CREATE
-    assert rl.write_lst(TENANT, target, rl.clms_take(c2), stats(2)) == rl.SKIP
-    assert _prop(store.entities[CL_ID], "productID") == CLMS_ID
+    assert rl.write_lst(TENANT, target, rl.clms_take(c2), stats(2)) == rl.REPLACE  # equal coverage: the latest hour
+    assert _prop(store.entities[CL_ID], "productID") == CLMS_ID + "-b"
+    assert _prop(store.entities[CL_ID], "sensingDate") == "2026-06-20T12:00:00Z"
