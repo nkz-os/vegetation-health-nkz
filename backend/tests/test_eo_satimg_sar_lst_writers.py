@@ -5,6 +5,7 @@ stay), so a "replace" that forgets the leftovers fails here.
 """
 import asyncio
 import copy
+import json
 import logging
 import os
 import sys
@@ -42,7 +43,7 @@ CLMS_ID = "c_gls_LST-20260620T1100_GLOBE_MSG_V3.0.1"
 SCENE_A = {
     "id": S1_A, "sensing_date": "2026-06-21", "datetime": "2026-06-21T05:43:21.123456Z",
     "platform": "sentinel-1a", "relative_orbit": 103, "orbit_state": "descending",
-    "geometry": FOOT, "instrument_mode": "IW",
+    "geometry": FOOT, "instrument_mode": "IW", "product_type": "IW_GRDH_1S",
 }
 VV = {"mean": -12.0, "min": -20.0, "max": -5.0, "pixel_count": 80, "valid_fraction": 0.9}
 VH = {"mean": -18.5, "min": -25.0, "max": -10.0, "pixel_count": 70, "valid_fraction": 0.8}
@@ -120,7 +121,7 @@ def _prop(entity, name):
 def _assert_parse(store, expected):
     """Every stored entity parses to exactly one observation with its family and day."""
     seen = {}
-    for eid, entity in store.entities.items():
+    for eid, entity in getattr(store, "entities", store).items():
         found = parse_eo_entities([entity])
         assert len(found) == 1, eid
         seen[eid] = (found[0].family, found[0].sensing_day)
@@ -141,6 +142,8 @@ def _expected_params(params):
     assert params["orbit_direction"] == "DESCENDING"
     assert params["scene_footprint"] == FOOT
     assert params["instrument_mode"] == "IW"
+    assert params["scene_product_type"] == "IW_GRDH_1S"
+    json.dumps(params)  # the parameters go into a JSON column
     assert params["sensing_date"] == "2026-06-21"
 
 
@@ -237,7 +240,8 @@ def test_search_s1_scenes_returns_platform_and_orbit():
 
     feature = {"id": S1_A, "geometry": FOOT, "assets": {}, "links": [], "properties": {
         "datetime": "2026-06-21T05:43:21.123456Z", "platform": "sentinel-1a", "sat:relative_orbit": 103,
-        "sat:orbit_state": "descending", "sar:instrument_mode": "IW", "sar:polarizations": ["VV", "VH"]}}
+        "sat:orbit_state": "descending", "sar:instrument_mode": "IW", "sar:polarizations": ["VV", "VH"],
+        "product:type": "IW_GRDH_1S"}}
     client = CopernicusDataSpaceClient("id", "secret")
     response = MagicMock()
     response.json.return_value = {"features": [feature]}
@@ -246,6 +250,7 @@ def test_search_s1_scenes_returns_platform_and_orbit():
         scene = client.search_s1_scenes(bbox=[0, 0, 1, 1], start_date=date(2026, 6, 1), end_date=date(2026, 6, 30))[0]
     assert (scene["platform"], scene["relative_orbit"], scene["orbit_state"]) == ("sentinel-1a", 103, "descending")
     assert scene["instrument_mode"] == "IW" and scene["geometry"] == FOOT
+    assert scene["product_type"] == "IW_GRDH_1S"
 
 
 # ── download_sentinel1_scene harness ────────────────────────────────────────
@@ -254,11 +259,12 @@ GRD_PARAMS = {
     "scene_id": S1_A, "entity_id": PARCEL, "sensing_date": "2026-06-21", "bounds": GEOM,
     "scene_datetime": SCENE_A["datetime"], "scene_platform": "sentinel-1a", "scene_relative_orbit": 103,
     "orbit_direction": "DESCENDING", "scene_footprint": FOOT, "instrument_mode": "IW",
+    "scene_product_type": "IW_GRDH_1S",
 }
 
 
 def run_s1(params=None, *, vv=VV, vh=VH, smi=SMI, previous_vv=-5.0, zones=(), summary=None,
-           scene_id=None):
+           scene_id=None, client=None, events=None):
     """Run the S1 task with the rasters, SMI, zones and previous take replaced; return what it did."""
     from app.tasks.sar_tasks import download_sentinel1_scene
 
@@ -266,11 +272,12 @@ def run_s1(params=None, *, vv=VV, vh=VH, smi=SMI, previous_vv=-5.0, zones=(), su
     if scene_id:
         params["scene_id"] = scene_id
     old = []
-    client = MagicMock()
-    paths = {k: f"/tmp/{k}.tif" for k, st in (("vv", vv), ("vh", vh)) if st is not None}
-    client.download_s1_bands.return_value = paths
-    client.download_s1_calibration.return_value = {k: f"/tmp/{k}.xml" for k in paths}
-    client.get_s1_scene_summary.return_value = summary
+    if client is None:
+        client = MagicMock()
+        paths = {k: f"/tmp/{k}.tif" for k, st in (("vv", vv), ("vh", vh)) if st is not None}
+        client.download_s1_bands.return_value = paths
+        client.download_s1_calibration.return_value = {k: f"/tmp/{k}.xml" for k in paths}
+        client.get_s1_scene_summary.return_value = summary
 
     def calibrated(band, calibration, geom, workdir):
         return dict(vv if "vv" in band else vh), "/tmp/db_parcel.tif"
@@ -282,6 +289,8 @@ def run_s1(params=None, *, vv=VV, vh=VH, smi=SMI, previous_vv=-5.0, zones=(), su
 
     def recorder(tenant, entity):
         old.append((tenant, copy.deepcopy(entity)))
+        if events is not None:
+            events.append(("old", entity["id"]))
         return {"upserted": 1}
 
     prev = [] if previous_vv is None else [{"sensingDate": "2026-06-09", "backscatterVV": previous_vv}]
@@ -326,7 +335,7 @@ def test_backscatter_entity_has_sensing_date_and_scene(store, rl):
     assert _prop(entity, "sensingDate") == "2026-06-21T05:43:21Z"
     assert _prop(entity, "productID") == S1_A
     assert _prop(entity, "productURL").endswith(f"/collections/sentinel-1-grd/items/{S1_A}")
-    assert _prop(entity, "productType") == "GRD"
+    assert _prop(entity, "productType") == "IW_GRDH_1S"  # the item's own code
     assert _prop(entity, "platformName") == "S1A"
     assert _prop(entity, "orbitNumber") == 103
     assert _prop(entity, "operationalMode") == "IW"
@@ -349,6 +358,7 @@ def test_soil_moisture_separate_entity_with_four_analytics(store, rl):
     assert _prop(entity, "analysisType") == "sar-soil-moisture"
     assert _prop(entity, "sensingDate") == "2026-06-21T05:43:21Z"
     assert _prop(entity, "productID") == S1_A
+    _assert_parse({SM_ID: entity}, {SM_ID: ("s1-soil-moisture", DAY)})
     assert _analytics(entity) == {
         "soilMoistureIndex": "0.3000", "soilMoistureIndex.min": "0.1000",
         "soilMoistureIndex.max": "0.6000", "soilMoistureIndex.std": "0.0500", "pixelCount": "75",
@@ -414,7 +424,8 @@ def test_landsat_and_clms_lst_do_not_overwrite(store, rl):
     ls, cl = store.entities[LS_ID], store.entities[CL_ID]
     assert _prop(ls, "analysisType") == _prop(cl, "analysisType") == "land-surface-temperature"
     assert _prop(ls, "productID") == LANDSAT_ID and _prop(cl, "productID") == CLMS_ID  # no "CLMS:" prefix
-    assert _prop(ls, "productType") == "L2SP" and _prop(cl, "productType") == "land_surface_temperature"
+    assert "productType" not in ls  # the item gave none: omitted, no id-token fallback
+    assert _prop(cl, "productType") == "land_surface_temperature"
     assert _prop(ls, "platformName") == "LANDSAT_9" and "orbitNumber" not in ls
     for absent in ("platformName", "orbitNumber", "operationalMode"):
         assert absent not in cl
@@ -574,6 +585,7 @@ def test_terrain_zone_skipped(store, rl):
     assert _analytics(zone) == {"backscatterVV": "-9.0000", "backscatterVH": "-9.0000",
                                 "pixelCount": "30", "validPixelFraction": "0.9500"}
     assert zone["processedBbox"]["value"] == GEOM
+    _assert_parse({k: v for k, v in store.entities.items() if k == ZN_ID}, {ZN_ID: ("s1-backscatter", DAY)})
     # the old form still writes what it wrote before (both zones are its business, not this task's)
     assert len(_old_entities(result)) >= 3
 
@@ -587,6 +599,7 @@ def test_zone_same_day_larger_coverage_wins(store, rl):
     assert rl.write_backscatter(TENANT, target, take_b, both(10)) == rl.SKIP
     assert rl.write_backscatter(TENANT, target, take_b, both(31)) == rl.REPLACE
     assert _prop(store.entities[ZN_ID], "productID") == S1_B
+    _assert_parse({k: v for k, v in store.entities.items() if k == ZN_ID}, {ZN_ID: ("s1-backscatter", DAY)})
 
 
 # ── processors and the calibrated clip give their metadata ──────────────────
@@ -616,3 +629,145 @@ def test_lst_processors_return_the_catalogue_item():
         full = clms_lst_processor.process_clms_lst_item(0.5, 0.5, GEOM)
     assert triple == (stats, "2026-06-20T11:00:00Z", CLMS_ID)
     assert full[:3] == triple and full[3]["properties"]["product:type"] == "land_surface_temperature"
+
+
+# ── fix round 1 ─────────────────────────────────────────────────────────────
+
+LANDSAT_B = "LC08_L2SP_200031_20260620_20260621_02_T1_ST"
+
+
+def test_s1_product_type_is_the_items_and_omitted_without_it(store, rl):
+    assert rl.radar_take(S1_A, GRD_PARAMS).scene.product_type == "IW_GRDH_1S"
+    bare = {k: v for k, v in GRD_PARAMS.items() if k != "scene_product_type"}
+    target = rl.parcel_target(PARCEL, GEOM)
+    assert rl.write_backscatter(TENANT, target, rl.radar_take(S1_A, bare), {"VV": {
+        "mean": -10.0, "pixel_count": 5, "valid_fraction": 0.9}}) == rl.CREATE
+    assert "productType" not in store.entities[BS_ID]
+
+
+def test_landsat_has_no_id_token_fallback_and_takes_the_items_code(rl):
+    item = {"id": LANDSAT_ID, "geometry": FOOT, "properties": {"datetime": "2026-06-20T10:50:12Z"}}
+    assert rl.landsat_take(item).scene.product_type == ""  # the id says L2SP; the item did not
+    item["properties"]["product:type"] = "L2SP-from-catalogue"
+    assert rl.landsat_take(item).scene.product_type == "L2SP-from-catalogue"
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_task_makes_no_extra_catalogue_request(store, rl, monkeypatch, enabled):
+    from app.services.copernicus_client import CopernicusDataSpaceClient
+
+    monkeypatch.setenv("EO_SATIMG_WRITE_TENANTS", TENANT if enabled else "")
+    props = {"datetime": SCENE_A["datetime"], "platform": "sentinel-1a", "sat:relative_orbit": 103,
+             "sat:orbit_state": "descending", "sar:instrument_mode": "IW", "product:type": "IW_GRDH_1S"}
+    item = {"id": S1_A, "sensing_date": "2026-06-21", "datetime": SCENE_A["datetime"], "geometry": FOOT,
+            "properties": props, "assets": {
+                "vv": {"href": "s3://eodata/a/vv.tiff"}, "vh": {"href": "s3://eodata/a/vh.tiff"},
+                "schema-calibration-vv": {"href": "s3://eodata/a/cv.xml"},
+                "schema-calibration-vh": {"href": "s3://eodata/a/ch.xml"}}}
+    calls = []
+    real = CopernicusDataSpaceClient("i", "s")
+    real.get_scene_item = lambda scene_id, collection="sentinel-2-l2a": calls.append(scene_id) or item
+    real._get_s3_client = MagicMock()
+    old_params = {k: v for k, v in GRD_PARAMS.items() if k not in PARAM_KEYS}
+    result = run_s1(old_params, client=real)
+    assert len(calls) == 1  # bands, calibration and the metadata share one item
+    assert result.smi.call_args.kwargs["orbit_direction"] == "DESCENDING"
+    assert (BS_ID in store.entities) is enabled
+    if enabled:
+        assert _prop(store.entities[BS_ID], "productType") == "IW_GRDH_1S"
+
+
+@pytest.mark.parametrize("which", ["landsat", "clms"])
+def test_lst_take_builder_failure_is_contained(store, rl, caplog, monkeypatch, which):
+    from app.tasks import lst_tasks
+
+    item = {"id": LANDSAT_ID, "geometry": FOOT, "properties": {"datetime": "2026-06-20T10:50:12Z"}}
+    stats = {"mean": 30.0, "min": 29.0, "max": 31.0, "std": 0.5, "pixel_count": 4}
+    old = []
+    builder = MagicMock(side_effect=RuntimeError("boom"))
+    patches = [patch.object(fi, "_upsert_eoproduct_entity",
+                            side_effect=lambda t, e: old.append(e) or {"upserted": 1}),
+               patch.object(lst_tasks, "_auth_headers", return_value={}),
+               patch.object(lst_tasks.satimg, "landsat_take", builder),
+               patch.object(lst_tasks.satimg, "clms_take", builder)]
+    task, name, ret = ((lst_tasks.process_parcel_lst_task, "process_parcel_lst_item",
+                        (dict(stats), "2026-06-20", LANDSAT_ID, item)) if which == "landsat" else
+                       (lst_tasks.process_parcel_clms_lst_task, "process_clms_lst_item",
+                        (dict(stats), "2026-06-20T11:00:00Z", CLMS_ID, item)))
+    patches.append(patch.object(lst_tasks, name, return_value=ret))
+    with ExitStack() as stack:
+        for pt in patches:
+            stack.enter_context(pt)
+        with caplog.at_level(logging.ERROR):
+            result = task.run(TENANT, PARCEL, 0.5, 0.5, GEOM)  # a retry would raise here
+        assert result["status"] == "ok" and len(old) == 1 and builder.call_count == 1
+        assert any("eo_satimg" in r.getMessage() for r in caplog.records)
+        # switched off: the builder is not called and nothing is logged
+        builder.reset_mock()
+        caplog.clear()
+        monkeypatch.setenv("EO_SATIMG_WRITE_TENANTS", "")
+        with caplog.at_level(logging.INFO):
+            task.run(TENANT, PARCEL, 0.5, 0.5, GEOM)
+        builder.assert_not_called()
+        assert not [r for r in caplog.records if "eo_satimg" in r.getMessage()]
+
+
+def test_radar_take_failure_is_contained(store, rl, caplog):
+    reference = run_s1()
+    store.entities.clear()
+    with patch.object(rl, "radar_take", side_effect=RuntimeError("boom")), caplog.at_level(logging.ERROR):
+        result = run_s1()
+    assert _old_entities(result) == _old_entities(reference)
+    assert not store.entities
+    result.job.mark_completed.assert_called_once()
+    assert any("eo_satimg" in r.getMessage() for r in caplog.records)
+
+
+def test_new_form_is_written_after_the_old_form(store, rl):
+    events = []
+    real_upsert = store.upsert
+    with patch.object(fi, "upsert_eo_satellite_imagery",
+                      side_effect=lambda t, e: events.append(("new", e["id"])) or real_upsert(t, e)):
+        run_s1(zones=[CURRENT_ZONE], events=events)
+    kinds = [k for k, _ in events]
+    assert kinds[0] == "old" and "new" in kinds
+    first_new = kinds.index("new")
+    # the parcel GRD product (old) is written before any new entity
+    assert any(e.startswith("urn:ngsi-ld:EOProduct") and ":GRD:" in e for _, e in events[:first_new])
+
+
+def test_merge_keeps_the_smaller_coverage_when_a_stored_polarisation_is_kept(store, rl):
+    target = rl.parcel_target(PARCEL, GEOM)
+    take = rl.radar_take(S1_A, GRD_PARAMS)
+    both = {"VV": {"mean": -10.0, "pixel_count": 50, "valid_fraction": 0.9},
+            "VH": {"mean": -17.0, "pixel_count": 40, "valid_fraction": 0.8}}
+    assert rl.write_backscatter(TENANT, target, take, both) == rl.CREATE
+    # the rerun brings VV only, with more pixels: VH from the first run is kept, so coverage is the smaller
+    assert rl.write_backscatter(TENANT, target, take, {"VV": {
+        "mean": -11.0, "pixel_count": 60, "valid_fraction": 0.95}}) == rl.MERGE
+    a = _analytics(store.entities[BS_ID])
+    assert a["backscatterVH"] == "-17.0000" and a["backscatterVV"] == "-11.0000"
+    assert a["pixelCount"] == "40" and a["validPixelFraction"] == "0.8000"
+    # a rerun that brings both takes the new coverage as it is
+    assert rl.write_backscatter(TENANT, target, take, {
+        "VV": {"mean": -11.0, "pixel_count": 60, "valid_fraction": 0.95},
+        "VH": {"mean": -17.5, "pixel_count": 70, "valid_fraction": 0.97}}) == rl.MERGE
+    assert _analytics(store.entities[BS_ID])["pixelCount"] == "60"
+
+
+def test_landsat_replacement_parses_and_clms_tie_keeps_the_stored(store, rl):
+    target = rl.parcel_target(PARCEL, GEOM)
+    item_a = {"id": LANDSAT_ID, "geometry": FOOT, "properties": {"datetime": "2026-06-20T10:50:12Z",
+                                                                 "platform": "landsat-9"}}
+    item_b = {"id": LANDSAT_B, "geometry": FOOT, "properties": {"datetime": "2026-06-20T10:51:00Z",
+                                                                "platform": "landsat-8"}}
+    stats = lambda n: {"mean": 30.0, "min": 29.0, "max": 31.0, "std": 0.5, "pixel_count": n}  # noqa: E731
+    assert rl.write_lst(TENANT, target, rl.landsat_take(item_a), stats(4)) == rl.CREATE
+    assert rl.write_lst(TENANT, target, rl.landsat_take(item_b), stats(9)) == rl.REPLACE
+    assert _prop(store.entities[LS_ID], "platformName") == "LANDSAT_8"
+    _assert_parse({LS_ID: store.entities[LS_ID]}, {LS_ID: ("landsat-lst", date(2026, 6, 20))})
+    c1 = {"id": CLMS_ID, "geometry": FOOT, "properties": {"datetime": "2026-06-20T11:00:00Z"}}
+    c2 = {"id": CLMS_ID + "-b", "geometry": FOOT, "properties": {"datetime": "2026-06-20T12:00:00Z"}}
+    assert rl.write_lst(TENANT, target, rl.clms_take(c1), stats(2)) == rl.CREATE
+    assert rl.write_lst(TENANT, target, rl.clms_take(c2), stats(2)) == rl.SKIP
+    assert _prop(store.entities[CL_ID], "productID") == CLMS_ID

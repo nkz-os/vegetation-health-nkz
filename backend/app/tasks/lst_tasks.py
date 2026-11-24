@@ -17,10 +17,16 @@ from app.services.platform_credentials import get_copernicus_credentials_with_fa
 logger = logging.getLogger(__name__)
 
 
-def _write_satimg(tenant_id: str, parcel_id: str, geometry_geojson: dict, take, stats: dict) -> None:
-    """EOSatelliteImagery of one LST take, for tenants that have it on. Never raises, never fails the task."""
+def _write_satimg(tenant_id: str, parcel_id: str, geometry_geojson: dict, build_take, item, stats: dict) -> None:
+    """EOSatelliteImagery of one LST take, for tenants that have it on. Never raises, never fails the task.
+
+    ``build_take(item)`` runs inside the guard and only when the tenant has the new form on.
+    """
     try:
-        if take is not None and fi.satimg_enabled(tenant_id):
+        if not fi.satimg_enabled(tenant_id):
+            return
+        take = build_take(item)
+        if take is not None:
             satimg.write_lst(tenant_id, satimg.parcel_target(parcel_id, geometry_geojson), take, stats)
     except Exception as exc:
         logger.error("eo_satimg: tenant=%s target=%s LST not written: %s", tenant_id, parcel_id, exc,
@@ -75,7 +81,7 @@ def process_parcel_lst_task(
         )
         if not entity_id:
             raise RuntimeError(f"EOProduct LST upsert failed for {parcel_id}")
-        _write_satimg(tenant_id, parcel_id, geometry_geojson, satimg.landsat_take(item), stats)
+        _write_satimg(tenant_id, parcel_id, geometry_geojson, satimg.landsat_take, item, stats)
 
         logger.info(
             "Published LST %.1f°C for parcel %s (scene %s)",
@@ -129,7 +135,7 @@ def process_parcel_clms_lst_task(
         )
         if not entity_id:
             raise RuntimeError(f"EOProduct CLMS LST upsert failed for {parcel_id}")
-        _write_satimg(tenant_id, parcel_id, geometry_geojson, satimg.clms_take(item), stats)
+        _write_satimg(tenant_id, parcel_id, geometry_geojson, satimg.clms_take, item, stats)
 
         logger.info(
             "Published CLMS LST %.1f°C for %s (%s)",

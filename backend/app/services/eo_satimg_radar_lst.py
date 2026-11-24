@@ -45,7 +45,7 @@ __all__ = [
 S1_COLLECTION = "sentinel-1-grd"
 _S1_ID = re.compile(r"^(S1[A-D])_([A-Z0-9]{2})_")
 _S1_PLATFORM = re.compile(r"^sentinel-1([a-d])$")
-_LANDSAT_ID = re.compile(r"^L[A-Z](\d{2})_(L2S[PR])_")
+_LANDSAT_ID = re.compile(r"^L[A-Z](\d{2})_")
 
 _DESC_BACKSCATTER = "Calibrated Sentinel-1 GRD backscatter (sigma nought, dB) over the target."
 _DESC_SOIL_MOISTURE = "Soil moisture index (0 to 1) from Sentinel-1 GRD VV backscatter over the target."
@@ -67,6 +67,7 @@ def scene_job_params(scene: Mapping[str, Any]) -> dict:
     pairs = {
         "scene_datetime": scene.get("datetime"),
         "scene_platform": scene.get("platform"),
+        "scene_product_type": scene.get("product_type"),
         "scene_relative_orbit": scene.get("relative_orbit"),
         "orbit_direction": state.upper() if isinstance(state, str) and state else None,
         "scene_footprint": scene.get("geometry"),
@@ -126,6 +127,7 @@ def radar_take(scene_id: Optional[str], params: Mapping[str, Any]) -> Optional[R
     if not platform and isinstance(params.get("scene_platform"), str):
         named = _S1_PLATFORM.match(params["scene_platform"].lower())
         platform = f"S1{named.group(1).upper()}" if named else ""
+    ptype = params.get("scene_product_type")
     mode = params.get("instrument_mode")
     if not (isinstance(mode, str) and mode):
         mode = id_match.group(2) if id_match else None
@@ -133,7 +135,7 @@ def radar_take(scene_id: Optional[str], params: Mapping[str, Any]) -> Optional[R
         product_id=scene_id,
         product_url=f"{CopernicusDataSpaceClient.CATALOG_URL}/collections/{S1_COLLECTION}/items/{scene_id}",
         product_format="",  # the bands are downloaded as per-polarisation GeoTIFFs: not claimed to be SAFE
-        product_type="GRD",
+        product_type=ptype if isinstance(ptype, str) else "",  # the item's code, omitted when it gives none
         platform_name=platform,
         orbit_number=_whole(params.get("scene_relative_orbit")),
         operational_mode=mode or None,
@@ -174,7 +176,7 @@ def landsat_take(item: Any) -> Optional[LstTake]:
 
     props = item.get("properties") or {}
     id_match = _LANDSAT_ID.match(scene_id)
-    product_type = props.get("product:type") or (id_match.group(2) if id_match else "")
+    product_type = props.get("product:type")
     platform = props.get("platform")
     if isinstance(platform, str) and platform:
         platform = platform.upper().replace("-", "_")
@@ -245,7 +247,7 @@ def _follows_backscatter(raw, obs, product_id: str, fresh: Mapping[str, Any]) ->
 
 def _write(tenant: str, target: Target, family: Family, sensing: Sensing, scene: SceneMeta,
            analytics: Mapping[str, Any], description: str, decide: Decide, *,
-           needs_count: bool = True) -> Optional[str]:
+           needs_count: bool = True, merge_fresh: Optional[Callable] = None) -> Optional[str]:
     """Read, decide, build and upsert one entity. Returns the verdict, None when off or failed (logged)."""
     if not fi.satimg_enabled(tenant):
         return None
@@ -266,6 +268,8 @@ def _write(tenant: str, target: Target, family: Family, sensing: Sensing, scene:
             return SKIP
         merging = verdict == MERGE
         values = dict(obs.values) if merging else {}
+        if merging and merge_fresh is not None:
+            fresh = merge_fresh(values, fresh)
         values.update(fresh)
         moment = sensing
         if merging and sensing.time_utc is None and obs.sensing_time is not None:
@@ -308,11 +312,23 @@ def _backscatter_analytics(stats_by_pol: Mapping[str, Mapping[str, Any]]) -> dic
     return out
 
 
+def _merge_coverage(stored: Mapping[str, Any], fresh: Mapping[str, Any]) -> dict:
+    """A kept polarisation was measured by the stored run: the coverage cannot claim more than either run saw."""
+    kept = [n for n in ("backscatterVV", "backscatterVH") if n in stored and n not in fresh]
+    out = dict(fresh)
+    if kept:
+        for name in ("pixelCount", "validPixelFraction"):
+            if name in stored and name in fresh:
+                out[name] = min(stored[name], fresh[name])
+    return out
+
+
 def write_backscatter(tenant: str, target: Target, take: RadarTake,
                       stats_by_pol: Mapping[str, Mapping[str, Any]]) -> Optional[str]:
     """``s1-backscatter`` of a parcel or zone. ``stats_by_pol``: ``{"VV"|"VH": {mean, pixel_count, valid_fraction}}``."""
     return _write(tenant, target, Family.S1_BACKSCATTER, take.sensing, take.scene,
-                  _backscatter_analytics(stats_by_pol), _DESC_BACKSCATTER, _by_coverage)
+                  _backscatter_analytics(stats_by_pol), _DESC_BACKSCATTER, _by_coverage,
+                  merge_fresh=_merge_coverage)
 
 
 def write_soil_moisture(tenant: str, target: Target, take: RadarTake, smi: Mapping[str, Any]) -> Optional[str]:

@@ -118,6 +118,30 @@ SAR_DB_NODATA = -9999.0  # 0 dB is a real backscatter value, so it cannot mark "
 _WINDOW_PAD_PX = 20
 
 
+_MAX_FOOTPRINT_PIXELS = 50_000_000
+
+
+def _footprint_pixels(parcel_geom, grid_transform, grid_crs) -> int:
+    """Pixels of the whole parcel footprint on the raster grid, also where the grid lies outside the raster."""
+    import math
+
+    from affine import Affine
+    from rasterio.features import rasterize
+
+    geom = _geom_in_raster_crs(parcel_geom, grid_crs)
+    inverse = ~grid_transform
+    left, bottom, right, top = geom.bounds
+    corners = [inverse * (x, y) for x in (left, right) for y in (bottom, top)]
+    c0, c1 = math.floor(min(c for c, _ in corners)), math.ceil(max(c for c, _ in corners))
+    r0, r1 = math.floor(min(r for _, r in corners)), math.ceil(max(r for _, r in corners))
+    height, width = r1 - r0 + 1, c1 - c0 + 1
+    if height * width > _MAX_FOOTPRINT_PIXELS:
+        return 0
+    mask = rasterize([(geom, 1)], out_shape=(height, width),
+                     transform=grid_transform * Affine.translation(c0, r0), fill=0, dtype="uint8")
+    return int(mask.sum())
+
+
 def _calibrated_parcel(band_path: str, calibration_path: str, parcel_geom, workdir: str):
     """Calibrated parcel backscatter: (zonal stats in dB, georeferenced EPSG:4326 dB raster).
 
@@ -154,9 +178,11 @@ def _calibrated_parcel(band_path: str, calibration_path: str, parcel_geom, workd
     stats = sar_calibration.zonal_db(db[mask[r0:r1 + 1, c0:c1 + 1] == 1])
     if stats["pixel_count"] == 0:
         return stats, None
-    # Coverage of the parcel by usable pixels (radar geometry); the contract's validPixelFraction.
-    stats["parcel_pixels"] = int(rows.size)
-    stats["valid_fraction"] = stats["pixel_count"] / stats["parcel_pixels"]
+    # Coverage of the WHOLE parcel footprint by usable pixels (radar geometry): the contract's validPixelFraction.
+    # The footprint is counted on the same grid extended past the raster edge, so a parcel that crosses it
+    # does not look fully covered.
+    stats["parcel_pixels"] = _footprint_pixels(parcel_geom, grid_transform, grid_crs)
+    stats["valid_fraction"] = stats["pixel_count"] / stats["parcel_pixels"] if stats["parcel_pixels"] else None
 
     stem = Path(band_path).stem
     window_path = os.path.join(workdir, f"{stem}_db_window.tif")
@@ -448,16 +474,6 @@ def download_sentinel1_scene(
         copernicus = CopernicusDataSpaceClient()
         copernicus.set_credentials(creds["client_id"], creds["client_secret"])
 
-        # Scene metadata (orbit direction, time, platform...) comes with the job; a job queued before the
-        # dispatchers sent it asks the catalogue instead.
-        if not (parameters.get("orbit_direction") and parameters.get("scene_datetime")):
-            summary = None
-            try:
-                summary = copernicus.get_s1_scene_summary(scene_id)
-            except Exception as exc:
-                logger.warning("S1 scene %s metadata not read from the catalogue: %s", scene_id, exc)
-            parameters = satimg.complete_params(parameters, summary)
-
         # ── Download bands ───────────────────────────────────────────
         self.update_state(
             state="PROGRESS",
@@ -477,6 +493,16 @@ def download_sentinel1_scene(
                 scene_id, polarizations=["vv", "vh"], output_dir=tmpdir,
             )
             calibrated_paths: dict[str, str] = {}
+
+            # Scene metadata (orbit direction, time, platform...) comes with the job; a job queued before the
+            # dispatchers sent it reads the item the band download already fetched.
+            if not all(parameters.get(k) for k in ("orbit_direction", "scene_datetime", "scene_product_type")):
+                summary = None
+                try:
+                    summary = copernicus.get_s1_scene_summary(scene_id)
+                except Exception as exc:
+                    logger.warning("S1 scene %s metadata not read from the catalogue: %s", scene_id, exc)
+                parameters = satimg.complete_params(parameters, summary)
 
             if not vv_path and not vh_path:
                 raise ValueError(f"No polarization bands downloaded for {scene_id}")
@@ -603,22 +629,15 @@ def download_sentinel1_scene(
                     db.add(calc_job)
                     db.commit()
 
-            # ── EOSatelliteImagery (tenants that have it on): never changes the old form or the job ──
+            # ── EOSatelliteImagery take (tenants that have it on): never changes the old form or the job ──
             satimg_take = None
             backscatter_verdict = None
             if fi.satimg_enabled(tenant_id):
                 try:
                     satimg_take = satimg.radar_take(scene_id, parameters)
-                    if satimg_take is not None and raw_by_pol:
-                        backscatter_verdict = satimg.write_backscatter(
-                            tenant_id,
-                            satimg.parcel_target(entity_id, json.loads(json.dumps(geom.__geo_interface__))),
-                            satimg_take, raw_by_pol,
-                        )
                 except Exception as exc:
-                    logger.error("eo_satimg: backscatter of scene %s for %s not written: %s",
-                                 scene_id, entity_id, exc, exc_info=True)
-                    satimg_take = None
+                    logger.error("eo_satimg: scene %s of %s not described: %s", scene_id, entity_id, exc,
+                                 exc_info=True)
 
             # ── Publish EOProduct when both VV and VH are ready ──────
             if "VV" in stats_by_pol and "VH" in stats_by_pol:
@@ -691,6 +710,18 @@ def download_sentinel1_scene(
                             )
                 except Exception as exc:
                     logger.warning("SMI computation skipped for %s: %s", entity_id, exc)
+
+            # New form of the parcel backscatter, after the old form above.
+            if satimg_take is not None and raw_by_pol:
+                try:
+                    backscatter_verdict = satimg.write_backscatter(
+                        tenant_id,
+                        satimg.parcel_target(entity_id, json.loads(json.dumps(geom.__geo_interface__))),
+                        satimg_take, raw_by_pol,
+                    )
+                except Exception as exc:
+                    logger.error("eo_satimg: backscatter of scene %s for %s not written: %s",
+                                 scene_id, entity_id, exc, exc_info=True)
 
             # ── SAR Change Detection ──────────────────────────────────
             try:

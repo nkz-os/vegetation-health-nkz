@@ -66,3 +66,17 @@ def test_clip_reports_valid_fraction_of_parcel_pixels(tmp_path):
     assert holed["parcel_pixels"] == full["parcel_pixels"]
     assert 0 < holed["pixel_count"] < holed["parcel_pixels"]
     assert holed["valid_fraction"] == holed["pixel_count"] / holed["parcel_pixels"] < 1.0
+
+
+def test_valid_fraction_counts_the_whole_footprint_when_the_parcel_crosses_the_raster_edge(tmp_path):
+    band, xml = tmp_path / "vv.tif", tmp_path / "vv.xml"
+    _grd(band)  # covers -1.6 .. -1.5 E
+    xml.write_bytes(LUT)
+    inside = box(-1.59, 42.83, -1.55, 42.87)
+    crossing = box(-1.63, 42.83, -1.55, 42.87)  # 3/8 of the width lies west of the raster
+    a, _ = sar_tasks._calibrated_parcel(str(band), str(xml), inside, str(tmp_path))
+    b, _ = sar_tasks._calibrated_parcel(str(band), str(xml), crossing, str(tmp_path))
+    # same rows, 8 degrees-hundredths wide instead of 4: about twice the footprint pixels
+    assert 1.8 < b["parcel_pixels"] / a["parcel_pixels"] < 2.2
+    assert b["parcel_pixels"] > b["pixel_count"]
+    assert b["valid_fraction"] == b["pixel_count"] / b["parcel_pixels"] < 0.65
