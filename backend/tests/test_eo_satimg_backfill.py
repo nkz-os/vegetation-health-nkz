@@ -667,3 +667,45 @@ def test_a_composite_never_gets_a_scenes_cloud_cover(store):
     entity = legacy({NKZ + "ndre": prop(0.5, min=0.2, max=0.8, std=0.1, rasterUrl=comp)})
     run([entity], Src([job("ndre", scene=U_A, result={"is_composite": True})]), ["--apply"])
     assert "cloudCoverage" not in names(store.entities[new_id(PARCEL, "s2-composite", date(2026, 6, 15))])
+
+
+# ── fix round 1, item 4: minors ──
+
+@pytest.mark.parametrize("listed,asked", [("Rev-Tenant", "rev-tenant"), ("rev-tenant", "REV-TENANT")])
+def test_review_guard_ignores_case_on_both_sides(store, monkeypatch, listed, asked):
+    monkeypatch.setenv(bf.REVIEW_ENV, listed)
+    client = FakeClient(asked, [optical()])
+    code, _, text = run(None, tenant=asked, client=client)
+    assert code == 2 and "--allow-review" in text and client.calls == 0
+
+
+def test_dry_run_and_verify_warn_when_the_guard_variable_is_unset(store, monkeypatch):
+    monkeypatch.delenv(bf.REVIEW_ENV)
+    assert "review guard" in run([optical()], Src([job("ndvi")]))[2]
+    assert "review guard" in run([optical()], Src([job("ndvi")]), ["--verify"], client=FakeClient(TENANT, [optical()]))[2]
+
+
+def test_a_tenant_stops_after_five_consecutive_write_errors(store, monkeypatch):
+    attempts = []
+    monkeypatch.setattr(fi, "upsert_eo_satellite_imagery", lambda t, e: attempts.append(e["id"]))  # always fails
+    entities = []
+    for n in range(8):
+        parcel = f"urn:ngsi-ld:AgriParcel:p{n}"
+        entities.append(legacy({NKZ + "ndvi": index_attr(0.6, parcel=parcel), NKZ + "evi": index_attr(0.4, parcel=parcel, index="evi")},
+                               parcel=parcel, short=f"p{n}"))
+    code, report, _ = run(entities, Src([job("ndvi"), job("evi")]), ["--apply"])
+    assert code == 1 and len(attempts) == 5 and report["counters"]["stopped_on_errors"] == 1
+
+
+def test_a_window_that_opens_mid_run_prints_the_counters_before_stopping(store):
+    times = iter([datetime(2026, 11, 24, 0, 30, tzinfo=timezone.utc)] * 2)
+    clock = lambda: next(times, datetime(2026, 11, 24, 1, 20, tzinfo=timezone.utc))
+    code, _, text = run([optical()], Src([job("ndvi"), job("evi")]), ["--apply"], clock=clock)
+    assert code == 2 and "STOPPED" in text and "old=1" in text and "items=1" in text
+
+
+def test_a_dry_run_counts_each_new_id_once(store):
+    both = [legacy({NKZ + "backscatterVV": prop(-12.0), NKZ + "backscatterVH": prop(-18.0)}, eid=f"urn:ngsi-ld:EOProduct:{TENANT}:{n}")
+            for n in ("a", "b")]
+    code, report, _ = run(both, Src([]))
+    assert report["counters"]["created"] == 1 and report["counters"]["duplicate_id"] == 1

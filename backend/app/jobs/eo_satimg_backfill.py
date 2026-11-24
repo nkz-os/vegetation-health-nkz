@@ -686,9 +686,17 @@ def write_item(tenant: str, item: Item, apply: bool) -> str:
     return "merged"
 
 
+MAX_CONSECUTIVE_ERRORS = 5
+
+
 def execute(tenant: str, plan: Plan, apply: bool, guard: Callable[[], None]) -> None:
+    streak, counted = 0, set()
     for item in plan.items:
         guard()
+        if not apply and item.entity["id"] in counted:
+            plan.counters["duplicate_id"] += 1  # a dry run counts each new id once (a real run would find it written)
+            continue
+        counted.add(item.entity["id"])
         try:
             outcome = write_item(tenant, item, apply)
         except WindowClosed:
@@ -699,6 +707,11 @@ def execute(tenant: str, plan: Plan, apply: bool, guard: Callable[[], None]) -> 
                          exc_info=True)
         plan.counters[outcome if outcome != "error" else "errors"] += 1
         plan.by_family[item.family.value][outcome] += 1
+        streak = streak + 1 if outcome == "error" else 0
+        if streak >= MAX_CONSECUTIVE_ERRORS:
+            plan.counters["stopped_on_errors"] += 1
+            logger.error("eo_satimg_backfill: tenant stopped after %d consecutive write errors", streak)
+            return
 
 
 # ── verify ──────────────────────────────────────────────────────────────────
@@ -796,6 +809,9 @@ def main(argv=None, db=None, sources=None, client_factory: Optional[Callable] = 
     if args.apply and args.verify:
         parser.error("--apply and --verify are separate runs")
     review = _review_tenants()
+    if review is None and not args.apply:
+        out.write(f"WARNING: {REVIEW_ENV} is unset: the review guard is inactive\n")
+    review = {t.lower() for t in review} if review else review
     if args.apply and review is None:
         out.write(f"REFUSED: set {REVIEW_ENV} (it may be empty) before --apply\n")
         return EXIT_REFUSED
@@ -804,7 +820,7 @@ def main(argv=None, db=None, sources=None, client_factory: Optional[Callable] = 
         return EXIT_REFUSED
     if args.apply:
         out.write("WARNING: do not leave this running into 01:15-03:00 UTC; Celery tasks are not inspected here\n")
-    if review and not args.allow_review and any(t in review for t in args.tenant):
+    if review and not args.allow_review and any(t.lower() in review for t in args.tenant):
         out.write("REFUSED: a requested tenant needs --allow-review\n")
         return EXIT_REFUSED
 
@@ -824,6 +840,7 @@ def main(argv=None, db=None, sources=None, client_factory: Optional[Callable] = 
     try:
         for number, tenant in enumerate(args.tenant, 1):
             label = f"tenant#{number}"
+            plan = None
             try:
                 guard()
                 client = factory(tenant)
@@ -843,6 +860,8 @@ def main(argv=None, db=None, sources=None, client_factory: Optional[Callable] = 
                         code = max(code, EXIT_ERRORS)
             except WindowClosed:
                 out.write(f"{label} STOPPED: the nightly window opened\n")
+                if plan is not None:
+                    out.write(_line(label, "stopped", plan) + "\n")
                 return EXIT_REFUSED
             except Exception as exc:
                 logger.error("eo_satimg_backfill: %s aborted: %s", label, exc, exc_info=True)
