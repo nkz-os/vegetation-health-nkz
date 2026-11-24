@@ -181,8 +181,13 @@ def _calibrated_parcel(band_path: str, calibration_path: str, parcel_geom, workd
     # Coverage of the WHOLE parcel footprint by usable pixels (radar geometry): the contract's validPixelFraction.
     # The footprint is counted on the same grid extended past the raster edge, so a parcel that crosses it
     # does not look fully covered.
-    stats["parcel_pixels"] = _footprint_pixels(parcel_geom, grid_transform, grid_crs)
-    stats["valid_fraction"] = stats["pixel_count"] / stats["parcel_pixels"] if stats["parcel_pixels"] else None
+    try:
+        footprint = _footprint_pixels(parcel_geom, grid_transform, grid_crs)
+    except Exception as exc:  # only the new form uses it: the calibrated parcel must not be lost
+        logger.warning("SAR footprint of %s not counted, coverage omitted: %s", band_path, exc)
+        footprint = 0
+    stats["parcel_pixels"] = max(footprint, int(rows.size)) if footprint else None
+    stats["valid_fraction"] = stats["pixel_count"] / stats["parcel_pixels"] if footprint else None
 
     stem = Path(band_path).stem
     window_path = os.path.join(workdir, f"{stem}_db_window.tif")
