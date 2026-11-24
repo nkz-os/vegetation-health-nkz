@@ -178,7 +178,8 @@ def test_fused_optical_entity_splits_into_four(store):
     assert optical_entity["hasAgriParcel"]["object"] == PARCEL
     assert optical_entity["processedBbox"]["value"] == GEOM
     values = names(optical_entity)
-    assert values["ndvi"] == "0.610000" and values["evi"] == "0.410000" and values["cloudCoverage"] == "12.50"
+    assert values["ndvi"] == "0.610000" and values["evi"] == "0.410000" and values["cloudCoverage"] == "99.00"  # the legacy value is kept
+    assert report["counters"]["cloud_differs"] == 1
     assert optical_entity["localServerPath"]["value"] == f"s3://bucket/{TENANT}/entities/{PARCEL}/scenes/{U_A}"
     assert store.entities[new_id(PARCEL, "s1-soil-moisture")]["productID"]["value"] == S1_A
     lst = store.entities[new_id(PARCEL, "landsat-lst")]
@@ -641,3 +642,28 @@ def test_verify_counts_unplanned_entities_without_failing(store):
     extra["sensingDate"]["value"] = "2026-07-01"
     code, report, _ = _verify(entities, src, store, extra=[extra])
     assert code == 0 and len(report["unplanned"]) == 1 and report["unplanned"][0]["day"] == "2026-07-01"
+
+
+# ── fix round 1, item 3: take-wide values ──
+
+def test_wide_values_are_omitted_when_an_index_was_dropped_for_a_deleted_job(store):
+    code, report, _ = run([optical()], Src([job("ndvi", deleted=True), job("evi")]), ["--apply"])
+    values = names(store.entities[new_id(PARCEL, "s2-indices")])
+    assert "ndvi" not in values and "pixelCount" not in values  # the count may belong to the hidden index
+    assert values["cloudCoverage"] == "12.50"  # the scene's own, the legacy's being unattributable
+    assert report["counters"]["wide_omitted"] == 1
+
+
+def test_legacy_cloud_cover_equal_to_the_scene_is_not_a_difference(store):
+    entity = legacy({NKZ + "ndvi": index_attr(0.6), NKZ + "evi": index_attr(0.4, index="evi"),
+                     NKZ + "cloudCoverPercentage": prop(12.5)})
+    code, report, _ = run([entity], Src([job("ndvi"), job("evi")]), ["--apply"])
+    assert names(store.entities[new_id(PARCEL, "s2-indices")])["cloudCoverage"] == "12.50"
+    assert "cloud_differs" not in report["counters"]
+
+
+def test_a_composite_never_gets_a_scenes_cloud_cover(store):
+    comp = f"s3://bucket/{TENANT}/entities/{PARCEL}/composites/2026-06-01_2026-06-15/ndre.tif"
+    entity = legacy({NKZ + "ndre": prop(0.5, min=0.2, max=0.8, std=0.1, rasterUrl=comp)})
+    run([entity], Src([job("ndre", scene=U_A, result={"is_composite": True})]), ["--apply"])
+    assert "cloudCoverage" not in names(store.entities[new_id(PARCEL, "s2-composite", date(2026, 6, 15))])

@@ -394,6 +394,7 @@ class Planner:
 
     def _optical(self, legacy_id: str, parcel: str, day: date, observations: list) -> None:
         plan = self.plan
+        self._deleted_dropped = 0
         self._blocked = []  # (index, reason): indices that cannot be placed for a reason other than a deleted job
         records: dict = {}
         wide: dict = {}
@@ -453,10 +454,19 @@ class Planner:
             winner = candidates[0]
             values = dict(winner["values"])
             row = winner.get("scene_row")
-            if len(groups) == 1:  # take-wide values of the legacy entity belong to a take only when it is the only one
+            # Take-wide legacy values belong to a take only when the legacy entity had exactly one and no index was
+            # hidden by a deleted job (the count or cloud cover may be the hidden one's); else they are omitted.
+            attributable = len(groups) == 1 and not self._deleted_dropped
+            if attributable:
                 values.update(wide)
-            if row is not None and so.cloud_coverage(row.cloud_coverage) is not None:
-                values["cloudCoverage"] = so.cloud_coverage(row.cloud_coverage)
+            elif wide:
+                plan.counters["wide_omitted"] += 1
+            scene_cloud = so.cloud_coverage(row.cloud_coverage) if row is not None else None
+            if scene_cloud is not None and family is Family.S2_INDICES:  # never a scene's cloud cover on a composite
+                if "cloudCoverage" not in values:
+                    values["cloudCoverage"] = scene_cloud
+                elif abs(float(values["cloudCoverage"]) - scene_cloud) > 0.005:
+                    plan.counters["cloud_differs"] += 1  # the legacy value is kept
             if family is Family.S2_COMPOSITE:
                 start, end = winner["window"]
                 folder = self._folder(winner)
@@ -509,6 +519,7 @@ class Planner:
         live = [j for j in matching if not j.deleted]
         if matching and not live:
             plan.counters["job_deleted"] += 1
+            self._deleted_dropped += 1
             return None
         if not matching:
             plan.counters["no_job"] += 1
