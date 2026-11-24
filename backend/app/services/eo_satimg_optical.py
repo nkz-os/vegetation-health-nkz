@@ -528,8 +528,12 @@ def remove_index(tenant: str, target_kind: str, target_urn: str, family: Family,
 
 
 def job_wrote_nothing(result: Optional[Mapping[str, Any]]) -> bool:
-    """A skipped calculation (idempotent re-run, no valid pixels, a better scene won) owns no value."""
-    return bool(result) and bool(result.get("skipped") or result.get("skip_reason"))
+    """A calculation with no valid pixels (or an idempotent re-run) owns no value.
+
+    A ``better_scene_same_date`` job does not count here: its values are real and may be in the
+    entity (the take is completed from the jobs), so ``_is_job_take`` decides for it.
+    """
+    return bool(result) and bool(result.get("skipped") or result.get("skip_reason") == "no_valid_pixels")
 
 
 def remove_job_index(tenant: str, parcel_urn: str, result: Mapping[str, Any], index_type: str,

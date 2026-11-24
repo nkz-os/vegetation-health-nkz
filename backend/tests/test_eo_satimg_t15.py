@@ -51,7 +51,7 @@ def test_i1_losing_scene_cannot_replace_through_another_index(store):
     assert {"ndvi", "ndre", "ndmi"} <= set(values) and values["ndvi"] == "0.600000"
 
 
-def test_i1_reference_index_arriving_last_replaces_whole_entity(store, caplog):
+def test_i1_reference_index_arriving_last_replaces_and_logs_what_it_drops(store, caplog):
     ow._write_scene(PID_A, "NDVI", 0.6, 0.80)
     ow._write_scene(PID_A, "NDRE", 0.5, 0.84)
     assert ow._write_scene(PID_B, "NDRE", 0.55, 0.95) == so.SKIP
@@ -60,7 +60,7 @@ def test_i1_reference_index_arriving_last_replaces_whole_entity(store, caplog):
     entity = store.entities[PARCEL_ID]
     assert entity["productID"]["value"] == PID_B
     values = _vals(store)
-    assert values["ndvi"] == "0.700000" and "ndre" not in values  # nothing of A survives
+    assert values["ndvi"] == "0.700000" and "ndre" not in values  # nothing of A survives (B's NDRE: see the jobs tests)
     assert any("ndre" in r.getMessage() and "dropped" in r.getMessage() for r in caplog.records)
 
 
@@ -301,7 +301,7 @@ def _ndvi_present(store):
 
 def test_i3_skipped_job_does_not_remove_the_winners_value(store):
     _seed_entity()
-    for extra in ({"skipped": True}, {"skip_reason": "better_scene_same_date"}, {"skip_reason": "no_valid_pixels"}):
+    for extra in ({"skipped": True}, {"skip_reason": "no_valid_pixels"}):
         job = _job(result_extra=extra)
         assert so.remove_job_index(TENANT, ow.PARCEL, {**job.result, "scene_product_id": PID_A}, "NDVI") is True
         assert _ndvi_present(store), extra
@@ -319,7 +319,7 @@ def test_i3_zone_deletion_of_a_skipped_job_keeps_the_zone_value(store):
                      index_type="NDVI", follow=so.CREATE)
     zone = {"zone_id": "z", "zone_urn": ow.ZONE, "relation": zp.CURRENT_ZONE_RELATION}
     from unittest.mock import patch
-    result = {**_job(result_extra={"skip_reason": "better_scene_same_date"}).result, "scene_product_id": PID_A}
+    result = {**_job(result_extra={"skip_reason": "no_valid_pixels"}).result, "scene_product_id": PID_A}
     with patch.object(fi, "delete_eo_index"), patch.object(zp, "fetch_zone_targets", return_value=[zone]):
         zp.delete_zone_products(TENANT, ow.PARCEL, ow.DAY.isoformat(), "NDVI", job_result=result)
     assert zone_eid in store.entities
@@ -572,3 +572,21 @@ def test_radar_tie_still_keeps_the_stored_take(rstore):
     a, b, target = _takes()  # b is the later pass
     rl.write_backscatter(TENANT, target, a, _bs(40, 0.8))
     assert rl.write_backscatter(TENANT, target, b, _bs(40, 0.8)) == rl.SKIP
+
+
+def test_fix1_better_scene_job_is_decided_by_the_take_not_by_its_skip_reason(store):
+    _seed_entity()  # the entity is scene A's take
+    own = {**_job(result_extra={"skip_reason": "better_scene_same_date"}).result, "scene_product_id": PID_A}
+    other_scene = {**own, "scene_product_id": PID_B}
+    assert so.remove_job_index(TENANT, ow.PARCEL, other_scene, "NDVI") is True
+    assert _ndvi_present(store)  # the entity holds another scene's take: untouched
+    assert so.remove_job_index(TENANT, ow.PARCEL, own, "NDVI") is True
+    assert not _ndvi_present(store)  # it holds this job's scene: its values go
+
+
+def test_fix1_better_scene_job_protects_the_value_it_owns():
+    holder = _job(result_extra={"skip_reason": "better_scene_same_date"})
+    target = _job()
+    assert so.other_job_holds_value(FakeDb([target], [holder]), TENANT, target, target.result, "NDVI") is True
+    skipped = _job(result_extra={"skip_reason": "no_valid_pixels"})
+    assert so.other_job_holds_value(FakeDb([target], [skipped]), TENANT, target, target.result, "NDVI") is False
