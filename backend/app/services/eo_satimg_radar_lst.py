@@ -9,7 +9,8 @@ per source (``landsat-lst``, ``clms-lst``). Every write carries the full ``analy
 replaces it), so each call reads the stored entity through the SDK reader and decides:
 
 - ``merge``: same take (same ``productID``): stored values merged by name, the new ones win.
-- ``replace``: another take that wins the day (larger ``pixelCount``; for ``s1-change``, the take whose
+- ``replace``: another take that wins the day (larger ``validPixelFraction``, else ``pixelCount``; LST: larger
+  ``pixelCount``, then the most recent; for ``s1-change``, the take whose
   backscatter won): the whole list and the product attributes are rewritten, then the optional
   attributes only the losing take had are pruned (upsert first, prune afterwards).
 - ``skip``: another take that loses (smaller or equal ``pixelCount``: a tie keeps the stored one).
@@ -222,16 +223,26 @@ def clms_take(item: Any) -> Optional[LstTake]:
 Decide = Callable[[Any, Any, str, Mapping[str, Any]], str]
 
 
+def _number(value: Any) -> Optional[float]:
+    if isinstance(value, bool) or not isinstance(value, numbers.Real):
+        return None
+    return float(value)
+
+
 def _by_coverage(raw, obs, product_id: str, fresh: Mapping[str, Any]) -> str:
-    """Same take: merge. Another take: the larger ``pixelCount`` wins, a tie keeps the stored one."""
+    """Same take: merge. Another take: the larger ``validPixelFraction`` wins when both have it, else the
+    larger ``pixelCount``; a tie keeps the stored one."""
     if raw is None:
         return CREATE
     if obs is None:
         return REPLACE  # unreadable: our own id, rewritten whole
     if obs.product_id == product_id:
         return MERGE
-    stored = obs.values.get("pixelCount")
-    if isinstance(stored, bool) or not isinstance(stored, (int, float)):
+    new_frac, old_frac = _number(fresh.get("validPixelFraction")), _number(obs.values.get("validPixelFraction"))
+    if new_frac is not None and old_frac is not None:
+        return REPLACE if new_frac > old_frac else SKIP
+    stored = _number(obs.values.get("pixelCount"))
+    if stored is None:
         return REPLACE  # nothing to defend
     return REPLACE if fresh["pixelCount"] > stored else SKIP
 
@@ -324,11 +335,15 @@ def _merge_coverage(stored: Mapping[str, Any], fresh: Mapping[str, Any]) -> dict
 
 
 def write_backscatter(tenant: str, target: Target, take: RadarTake,
-                      stats_by_pol: Mapping[str, Mapping[str, Any]]) -> Optional[str]:
-    """``s1-backscatter`` of a parcel or zone. ``stats_by_pol``: ``{"VV"|"VH": {mean, pixel_count, valid_fraction}}``."""
+                      stats_by_pol: Mapping[str, Mapping[str, Any]], follow_parcel: bool = False) -> Optional[str]:
+    """``s1-backscatter`` of a parcel or zone. ``stats_by_pol``: ``{"VV"|"VH": {mean, pixel_count, valid_fraction}}``.
+
+    ``follow_parcel``: a zone whose parcel wrote this take; the zone then follows the parcel's verdict
+    (another take in the zone entity goes) instead of comparing its own coverage.
+    """
     return _write(tenant, target, Family.S1_BACKSCATTER, take.sensing, take.scene,
-                  _backscatter_analytics(stats_by_pol), _DESC_BACKSCATTER, _by_coverage,
-                  merge_fresh=_merge_coverage)
+                  _backscatter_analytics(stats_by_pol), _DESC_BACKSCATTER,
+                  _follows_backscatter if follow_parcel else _by_coverage, merge_fresh=_merge_coverage)
 
 
 def write_soil_moisture(tenant: str, target: Target, take: RadarTake, smi: Mapping[str, Any]) -> Optional[str]:

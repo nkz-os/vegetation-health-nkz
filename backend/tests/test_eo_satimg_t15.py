@@ -11,6 +11,7 @@ for _m in ("rasterio", "rasterio.warp", "rasterio.features", "rasterio.windows",
 
 import pytest
 
+from tests import test_eo_satimg_sar_lst_writers as sl  # noqa: E402,F401
 from app.services import eo_satimg_optical as so
 from app.services import fiware_integration as fi
 from tests import test_eo_satimg_optical_writers as ow
@@ -428,3 +429,82 @@ def test_baseline_over_the_same_scene_keeps_the_stored_index_values(store):
     _baseline("EVI", 0.35)  # an index the entity lacks is added whole
     values = _vals(store)
     assert values["evi"] == "0.350000" and values["ndvi"] == "0.600000"
+
+
+# ── radar winner: validPixelFraction, then pixelCount; zones follow the parcel ──
+
+from app.services import eo_satimg_radar_lst as rl  # noqa: E402
+
+
+def _bs(count, frac):
+    out = {"mean": -10.0, "pixel_count": count}
+    if frac is not None:
+        out["valid_fraction"] = frac
+    return {"VV": out}
+
+
+@pytest.fixture
+def rstore(monkeypatch):
+    s = sl.Store()
+    monkeypatch.setattr(fi, "get_eo_satellite_imagery", s.get)
+    monkeypatch.setattr(fi, "upsert_eo_satellite_imagery", s.upsert)
+    monkeypatch.setattr(fi, "delete_eo_satellite_imagery", s.delete)
+    monkeypatch.setattr(fi, "delete_eo_attribute", s.delete_attr)
+    monkeypatch.setenv("EO_SATIMG_WRITE_TENANTS", TENANT)
+    return s
+
+
+def _takes():
+    a = rl.radar_take(sl.S1_A, sl.GRD_PARAMS)
+    b = rl.radar_take(sl.S1_B, {**sl.GRD_PARAMS, "scene_id": sl.S1_B, "scene_datetime": "2026-06-21T17:20:01Z"})
+    return a, b, rl.parcel_target(sl.PARCEL, sl.GEOM)
+
+
+def test_radar_fraction_decides_when_both_takes_have_it(rstore):
+    a, b, target = _takes()
+    assert rl.write_backscatter(TENANT, target, a, _bs(40, 0.80)) == rl.CREATE
+    assert rl.write_backscatter(TENANT, target, b, _bs(90, 0.70)) == rl.SKIP   # more pixels, less valid
+    assert rl.write_backscatter(TENANT, target, b, _bs(30, 0.90)) == rl.REPLACE  # fewer pixels, more valid
+    assert sl._prop(rstore.entities[sl.BS_ID], "productID") == sl.S1_B
+    assert rl.write_backscatter(TENANT, target, a, _bs(30, 0.90)) == rl.SKIP   # tie keeps the stored one
+
+
+def test_radar_falls_back_to_count_when_a_take_lacks_the_fraction(rstore):
+    a, b, target = _takes()
+    assert rl.write_backscatter(TENANT, target, a, _bs(40, 0.80)) == rl.CREATE
+    assert rl.write_backscatter(TENANT, target, b, _bs(30, None)) == rl.SKIP
+    assert rl.write_backscatter(TENANT, target, b, _bs(50, None)) == rl.REPLACE
+    assert rl.write_backscatter(TENANT, target, a, _bs(50, 0.1)) == rl.SKIP  # tie on count, stored lacks the fraction
+
+
+def test_radar_soil_moisture_keeps_deciding_by_its_count(rstore):
+    a, b, target = _takes()
+    smi = lambda n: {"mean": 0.3, "min": 0.1, "max": 0.6, "std": 0.05, "pixel_count": n}  # noqa: E731
+    assert rl.write_soil_moisture(TENANT, target, a, smi(40)) == rl.CREATE
+    assert rl.write_soil_moisture(TENANT, target, b, smi(40)) == rl.SKIP
+    assert rl.write_soil_moisture(TENANT, target, b, smi(41)) == rl.REPLACE
+
+
+ZONE_ID = sl.ZN_ID
+
+
+def test_radar_zone_is_skipped_when_the_parcel_take_lost(rstore):
+    a, b, target = _takes()
+    rl.write_backscatter(TENANT, target, b, {"VV": {"mean": -9.0, "pixel_count": 500, "valid_fraction": 0.99},
+                                              "VH": {"mean": -9.0, "pixel_count": 500, "valid_fraction": 0.99}})
+    sl.run_s1(zones=[sl.CURRENT_ZONE])
+    assert sl._prop(rstore.entities[sl.BS_ID], "productID") == sl.S1_B  # the parcel verdict was skip
+    assert ZONE_ID not in rstore.entities
+
+
+def test_radar_zone_follows_a_winning_parcel_and_is_written_after_it(rstore):
+    a, b, target = _takes()
+    zt = rl.zone_target(sl.PARCEL, sl.ZONE, sl.GEOM)
+    big = {"VV": {"mean": -9.0, "pixel_count": 500, "valid_fraction": 0.99},
+           "VH": {"mean": -9.0, "pixel_count": 500, "valid_fraction": 0.99}}
+    rl.write_backscatter(TENANT, zt, b, big)  # the zone holds another scene with more coverage
+    rstore.upserts.clear()
+    sl.run_s1(zones=[sl.CURRENT_ZONE])
+    ids = [u["id"] for u in rstore.upserts]
+    assert ids.index(sl.BS_ID) < ids.index(ZONE_ID)
+    assert sl._prop(rstore.entities[ZONE_ID], "productID") == sl.S1_A  # follows the parcel, not its own count
