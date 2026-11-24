@@ -166,11 +166,14 @@ def zone_statistics(processor, index_array: np.ndarray, zone_geometry: dict,
 
 
 def publish_zone_indices(tenant_id: str, parcel_urn: str, index_type: str, processor,
-                         index_array: np.ndarray, sensing_date, cloud_cover=None) -> int:
+                         index_array: np.ndarray, sensing_date, cloud_cover=None, *,
+                         legacy: bool = True, satimg=None) -> int:
     """Publish one optical zone product per zone target; per-zone failures are logged.
 
+    ``legacy`` writes the EOProduct; ``satimg`` (an ``eo_satimg_optical.ZoneWrite``, set
+    only when the parcel's EOSatelliteImagery took the day) writes the zone's new form.
     Never raises: zone work must not change the parcel result. Returns the number
-    of zone products published.
+    of zone products published (legacy form).
     """
     from app.services.fiware_integration import upsert_eo_zone_index
 
@@ -188,25 +191,49 @@ def publish_zone_indices(tenant_id: str, parcel_urn: str, index_type: str, proce
             if stats is None:
                 logger.info("Zone %s skipped (too few valid pixels)", zone["zone_id"])
                 continue
-            if upsert_eo_zone_index(tenant_id, parcel_short, zone, sensing_date,
-                                    index_type.lower(), stats, cloud_cover=cloud_cover):
+            if legacy and upsert_eo_zone_index(tenant_id, parcel_short, zone, sensing_date,
+                                               index_type.lower(), stats, cloud_cover=cloud_cover):
                 published += 1
+            if satimg is not None and zone.get("relation") == CURRENT_ZONE_RELATION:
+                _publish_zone_satimg(tenant_id, parcel_urn, zone, index_type, stats, cloud_cover, satimg)
         except Exception as exc:
             logger.warning("Zone %s product failed for %s: %s", zone["zone_id"], parcel_urn, exc)
     return published
 
 
-def delete_zone_products(tenant_id: str, parcel_urn: str, sensing_date, index_type: str) -> None:
-    """Remove ``index_type`` from the parcel's zone products of one date. Fail-safe, never raises."""
+def _publish_zone_satimg(tenant_id, parcel_urn, zone, index_type, stats, cloud_cover, satimg) -> None:
+    from app.services import eo_satimg_optical as so
+
+    analytics = so.index_analytics(index_type, stats)
+    analytics["pixelCount"] = stats.get("pixel_count")
+    analytics["validPixelFraction"] = stats.get("valid_fraction")
+    if satimg.take.family.value == "s2-indices":
+        analytics["cloudCoverage"] = so.cloud_coverage(cloud_cover)
+    so.write_optical(tenant_id, so.zone_target(parcel_urn, zone["zone_urn"], zone.get("geometry")),
+                     so.zone_take(satimg.take), analytics, index_type=index_type, follow=satimg.parcel_verdict)
+
+
+def delete_zone_products(tenant_id: str, parcel_urn: str, sensing_date, index_type: str,
+                         job_result: Optional[Dict[str, Any]] = None) -> None:
+    """Remove ``index_type`` from the parcel's zone products of one date, both forms. Fail-safe, never raises.
+
+    ``job_result`` dates the EOSatelliteImagery take (a composite by its window end);
+    without it the single-scene take of ``sensing_date`` is assumed.
+    """
+    from app.services import eo_satimg_optical as so
     from app.services.fiware_integration import delete_eo_index
 
     try:
         parcel_short = parcel_urn.split(":")[-1][:10]
+        family_day = so.job_family_day(job_result or {"sensing_date": str(sensing_date)})
         for zone in fetch_zone_targets(tenant_id, parcel_urn):
             try:
                 delete_eo_index(tenant_id, zone_eo_product_id(tenant_id, parcel_short, zone["zone_id"], sensing_date),
                                 index_type)
             except Exception as exc:
                 logger.warning("Zone product cleanup failed for %s: %s", zone["zone_id"], exc)
+            if family_day and zone.get("relation") == CURRENT_ZONE_RELATION:
+                so.remove_index(tenant_id, "zone", zone["zone_urn"], family_day[0], family_day[1], index_type,
+                                job_result)
     except Exception as exc:
         logger.warning("Zone product cleanup failed for %s: %s", parcel_urn, exc)

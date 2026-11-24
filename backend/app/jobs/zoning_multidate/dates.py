@@ -15,6 +15,7 @@ class RasterRow:
     raster_path: str | None
     pending: bool
     created_at: datetime
+    scene_id: str | None = None  # row id of the job's VegetationScene
 
 
 def _truthy(value: Any) -> bool:
@@ -41,6 +42,7 @@ def raster_rows_from_jobs(jobs: Iterable[Any]) -> list[RasterRow]:
             raster_path=path or None,
             pending=bool(pending and not path),
             created_at=job.created_at,
+            scene_id=str(result.get("scene_id")) if result.get("scene_id") else None,
         ))
     return rows
 

@@ -12,7 +12,7 @@ from datetime import date
 from typing import Any
 
 from app.models import VegetationJob
-from app.services.fiware_integration import upsert_eo_index
+from app.services.fiware_integration import satimg_enabled, upsert_eo_index
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +33,30 @@ async def publish_eo_index(**kwargs) -> None:
             "EOProduct publish failed for %s/%s: %s",
             kwargs.get("parcel_id"), kwargs.get("index_type"), exc,
         )
+
+
+def _write_satimg(tenant_id: str, parcel_id: str, geometry, index_type: str, stats: dict, day: date) -> None:
+    """EOSatelliteImagery of a Statistical API result: no scene, day only. Never raises."""
+    from app.services import eo_satimg_optical as so
+
+    analytics = so.index_analytics(index_type, stats)
+    analytics["pixelCount"] = stats.get("valid_pixels")
+    total, valid = stats.get("total_pixels"), stats.get("valid_pixels")
+    if total and valid is not None:
+        analytics["validPixelFraction"] = valid / total
+    so.write_optical(tenant_id, so.parcel_target(parcel_id, geometry), so.no_scene_take(day), analytics,
+                     index_type=index_type)
+
+
+async def publish_satimg(tenant_id: str, parcel_id: str, geometry, index_type: str, stats: dict, day: date) -> None:
+    """Off-loop like publish_eo_index (the SDK bridge runs its own event loop); skipped when switched off."""
+    if not satimg_enabled(tenant_id):
+        return
+    try:
+        await asyncio.to_thread(_write_satimg, tenant_id, parcel_id, geometry, index_type, stats, day)
+    except Exception as exc:
+        logger.error("eo_satimg: tenant=%s target=%s family=s2-indices day=%s index=%s not written: %s",
+                     tenant_id, parcel_id, day, index_type, exc)
 
 
 async def persist_copernicus_indices(
@@ -129,6 +153,7 @@ async def persist_copernicus_indices(
                     statistics={**stats, "pixel_count": stats.get("valid_pixels", 0)},
                     sensing_date=r.sensing_date,
                 )
+                await publish_satimg(tenant_id, entity_id, geometry, idx, stats, r.sensing_date)
 
                 if is_latest and engine_label == "copernicus":
                     await materialize_if_pending(db, wjob)   # eager latest (off-loop)
