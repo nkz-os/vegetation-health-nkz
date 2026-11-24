@@ -22,8 +22,10 @@ temporal composite: from the scene folder of the index's raster URL, else from t
 parcel, index and day. A ``/composites/`` folder, or a job with a window, makes it ``s2-composite`` (dated by the
 window end). No scene found: that index is written without scene attributes, never guessed. A legacy index
 whose job was deleted is not resurrected; one with no job at all is converted and counted (``no_job``).
-One entity per family and day: when two scenes (or windows) share it, the one holding the reference index
-(the first of ``INDEX_NAMES``) wins and the other indices are counted in ``second_scene_dropped``.
+One entity per family and day: when two scenes (or windows) share it, nothing of it
+is converted: a legacy value is never hidden except by a deleted job. Such a family-day (two scenes or windows
+in one day, or an index that cannot be placed: ``ambiguous_take``, ``composite_no_window``) is left untouched,
+counted in ``left_legacy`` and listed, for the owner to decide before the EOProduct is removed.
 
 Writing never degrades what is stored: a new entity is created whole; an existing one of the SAME take
 (same ``productID``) only receives the whole indices (and other names) it lacks, by sending the full
@@ -392,6 +394,7 @@ class Planner:
 
     def _optical(self, legacy_id: str, parcel: str, day: date, observations: list) -> None:
         plan = self.plan
+        self._blocked = []  # (index, reason): indices that cannot be placed for a reason other than a deleted job
         records: dict = {}
         wide: dict = {}
         for obs in sorted(observations, key=lambda o: o.family != Family.S2_COMPOSITE.value):  # indices last: they win
@@ -421,21 +424,33 @@ class Planner:
             group["values"].update(rec["values"])
             group["urls"][idx] = rec["url"]
             group["stat_api"] = group.get("stat_api", True) and resolved.get("stat_api", False)
-        # one entity per family and day: the group holding the reference index wins
         by_entity: dict = defaultdict(list)
         for key, group in groups.items():
             by_entity[(key[0], key[1])].append(group)
+
+        def leave(family_value, entity_day, indices, reason):
+            # A legacy value is never hidden (a deleted job aside): the family-day is left as it is, for the owner.
+            plan.counters["left_legacy"] += 1
+            plan.dropped.append({"legacy_id": _anon(legacy_id, self.tenant), "family": family_value,
+                                 "day": entity_day.isoformat() if entity_day else None, "reason": reason,
+                                 "indices": sorted(indices)})
+
+        if self._blocked:
+            blocked = {i for i, _ in self._blocked}
+            reason = self._blocked[0][1]
+            if not by_entity:
+                leave(Family.S2_INDICES.value, None, blocked, reason)
+            for (family_value, entity_day), candidates in sorted(by_entity.items(), key=lambda kv: (kv[0][0], kv[0][1])):
+                leave(family_value, entity_day, blocked | {i for g in candidates for i in g["values"] if i in INDEX_NAMES},
+                      reason)
+            return
         for (family_value, entity_day), candidates in sorted(by_entity.items(), key=lambda kv: (kv[0][0], kv[0][1])):
             family = Family(family_value)
-            held = {i for g in candidates for i in g["values"] if i in INDEX_NAMES}
-            reference = next((i for i in INDEX_NAMES if i in held), None)
-            winner = next((g for g in candidates if reference in g["values"]), candidates[0])
-            for group in candidates:
-                if group is not winner:
-                    dropped = sorted(i for i in group["values"] if i in INDEX_NAMES)
-                    plan.counters["second_scene_dropped"] += len(dropped)
-                    plan.dropped.append({"legacy_id": _anon(legacy_id, self.tenant), "family": family_value,
-                                         "day": entity_day.isoformat(), "indices": dropped})
+            if len(candidates) > 1:  # two scenes or windows share the family-day: converting would hide one
+                leave(family_value, entity_day, {i for g in candidates for i in g["values"] if i in INDEX_NAMES},
+                      "two_scenes" if family is Family.S2_INDICES else "two_windows")
+                continue
+            winner = candidates[0]
             values = dict(winner["values"])
             row = winner.get("scene_row")
             if len(groups) == 1:  # take-wide values of the legacy entity belong to a take only when it is the only one
@@ -502,6 +517,7 @@ class Planner:
         if len(takes) > 1:
             if any(t[0] == "window" for t in takes):
                 plan.counters["ambiguous_take"] += 1  # a composite and another take fit: never guessed
+                self._blocked.append((idx, "ambiguous_take"))
                 return None
             plan.counters["ambiguous_scene"] += 1
             live = []  # several scenes fit and nothing tells which: no scene, as the rule says
@@ -515,6 +531,7 @@ class Planner:
                 window = (date.fromisoformat(found.group(1)), date.fromisoformat(found.group(2))) if found else None
             if window is None:
                 plan.counters["composite_no_window"] += 1
+                self._blocked.append((idx, "composite_no_window"))
                 return None
             return {"key": (Family.S2_COMPOSITE.value, window[1], window), "window": window, "jobs": live}
         # single scene: the raster folder first, else the job
@@ -810,7 +827,7 @@ def main(argv=None, db=None, sources=None, client_factory: Optional[Callable] = 
                     execute(tenant, plan, args.apply, guard)
                     report.update({"counters": dict(plan.counters),
                                    "families": {f: dict(c) for f, c in sorted(plan.by_family.items())},
-                                   "unconvertible": plan.unconvertible, "second_scene_dropped": plan.dropped})
+                                   "unconvertible": plan.unconvertible, "left_legacy": plan.dropped})
                     if plan.counters.get("errors"):
                         code = max(code, EXIT_ERRORS)
             except WindowClosed:

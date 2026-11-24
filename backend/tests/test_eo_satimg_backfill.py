@@ -307,13 +307,24 @@ def test_scene_is_resolved_per_index_from_the_raster_then_the_job(store):
     assert set(names(only)) >= {"ndvi", "evi"}
 
 
-def test_second_scene_in_one_entity_is_dropped_never_mixed(store):
+def test_a_two_scene_day_is_left_whole_for_the_owner_and_nothing_is_written(store):
     entity = legacy({NKZ + "evi": index_attr(0.4, scene_uuid=U_B, index="evi"), NKZ + "ndvi": index_attr(0.6, scene_uuid=U_A)})
     code, report, _ = run([entity], Src([job("ndvi", scene=U_A), job("evi", scene=U_B)]), ["--apply"])
-    entity = store.entities[new_id(PARCEL, "s2-indices")]
-    assert entity["productID"]["value"] == PID_A and "evi" not in names(entity)  # the reference index (ndvi) wins
-    assert report["counters"]["second_scene_dropped"] == 1
-    assert report["second_scene_dropped"][0]["indices"] == ["evi"]
+    assert store.entities == {} and store.upserts == []  # the legacy stays visible whole
+    assert report["counters"]["left_legacy"] == 1 and "second_scene_dropped" not in report["counters"]
+    left = report["left_legacy"][0]
+    assert left["reason"] == "two_scenes" and left["indices"] == ["evi", "ndvi"] and left["family"] == "s2-indices"
+
+
+def test_an_unresolvable_index_leaves_the_whole_optical_part_but_not_the_other_families(store):
+    entity = fused()
+    entity[NKZ + "ndre"] = prop(0.5, min=0.2, max=0.8, std=0.1,
+                                rasterUrl=f"s3://bucket/{TENANT}/entities/{PARCEL}/composites/some-job-id/ndre.tif")
+    code, report, _ = run([entity], Src([job("ndvi"), job("evi"), job("ndre", scene=None)]), ["--apply"])
+    assert report["counters"]["composite_no_window"] == 1 and report["counters"]["left_legacy"] >= 1
+    assert new_id(PARCEL, "s2-indices") not in store.entities  # ndvi/evi would hide ndre: left whole
+    assert new_id(PARCEL, "s1-change") in store.entities and new_id(PARCEL, "landsat-lst") in store.entities
+    assert any("ndre" in entry["indices"] and entry["reason"] == "composite_no_window" for entry in report["left_legacy"])
 
 
 def test_composite_by_raster_folder_and_by_job_window_is_dated_by_its_end(store):
