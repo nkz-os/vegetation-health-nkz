@@ -729,17 +729,14 @@ def _http_error(code):
 
 
 def test_broker_calls_of_the_new_form(caplog):
-    from tests.fake_orion import FakeAsyncOrion
-
-    class Failing(FakeAsyncOrion):
-        async def upsert_entities_batch(self, entities):
-            return {"upserted": 0, "errors": [{"detail": "boom"}], "entity_ids": []}
-
     entity = {"id": PARCEL_ID, "type": "EOSatelliteImagery"}
-    with patch.object(fi, "OrionClient", FakeAsyncOrion):
+    sync = MagicMock()
+    sync.upsert_entities_batch.return_value = {"upserted": 1, "errors": [], "entity_ids": [PARCEL_ID]}
+    with patch.object(fi, "SyncOrionClient", return_value=sync):
         assert fi.upsert_eo_satellite_imagery(TENANT, entity) == PARCEL_ID
-        assert FakeAsyncOrion.last_instance.entities == [entity]
-    with patch.object(fi, "OrionClient", Failing):
+        sync.upsert_entities_batch.assert_called_once_with([entity])
+    sync.upsert_entities_batch.return_value = {"upserted": 0, "errors": [{"detail": "boom"}], "entity_ids": []}
+    with patch.object(fi, "SyncOrionClient", return_value=sync):
         assert fi.upsert_eo_satellite_imagery(TENANT, entity) is None
     orion = MagicMock(spec=["get_entity", "delete_entity"])
     with patch.object(fi, "SyncOrionClient", return_value=orion):

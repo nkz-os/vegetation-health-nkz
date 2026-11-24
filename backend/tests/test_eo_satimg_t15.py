@@ -15,6 +15,7 @@ from app.services import eo_satimg_optical as so
 from app.services import fiware_integration as fi
 from tests import test_eo_satimg_optical_writers as ow
 
+_REAL_UPSERT = fi.upsert_eo_satellite_imagery
 PID_A, PID_B, PARCEL_ID, TENANT = ow.PID_A, ow.PID_B, ow.PARCEL_ID, ow.TENANT
 
 
@@ -91,3 +92,132 @@ def test_i1_scene_over_statistical_api_only_through_reference_index(store):
     assert ow._write_scene(PID_B, "NDRE", 0.55, 0.9) == so.SKIP
     assert store.entities[PARCEL_ID].get("productID") is None
     assert ow._write_scene(PID_B, "NDVI", 0.7, 0.9) == so.REPLACE
+
+
+# ── I2 / I4: the broker HTTP layer, faked underneath the SDK ────────────────
+
+class _Resp:
+    def __init__(self, status=204, body=None):
+        self.status_code = status
+        self._body = body
+        self.content = b"x" if body is not None else b""
+        self.text = ""
+        self.request = None
+
+    def json(self):
+        return self._body
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            import requests
+            raise requests.HTTPError(f"{self.status_code}", response=self)
+
+
+class FakeHttp:
+    """Replaces requests.Session verbs: a script of responses/exceptions per verb."""
+
+    def __init__(self, monkeypatch, post=(), get=()):
+        import requests
+        self.scripts = {"post": list(post), "get": list(get)}
+        self.calls = {"post": [], "get": []}
+        for verb in ("post", "get"):
+            monkeypatch.setattr(requests.Session, verb, self._make(verb))
+        self.sleeps = []
+        monkeypatch.setattr("time.sleep", lambda s: self.sleeps.append(s))
+
+    def _make(self, verb):
+        def call(session, url, **kw):
+            self.calls[verb].append((url, kw))
+            item = self.scripts[verb].pop(0) if self.scripts[verb] else _Resp(204)
+            if isinstance(item, BaseException):
+                raise item
+            return item
+        return call
+
+
+ENTITY = {"id": "urn:ngsi-ld:EOSatelliteImagery:acme:parcel:p:s2-indices:2026-06-21", "type": "EOSatelliteImagery"}
+
+
+def test_i2_upsert_works_inside_a_running_event_loop(monkeypatch):
+    import asyncio
+    http = FakeHttp(monkeypatch, post=[_Resp(204)])
+
+    async def inside():
+        return fi.upsert_eo_satellite_imagery("acme", dict(ENTITY))
+
+    assert asyncio.run(inside()) == ENTITY["id"]
+    url, kw = http.calls["post"][0]
+    assert url.endswith("/ngsi-ld/v1/entityOperations/upsert") and kw["params"] == {"options": "update"}
+    assert kw["json"][0]["@context"] and kw["headers"]["NGSILD-Tenant"] == "acme"
+
+
+def test_i2_upsert_207_with_errors_is_failure_and_logged(monkeypatch, caplog):
+    FakeHttp(monkeypatch, post=[_Resp(207, {"success": [], "errors": [{"entityId": "x"}]})])
+    with caplog.at_level(logging.ERROR):
+        assert fi.upsert_eo_satellite_imagery("acme", dict(ENTITY)) is None
+    assert any("upsert" in r.getMessage() for r in caplog.records)
+
+
+def test_i2_remove_job_index_from_a_coroutine_deletes_through_the_broker(monkeypatch):
+    import asyncio
+    from datetime import date
+    from app.services.eo_satellite_imagery import Family
+    store = ow.Store()
+    monkeypatch.setattr(fi, "get_eo_satellite_imagery", store.get)
+    monkeypatch.setattr(fi, "upsert_eo_satellite_imagery", store.upsert)
+    monkeypatch.setattr(fi, "delete_eo_attribute", store.delete_attr)
+    monkeypatch.setattr(fi, "delete_eo_satellite_imagery", store.delete)
+    monkeypatch.setenv("EO_SATIMG_WRITE_TENANTS", TENANT)
+    ow._write_scene(PID_A, "NDVI", 0.6, 0.8)
+    ow._write_scene(PID_A, "EVI", 0.4, 0.8)
+    http = FakeHttp(monkeypatch, post=[_Resp(204)])
+    monkeypatch.setattr(fi, "upsert_eo_satellite_imagery", _REAL_UPSERT)
+
+    async def inside():
+        return so.remove_index(TENANT, "parcel", ow.PARCEL, Family.S2_INDICES, ow.DAY, "ndvi")
+
+    assert asyncio.run(inside()) is True
+    assert len(http.calls["post"]) == 1  # the pruned entity reached the broker
+
+
+# ── I4 retry ────────────────────────────────────────────────────────────────
+
+def test_i4_upsert_retries_connection_errors_and_5xx_then_succeeds(monkeypatch):
+    import requests
+    http = FakeHttp(monkeypatch, post=[requests.ConnectionError("down"), _Resp(503), _Resp(204)])
+    assert fi.upsert_eo_satellite_imagery("acme", dict(ENTITY)) == ENTITY["id"]
+    assert len(http.calls["post"]) == 3 and sum(http.sleeps) < 10
+
+
+def test_i4_upsert_gives_up_after_three_attempts(monkeypatch):
+    import requests
+    http = FakeHttp(monkeypatch, post=[requests.Timeout("t")] * 5)
+    assert fi.upsert_eo_satellite_imagery("acme", dict(ENTITY)) is None
+    assert len(http.calls["post"]) == 3 and sum(http.sleeps) < 10
+
+
+def test_i4_upsert_never_retries_4xx(monkeypatch):
+    http = FakeHttp(monkeypatch, post=[_Resp(400), _Resp(204)])
+    assert fi.upsert_eo_satellite_imagery("acme", dict(ENTITY)) is None
+    assert len(http.calls["post"]) == 1 and http.sleeps == []
+
+
+def test_i4_get_retries_then_returns_entity_and_404_is_absent(monkeypatch):
+    import requests
+    http = FakeHttp(monkeypatch, get=[_Resp(502), requests.ConnectionError("x"), _Resp(200, {"id": "e"})])
+    assert fi.get_eo_satellite_imagery("acme", "e") == {"id": "e"}
+    assert len(http.calls["get"]) == 3
+    http = FakeHttp(monkeypatch, get=[_Resp(404), _Resp(200, {"id": "e"})])
+    assert fi.get_eo_satellite_imagery("acme", "e") is None
+    assert len(http.calls["get"]) == 1
+
+
+def test_i4_get_raises_after_three_failures_and_never_retries_4xx(monkeypatch):
+    http = FakeHttp(monkeypatch, get=[_Resp(500)] * 3)
+    with pytest.raises(Exception):
+        fi.get_eo_satellite_imagery("acme", "e")
+    assert len(http.calls["get"]) == 3
+    http = FakeHttp(monkeypatch, get=[_Resp(403), _Resp(200, {})])
+    with pytest.raises(Exception):
+        fi.get_eo_satellite_imagery("acme", "e")
+    assert len(http.calls["get"]) == 1

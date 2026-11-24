@@ -75,7 +75,8 @@ def upsert_eo_satellite_imagery(tenant_id: str, entity: dict) -> Optional[str]:
     """Upsert one built ``EOSatelliteImagery`` (options=update). Never raises; None on failure, logged."""
     entity_id = entity.get("id")
     try:
-        result = _upsert_eoproduct_entity(tenant_id, entity)
+        # Synchronous client: callable from async endpoints (asyncio.run fails inside a running loop).
+        result = SyncOrionClient(tenant_id).upsert_entities_batch([entity])
         if result.get("upserted", 0) >= 1 and not result.get("errors"):
             logger.info("Upserted EOSatelliteImagery %s", entity_id)
             return entity_id
