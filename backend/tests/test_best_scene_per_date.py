@@ -174,7 +174,7 @@ def test_losing_scene_result_hides_its_raster():
     job, *_ = _run(existing=(0.9, URL_A), valid_fraction=0.5)
     result = job.mark_completed.call_args.args[0]
     assert result["raster_path"] is None
-    assert result["superseded_raster_path"] == f"{TENANT}/entities/{PARCEL}/scenes/{uuid.UUID(int=0x22222222222222222222222222222222)}/NDVI.tif"
+    assert result["superseded_raster_path"] == f"{TENANT}/entities/{PARCEL}/scenes/{uuid.UUID(int=0x22222222222222222222222222222222)}/ndvi.tif"
     assert "raster_pending" not in result
 
 
