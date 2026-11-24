@@ -297,7 +297,7 @@ def test_sdk_parses_built_entities(caplog):
     assert b.sensing_day == date(2026, 11, 13) and b.sensing_time is None
     assert set(b.values) == {"backscatterVV", "backscatterVH", "pixelCount"}
     assert b.values["backscatterVV"] == pytest.approx(-12.3457)
-    assert b.product_type == "GRD"
+    assert b.product_type is None  # no item, no code: never a generic value
 
 
 # ── fix round 1 ─────────────────────────────────────────────────────────────
@@ -423,19 +423,23 @@ def test_raster_layers_must_be_raster_names(layer):
               raster=RasterMeta("/r", [("ndvi", "x"), (layer, "y")]))
 
 
-def test_clms_lst_default_product_type_and_no_platform_attributes():
+def test_clms_lst_product_type_is_the_items_and_no_platform_attributes():
     lst = {"lst": 21.4, "lst.min": 20.0}
     e = build(family=Family.CLMS_LST, scene=None, sensing=Sensing(DAY, None), analytics=lst)
-    assert e["productType"]["value"] == "land_surface_temperature"
+    assert "productType" not in e
     carried = SceneMeta("id", "https://catalog.example.org/x", "GeoTIFF", "land_surface_temperature",
                         "CLMS", 5, "IW", GEOM)
     e = build(family=Family.CLMS_LST, scene=carried, sensing=Sensing(DAY, None), analytics=lst)
     for k in ("platformName", "orbitNumber", "operationalMode"):
         assert k not in e
     assert e["productID"]["value"] == "id"
-    assert build(family=Family.LANDSAT_LST, scene=None, analytics=lst)["productType"]["value"] == "L2SP"
-    assert build(family=Family.S1_BACKSCATTER, scene=None, analytics={"backscatterVV": -9.0, "backscatterVH": -15.0})[
-        "productType"]["value"] == "GRD"
+    assert "productType" not in build(family=Family.LANDSAT_LST, scene=None, analytics=lst)
+    assert "productType" not in build(
+        family=Family.S1_BACKSCATTER, scene=None, analytics={"backscatterVV": -9.0, "backscatterVH": -15.0})
+    # a scene that does not give the code omits it (only the two S2 families have a request-fixed code)
+    bare = SceneMeta("id", "https://catalog.example.org/x", "", "", "", None, None, None)
+    assert "productType" not in build(family=Family.LANDSAT_LST, scene=bare, analytics=lst)
+    assert build(scene=SceneMeta("id", "u", "", "", "", None, None, None))["productType"]["value"] == "S2MSI2A"
 
 
 def test_sdk_parses_full_target_ids(caplog):

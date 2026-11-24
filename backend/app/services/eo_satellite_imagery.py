@@ -48,8 +48,9 @@ class Family(str, Enum):
         return _ANALYSIS_TYPE[self]
 
     @property
-    def default_product_type(self) -> str:
-        return _PRODUCT_TYPE[self]
+    def default_product_type(self) -> str | None:
+        """The single product code the request itself fixes (Sentinel-2 L2A); None elsewhere."""
+        return _PRODUCT_TYPE.get(self)
 
 
 _ANALYSIS_TYPE = {
@@ -62,16 +63,11 @@ _ANALYSIS_TYPE = {
     Family.CLMS_LST: "land-surface-temperature",
 }
 
-# productType when there is no concrete scene (Statistical API path); the
-# clms-lst value is the STAC product:type, verbatim.
+# productType when there is no concrete scene (Statistical API path) and the request itself fixes one code
+# (contract section 4, "regla unica"). Every other family omits it: never a generic value put by hand.
 _PRODUCT_TYPE = {
     Family.S2_INDICES: "S2MSI2A",
     Family.S2_COMPOSITE: "S2MSI2A",
-    Family.S1_BACKSCATTER: "GRD",
-    Family.S1_SOIL_MOISTURE: "GRD",
-    Family.S1_CHANGE: "GRD",
-    Family.LANDSAT_LST: "L2SP",
-    Family.CLMS_LST: "land_surface_temperature",
 }
 
 # The writer must never write a family the reader does not know. (The equality
@@ -404,7 +400,8 @@ def build_entity(
         entity["processedBbox"] = _geo(target.geometry)
 
     if scene is None:
-        entity["productType"] = _prop(family.default_product_type)
+        if family.default_product_type:
+            entity["productType"] = _prop(family.default_product_type)
     else:
         for key, value in (
             ("productID", scene.product_id),
@@ -413,7 +410,9 @@ def build_entity(
         ):
             if value:
                 entity[key] = _prop(value)
-        entity["productType"] = _prop(scene.product_type or family.default_product_type)
+        product_type = scene.product_type or family.default_product_type
+        if product_type:
+            entity["productType"] = _prop(product_type)
         # clms-lst has no platform, orbit or mode to report.
         carries_platform = family is not Family.CLMS_LST
         if scene.platform_name and carries_platform:
