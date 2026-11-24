@@ -1,0 +1,121 @@
+{
+  "id": "urn:ngsi-ld:EOSatelliteImagery:tenant-a:parcel:tenant-a:11111111-2222-3333-4444-555555555555:clms-lst:2026-11-12",
+  "type": "EOSatelliteImagery",
+  "analysisType": {
+    "type": "Property",
+    "value": "land-surface-temperature"
+  },
+  "provider": {
+    "type": "Property",
+    "value": "Nekazari vegetation module"
+  },
+  "sensingDate": {
+    "type": "Property",
+    "value": "2026-11-12T07:00:00Z"
+  },
+  "resultDescription": {
+    "type": "Property",
+    "value": "Land surface temperature (degrees Celsius) from one CLMS hourly 3 km product."
+  },
+  "analytics": {
+    "type": "Property",
+    "value": [
+      {
+        "name": "lst",
+        "value": "21.40"
+      },
+      {
+        "name": "lst.max",
+        "value": "23.50"
+      },
+      {
+        "name": "lst.min",
+        "value": "19.00"
+      },
+      {
+        "name": "lst.std",
+        "value": "1.20"
+      },
+      {
+        "name": "pixelCount",
+        "value": "2"
+      }
+    ]
+  },
+  "hasAgriParcel": {
+    "type": "Relationship",
+    "object": "urn:ngsi-ld:AgriParcel:tenant-a:11111111-2222-3333-4444-555555555555"
+  },
+  "processedBbox": {
+    "type": "GeoProperty",
+    "value": {
+      "type": "Polygon",
+      "coordinates": [
+        [
+          [
+            -1.6,
+            42.8
+          ],
+          [
+            -1.59,
+            42.8
+          ],
+          [
+            -1.59,
+            42.81
+          ],
+          [
+            -1.6,
+            42.81
+          ],
+          [
+            -1.6,
+            42.8
+          ]
+        ]
+      ]
+    }
+  },
+  "productID": {
+    "type": "Property",
+    "value": "c_gls_LST_202611120700_GLOBE_GEO_V3.0.1_cog"
+  },
+  "productURL": {
+    "type": "Property",
+    "value": "https://catalogue.dataspace.copernicus.eu/stac/collections/clms_lst_global_3km_hourly_v3_cog/items/c_gls_LST_202611120700_GLOBE_GEO_V3.0.1_cog"
+  },
+  "productType": {
+    "type": "Property",
+    "value": "land_surface_temperature"
+  },
+  "productBbox": {
+    "type": "GeoProperty",
+    "value": {
+      "type": "Polygon",
+      "coordinates": [
+        [
+          [
+            -1.7,
+            42.7
+          ],
+          [
+            -1.5,
+            42.7
+          ],
+          [
+            -1.5,
+            42.9
+          ],
+          [
+            -1.7,
+            42.9
+          ],
+          [
+            -1.7,
+            42.7
+          ]
+        ]
+      ]
+    }
+  }
+}

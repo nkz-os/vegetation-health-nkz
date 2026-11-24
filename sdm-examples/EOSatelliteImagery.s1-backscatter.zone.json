@@ -1,0 +1,133 @@
+{
+  "id": "urn:ngsi-ld:EOSatelliteImagery:tenant-a:zone:11111111-2222-3333-4444-555555555555:0edc1602:L1:s1-backscatter:2026-11-12",
+  "type": "EOSatelliteImagery",
+  "analysisType": {
+    "type": "Property",
+    "value": "sar-backscatter"
+  },
+  "provider": {
+    "type": "Property",
+    "value": "Nekazari vegetation module"
+  },
+  "sensingDate": {
+    "type": "Property",
+    "value": "2026-11-12T06:01:02Z"
+  },
+  "resultDescription": {
+    "type": "Property",
+    "value": "Calibrated Sentinel-1 GRD backscatter (sigma nought, dB) over the target."
+  },
+  "analytics": {
+    "type": "Property",
+    "value": [
+      {
+        "name": "backscatterVH",
+        "value": "-17.1000"
+      },
+      {
+        "name": "backscatterVV",
+        "value": "-10.8000"
+      },
+      {
+        "name": "pixelCount",
+        "value": "60"
+      },
+      {
+        "name": "validPixelFraction",
+        "value": "0.9500"
+      }
+    ]
+  },
+  "hasAgriParcel": {
+    "type": "Relationship",
+    "object": "urn:ngsi-ld:AgriParcel:tenant-a:11111111-2222-3333-4444-555555555555"
+  },
+  "hasAgriManagementZone": {
+    "type": "Relationship",
+    "object": "urn:ngsi-ld:AgriManagementZone:11111111-2222-3333-4444-555555555555:0edc1602:L1"
+  },
+  "processedBbox": {
+    "type": "GeoProperty",
+    "value": {
+      "type": "Polygon",
+      "coordinates": [
+        [
+          [
+            -1.6,
+            42.8
+          ],
+          [
+            -1.59,
+            42.8
+          ],
+          [
+            -1.59,
+            42.81
+          ],
+          [
+            -1.6,
+            42.81
+          ],
+          [
+            -1.6,
+            42.8
+          ]
+        ]
+      ]
+    }
+  },
+  "productID": {
+    "type": "Property",
+    "value": "S1C_IW_GRDH_1SDV_20261112T060102_20261112T060127_005432_00ABCD_1234_COG"
+  },
+  "productURL": {
+    "type": "Property",
+    "value": "https://stac.dataspace.copernicus.eu/v1/collections/sentinel-1-grd/items/S1C_IW_GRDH_1SDV_20261112T060102_20261112T060127_005432_00ABCD_1234_COG"
+  },
+  "productType": {
+    "type": "Property",
+    "value": "IW_GRDH_1S"
+  },
+  "platformName": {
+    "type": "Property",
+    "value": "S1C"
+  },
+  "orbitNumber": {
+    "type": "Property",
+    "value": 30
+  },
+  "operationalMode": {
+    "type": "Property",
+    "value": "IW"
+  },
+  "productBbox": {
+    "type": "GeoProperty",
+    "value": {
+      "type": "Polygon",
+      "coordinates": [
+        [
+          [
+            -1.7,
+            42.7
+          ],
+          [
+            -1.5,
+            42.7
+          ],
+          [
+            -1.5,
+            42.9
+          ],
+          [
+            -1.7,
+            42.9
+          ],
+          [
+            -1.7,
+            42.7
+          ]
+        ]
+      ]
+    }
+  }
+}

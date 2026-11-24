@@ -1,0 +1,121 @@
+{
+  "id": "urn:ngsi-ld:EOSatelliteImagery:tenant-a:parcel:tenant-a:11111111-2222-3333-4444-555555555555:landsat-lst:2026-11-12",
+  "type": "EOSatelliteImagery",
+  "analysisType": {
+    "type": "Property",
+    "value": "land-surface-temperature"
+  },
+  "provider": {
+    "type": "Property",
+    "value": "Nekazari vegetation module"
+  },
+  "sensingDate": {
+    "type": "Property",
+    "value": "2026-11-12T10:56:21Z"
+  },
+  "resultDescription": {
+    "type": "Property",
+    "value": "Land surface temperature (degrees Celsius) from one Landsat Collection 2 Level-2 scene."
+  },
+  "analytics": {
+    "type": "Property",
+    "value": [
+      {
+        "name": "lst",
+        "value": "21.40"
+      },
+      {
+        "name": "lst.max",
+        "value": "23.50"
+      },
+      {
+        "name": "lst.min",
+        "value": "19.00"
+      },
+      {
+        "name": "lst.std",
+        "value": "1.20"
+      },
+      {
+        "name": "pixelCount",
+        "value": "40"
+      }
+    ]
+  },
+  "hasAgriParcel": {
+    "type": "Relationship",
+    "object": "urn:ngsi-ld:AgriParcel:tenant-a:11111111-2222-3333-4444-555555555555"
+  },
+  "processedBbox": {
+    "type": "GeoProperty",
+    "value": {
+      "type": "Polygon",
+      "coordinates": [
+        [
+          [
+            -1.6,
+            42.8
+          ],
+          [
+            -1.59,
+            42.8
+          ],
+          [
+            -1.59,
+            42.81
+          ],
+          [
+            -1.6,
+            42.81
+          ],
+          [
+            -1.6,
+            42.8
+          ]
+        ]
+      ]
+    }
+  },
+  "productID": {
+    "type": "Property",
+    "value": "LC09_L2SP_199030_20261112_02_T1"
+  },
+  "productURL": {
+    "type": "Property",
+    "value": "https://catalogue.dataspace.copernicus.eu/stac/collections/landsat-c2l2-st/items/LC09_L2SP_199030_20261112_02_T1"
+  },
+  "platformName": {
+    "type": "Property",
+    "value": "LANDSAT_9"
+  },
+  "productBbox": {
+    "type": "GeoProperty",
+    "value": {
+      "type": "Polygon",
+      "coordinates": [
+        [
+          [
+            -1.7,
+            42.7
+          ],
+          [
+            -1.5,
+            42.7
+          ],
+          [
+            -1.5,
+            42.9
+          ],
+          [
+            -1.7,
+            42.9
+          ],
+          [
+            -1.7,
+            42.7
+          ]
+        ]
+      ]
+    }
+  }
+}
