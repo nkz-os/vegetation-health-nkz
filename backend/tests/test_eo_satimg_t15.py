@@ -760,3 +760,41 @@ def test_fix1_owner_query_sql_is_compilable(store):
     so.completing_analytics(Db(), TENANT, SimpleNamespace(id=uuid.uuid4(), entity_id=ow.PARCEL), B_UUID, "NDVI")
     text = " ".join(seen)
     assert "tenant_id" in text and "completed" in text and "deleted_at IS NULL" in text and str(B_UUID) in text
+
+
+# ── fix round 1, item 3: what the reader returns for the final entities ──────
+
+def _legacy_entity():
+    from unittest.mock import patch
+    sent = []
+    with patch.object(fi, "_upsert_eoproduct_entity", side_effect=lambda t, e: sent.append(e) or {"upserted": 1}):
+        fi.upsert_eo_index(TENANT, ow.PARCEL, "NDVI", {**ow.STATS, "mean": 0.58}, ow.DAY,
+                           raster_url=f"s3://bucket/{TENANT}/entities/{ow.PARCEL}/scenes/{B_UUID}/ndvi.tif")
+    assert sent and sent[0]["type"] == "EOProduct"
+    return sent[0]
+
+
+def _read_day(store):
+    from nkz_platform_sdk import parse_eo_entities
+    found = parse_eo_entities([_legacy_entity(), store.entities[PARCEL_ID]], require={"ndvi"})
+    assert len(found) == 1 and found[0].sensing_day == ow.DAY
+    return found[0]
+
+
+def test_fix1_reader_returns_the_day_when_a_losing_scene_was_skipped(store):
+    ow._write_scene(PID_A, "NDVI", 0.6, 0.80)
+    ow._write_scene(PID_A, "NDRE", 0.5, 0.84)
+    ow._write_scene(PID_B, "NDVI", 0.5, 0.79)
+    ow._write_scene(PID_B, "NDRE", 0.55, 0.85)
+    obs = _read_day(store)
+    assert obs.product_id == PID_A and obs.values["ndvi"] == 0.6
+
+
+def test_fix1_reader_returns_the_day_when_the_reference_index_arrives_last(store):
+    ow._write_scene(PID_A, "NDVI", 0.6, 0.80)
+    ow._write_scene(PID_A, "NDRE", 0.5, 0.84)
+    db = JobsDb([_idx_job("NDRE", 0.55, 0.85)])
+    _publish(db, "NDRE", 0.55, 0.85)
+    _publish(db, "NDVI", 0.7, 0.90)
+    obs = _read_day(store)
+    assert obs.product_id == PID_B and obs.values["ndvi"] == 0.7 and obs.values["ndre"] == 0.55
