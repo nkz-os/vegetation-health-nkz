@@ -160,11 +160,13 @@ def dispatch_lst_for_active_parcels():
     db = next(get_db_session())
     try:
         from app.models import VegetationSubscription
+        from app.services.active_tenants import tenant_is_active
         from nkz_platform_sdk import SyncOrionClient
         from shapely.geometry import shape
 
         subs = db.query(VegetationSubscription).filter(
             VegetationSubscription.is_active == True,
+            tenant_is_active(),
         ).all()
         enqueued = 0
         for sub in subs:
