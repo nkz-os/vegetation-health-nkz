@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from app.celery_app import celery_app
 from app.database import get_db_session
 from app.models import VegetationSubscription
+from app.services.active_tenants import tenant_is_active
 from app.services.monitoring import monitoring_period, utc_today
 from app.services.monitoring_io import continuous_modules, fetch_timeline
 
@@ -70,7 +71,8 @@ def sync_subscriptions(db: Session, today: date) -> Dict[str, int]:
     subscriptions = (
         db.query(VegetationSubscription)
         .filter(or_(VegetationSubscription.is_active == True,  # noqa: E712
-                    VegetationSubscription.paused_reason == "harvest"))
+                    VegetationSubscription.paused_reason == "harvest"),
+                tenant_is_active())
         .all()
     )
     # A pause by a person is never undone here, so its crop is not even read.

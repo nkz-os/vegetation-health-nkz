@@ -11,6 +11,7 @@ from app.celery_app import celery_app
 from app.database import get_db_session
 from app.models import VegetationSubscription, VegetationJob
 from app.services import acquisition_guard, parcel_scenes
+from app.services.active_tenants import tenant_is_active
 from app.tasks.download_tasks import download_sentinel2_scene
 from app.tasks.processing_tasks import calculate_vegetation_index
 
@@ -62,6 +63,7 @@ def process_subscriptions():
         # either next_run_at is reached/passed OR next_run_at is None (new)
         subscriptions = db.query(VegetationSubscription).filter(
             VegetationSubscription.is_active == True,
+            tenant_is_active(),
             or_(
                 VegetationSubscription.next_run_at <= now,
                 VegetationSubscription.next_run_at == None
