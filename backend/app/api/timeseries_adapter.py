@@ -8,6 +8,7 @@ Contract: ADAPTER_SPEC.md + Action Plan §11.
 - Empty: 204 No Content.
 """
 
+import asyncio
 import io
 import logging
 import os
@@ -90,32 +91,14 @@ async def get_vegetation_history(
     return {"points": points}
 
 
-async def _history_from_telemetry_events(
-    tenant_id: str,
-    parcel_id: str,
-    index_type: str,
-    start_dt: datetime,
-    end_dt: datetime,
-) -> list:
-    """Read from telemetry_events hypertable: EOProduct entities for this parcel.
-
-    EOProduct id pattern (Task 1 writer): urn:ngsi-ld:EOProduct:{tenant}:{parcel_short10}:{date}
-    where parcel_short10 = the parcel URN's last segment truncated to 10 chars.
-    The index attribute is the lowercased index name, a Property whose `value`
-    is the zonal mean, with sub-Properties min/max/std.
-    """
-    import json as json_mod
-
+def _fetch_eo_rows(url: str, tenant_id: str, eo_prefix: str, start_dt: datetime, end_dt: datetime) -> list:
+    """Blocking read of the parcel's EOProduct rows from telemetry_events; run it in a worker thread."""
     import psycopg2
     from psycopg2.extras import RealDictCursor
 
-    parcel_short = (parcel_id.split(":")[-1] if ":" in parcel_id else parcel_id)[:10]
-    eo_prefix = f"urn:ngsi-ld:EOProduct:{tenant_id}:{parcel_short}:"
-    index_key = index_type.lower()
-
     conn = None
     try:
-        conn = psycopg2.connect(_get_telemetry_events_url(), cursor_factory=RealDictCursor)
+        conn = psycopg2.connect(url, cursor_factory=RealDictCursor)
         cur = conn.cursor()
         cur.execute(
             """
@@ -133,12 +116,37 @@ async def _history_from_telemetry_events(
         )
         rows = cur.fetchall()
         cur.close()
-    except Exception as e:
-        logger.exception("BFF telemetry_events query failed: %s", e)
-        raise HTTPException(status_code=500, detail="Error querying historical data")
+        return rows
     finally:
         if conn:
             conn.close()
+
+
+async def _history_from_telemetry_events(
+    tenant_id: str,
+    parcel_id: str,
+    index_type: str,
+    start_dt: datetime,
+    end_dt: datetime,
+) -> list:
+    """Read from telemetry_events hypertable: EOProduct entities for this parcel.
+
+    EOProduct id pattern (Task 1 writer): urn:ngsi-ld:EOProduct:{tenant}:{parcel_short10}:{date}
+    where parcel_short10 = the parcel URN's last segment truncated to 10 chars.
+    The index attribute is the lowercased index name, a Property whose `value`
+    is the zonal mean, with sub-Properties min/max/std.
+    """
+    import json as json_mod
+
+    parcel_short = (parcel_id.split(":")[-1] if ":" in parcel_id else parcel_id)[:10]
+    eo_prefix = f"urn:ngsi-ld:EOProduct:{tenant_id}:{parcel_short}:"
+    index_key = index_type.lower()
+
+    try:
+        rows = await asyncio.to_thread(_fetch_eo_rows, _get_telemetry_events_url(), tenant_id, eo_prefix, start_dt, end_dt)
+    except Exception as e:
+        logger.exception("BFF telemetry_events query failed: %s", e)
+        raise HTTPException(status_code=500, detail="Error querying historical data")
 
     points = []
     for row in rows:
@@ -225,42 +233,18 @@ async def get_timeseries_data(
 
     import json as json_mod
 
-    import psycopg2
-    from psycopg2.extras import RealDictCursor
-
     index_key = attribute.lower()
     parcel_short = (entity_id.split(":")[-1] if ":" in entity_id else entity_id)[:10]
     eo_prefix = f"urn:ngsi-ld:EOProduct:{tenant_id}:{parcel_short}:"
 
-    conn = None
     try:
-        conn = psycopg2.connect(_get_postgres_url(), cursor_factory=RealDictCursor)
-        cur = conn.cursor()
-        cur.execute(
-            """
-            SELECT observed_at, payload
-            FROM telemetry_events
-            WHERE tenant_id = %s
-              AND entity_type = 'EOProduct'
-              AND entity_id LIKE %s
-              AND entity_id NOT LIKE %s
-              AND observed_at >= %s
-              AND observed_at < %s
-            ORDER BY observed_at ASC
-            """,
-            (tenant_id, eo_prefix + "%", f"urn:ngsi-ld:EOProduct:{tenant_id}:zone:%", start_dt, end_dt),
-        )
-        rows = cur.fetchall()
-        cur.close()
+        rows = await asyncio.to_thread(_fetch_eo_rows, _get_postgres_url(), tenant_id, eo_prefix, start_dt, end_dt)
     except Exception as e:
         logger.exception("Timeseries query failed: %s", e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Error processing timeseries request",
         ) from e
-    finally:
-        if conn:
-            conn.close()
 
     timestamps_sec = []
     values = []
