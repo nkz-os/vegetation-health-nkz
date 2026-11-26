@@ -166,7 +166,7 @@ def dispatch_lst_for_active_parcels():
 
         subs = db.query(VegetationSubscription).filter(
             VegetationSubscription.is_active == True,
-            tenant_is_active(),
+            tenant_is_active(db),
         ).all()
         enqueued = 0
         for sub in subs:
