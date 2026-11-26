@@ -71,3 +71,25 @@ def test_arrow_endpoint_returns_multiple_points_for_parcel():
     table = pyarrow.ipc.open_stream(resp.body).read_all()
     assert table.num_rows == 3
     assert table.column("value").to_pylist() == [0.70, 0.75, 0.80]
+
+
+def test_both_readers_run_the_query_off_the_event_loop():
+    """The blocking psycopg2 query runs in a worker thread, not on the event loop."""
+    fake_cur = MagicMock(); fake_cur.fetchall.return_value = []
+    fake_conn = MagicMock(); fake_conn.cursor.return_value = fake_cur
+    real_to_thread = asyncio.to_thread
+    calls = []
+
+    async def spy(fn, *a, **k):
+        calls.append(fn)
+        return await real_to_thread(fn, *a, **k)
+
+    start, end = datetime(2025, 1, 1, tzinfo=timezone.utc), datetime(2026, 1, 1, tzinfo=timezone.utc)
+    with patch("psycopg2.connect", return_value=fake_conn), patch.object(ts.asyncio, "to_thread", spy):
+        asyncio.run(ts._history_from_telemetry_events("acmefarm", "urn:ngsi-ld:AgriParcel:p-1", "NDVI", start, end))
+        asyncio.run(ts.get_timeseries_data(
+            entity_id="urn:ngsi-ld:AgriParcel:p-1", attribute="ndvi",
+            start_time="2025-01-01T00:00:00Z", end_time="2026-01-01T00:00:00Z",
+            resolution=None, format="arrow", current_user={"tenant_id": "acmefarm"}))
+    assert len(calls) == 2
+    assert fake_conn.close.call_count == 2
