@@ -212,8 +212,8 @@ def test_process_subscriptions_lookback_env_and_start_date_floor(monkeypatch):
 
 # ---- SAR window and duplicates ---------------------------------------------
 
-def _run_sar(sub, existing_sar_ids, s1_scenes, start="2026-08-27"):
-    client = _client(_catalog(5))
+def _run_sar(sub, existing_sar_ids, s1_scenes, start="2026-08-27", s2_scenes=None, tenant_scene_ids=()):
+    client = _client(_catalog(5) if s2_scenes is None else s2_scenes)
     client.search_s1_scenes.return_value = s1_scenes
 
     def query(*args):
@@ -224,6 +224,8 @@ def _run_sar(sub, existing_sar_ids, s1_scenes, start="2026-08-27"):
             q.first.return_value = sub
         elif "vegetation_jobs" in text:
             q.all.return_value = [(i,) for i in existing_sar_ids]
+        elif "VegetationScene.scene_id" in text:
+            q.all.return_value = [(i,) for i in tenant_scene_ids]
         else:
             q.all.return_value = []
         return q
@@ -235,10 +237,38 @@ def _run_sar(sub, existing_sar_ids, s1_scenes, start="2026-08-27"):
     return client, sar_dl, db
 
 
-def test_s1_window_starts_at_the_cursor_not_the_s2_lookback():
+def test_s1_window_looks_back_from_the_cursor(monkeypatch):
+    monkeypatch.delenv("VEG_SAR_LOOKBACK_DAYS", raising=False)
     sub = _sub(last_run_at=datetime(2026, 9, 1))
     client, _, _ = _run_sar(sub, [], [])
-    assert client.search_s1_scenes.call_args.kwargs["start_date"] == date(2026, 9, 1)
+    assert client.search_s1_scenes.call_args.kwargs["start_date"] == date(2026, 8, 18)
+
+
+def test_s1_lookback_env_and_start_date_floor(monkeypatch):
+    monkeypatch.setenv("VEG_SAR_LOOKBACK_DAYS", "3")
+    sub = _sub(last_run_at=datetime(2026, 9, 1))
+    client, _, _ = _run_sar(sub, [], [])
+    assert client.search_s1_scenes.call_args.kwargs["start_date"] == date(2026, 8, 29)
+    monkeypatch.setenv("VEG_SAR_LOOKBACK_DAYS", "400")
+    client, _, _ = _run_sar(_sub(last_run_at=datetime(2026, 9, 1)), [], [])
+    assert client.search_s1_scenes.call_args.kwargs["start_date"] == date(2026, 4, 1)
+
+
+def test_s1_scene_used_by_another_parcel_is_still_queued_for_this_one():
+    sub = _sub(last_run_at=datetime(2026, 9, 1))
+    s1 = [{"id": "s1-shared", "sensing_date": "2026-09-02"}]
+    _, sar_dl, _ = _run_sar(sub, [], s1, tenant_scene_ids=["s1-shared"])
+    assert sar_dl.delay.call_count == 1
+
+
+def test_s1_is_searched_when_no_optical_scene_is_found():
+    sub = _sub(last_run_at=datetime(2026, 11, 1))
+    s1 = [{"id": "s1-a", "sensing_date": "2026-11-05"}]
+    client, sar_dl, _ = _run_sar(sub, [], s1, start="2026-10-27", s2_scenes=[])
+    assert client.search_s1_scenes.called
+    assert sar_dl.delay.call_count == 1
+    assert sar_dl.delay.call_args.kwargs["parameters"]["scene_id"] == "s1-a"
+    assert sub.last_run_at == datetime.combine(TODAY, datetime.min.time(), tzinfo=timezone.utc)
 
 
 def test_s1_window_without_cursor_uses_passed_start():

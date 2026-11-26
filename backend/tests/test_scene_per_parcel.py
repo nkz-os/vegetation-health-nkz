@@ -2,7 +2,7 @@
 import os
 import sys
 import uuid
-from datetime import date
+from datetime import date, datetime, timezone
 from unittest.mock import MagicMock, patch
 
 os.environ.setdefault("DATABASE_URL", "postgresql://u:p@localhost/db")
@@ -55,6 +55,8 @@ def _run_planner(seen):
     sub.status = "active"
     sub.index_types = ["NDVI"]
     sub.geometry = object()
+    sub.start_date = date(2026, 4, 1)
+    sub.last_run_at = datetime(2026, 10, 30, tzinfo=timezone.utc)
     db = MagicMock()
     db.query.side_effect = _query_stub({sched.VegetationSubscription: sub})
     client = MagicMock()
