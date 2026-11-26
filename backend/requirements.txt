@@ -42,7 +42,7 @@ sentinelsat==1.2.1
 Pillow>=10.2.0,<11
 
 # Apache Arrow — required for DataHub timeseries adapter
-pyarrow==15.0.2
+pyarrow==23.0.1
 
 # Storage (S3/MinIO)
 boto3==1.29.7
