@@ -63,7 +63,7 @@ def process_subscriptions():
         # either next_run_at is reached/passed OR next_run_at is None (new)
         subscriptions = db.query(VegetationSubscription).filter(
             VegetationSubscription.is_active == True,
-            tenant_is_active(),
+            tenant_is_active(db),
             or_(
                 VegetationSubscription.next_run_at <= now,
                 VegetationSubscription.next_run_at == None

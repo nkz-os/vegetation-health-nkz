@@ -72,7 +72,7 @@ def sync_subscriptions(db: Session, today: date) -> Dict[str, int]:
         db.query(VegetationSubscription)
         .filter(or_(VegetationSubscription.is_active == True,  # noqa: E712
                     VegetationSubscription.paused_reason == "harvest"),
-                tenant_is_active())
+                tenant_is_active(db))
         .all()
     )
     # A pause by a person is never undone here, so its crop is not even read.
