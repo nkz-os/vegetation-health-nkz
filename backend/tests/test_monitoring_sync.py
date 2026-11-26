@@ -16,6 +16,7 @@ for _m in (
     sys.modules.setdefault(_m, MagicMock())
 
 import pytest
+from sqlalchemy import true
 from celery.schedules import crontab
 
 import app.tasks.monitoring_sync as ms
@@ -89,6 +90,8 @@ def broker(monkeypatch):
     state.fetch = AsyncMock(side_effect=fetch)
     monkeypatch.setattr(ms, "fetch_timeline", state.fetch)
     monkeypatch.setattr(ms, "continuous_modules", lambda db, tenant, urn: state.requests.get(urn, []))
+    # The suspended-tenant filter has its own tests; FakeDb cannot run it.
+    monkeypatch.setattr(ms, "tenant_is_active", lambda db: true())
     return state
 
 
