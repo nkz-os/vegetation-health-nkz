@@ -24,7 +24,7 @@ flower==2.0.1  # Celery monitoring
 # Note: redis is used for both Celery (db 0) and tile cache (db 1)
 
 # Platform SDK — FIWARE NGSI-LD client
-nkz-platform-sdk>=0.23.0
+nkz-platform-sdk>=0.23.0,<0.24
 
 # Geospatial processing
 numpy>=1.26.0
