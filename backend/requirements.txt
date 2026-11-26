@@ -49,7 +49,7 @@ boto3==1.29.7
 botocore==1.32.7
 
 # Formula evaluation (safe)
-simpleeval==0.9.13
+simpleeval==1.0.5
 
 # HTTP client
 httpx>=0.25.2
