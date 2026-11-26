@@ -131,8 +131,13 @@ def check_and_process_entity(self, subscription_id, start_date, end_date):
             logger.error("Subscription %s not found", subscription_id)
             return
 
-        # S1 keeps its original window (the cursor as it was when this task started), not the S2 lookback
-        sar_start = sub.last_run_at.date() if sub.last_run_at else datetime.fromisoformat(start_date).date()
+        # S1 window: the cursor as it was when this task started, minus its own lookback, so a radar
+        # scene from a day the cursor already passed is still found. Scenes with any job are skipped below.
+        if sub.last_run_at:
+            sar_lookback = int(os.getenv("VEG_SAR_LOOKBACK_DAYS", "14"))
+            sar_start = max(sub.start_date, sub.last_run_at.date() - timedelta(days=sar_lookback))
+        else:
+            sar_start = datetime.fromisoformat(start_date).date()
             
         # Disk brake: below the threshold nothing is searched or enqueued and the cursor stays put
         disk_is_ok, free_gb, threshold_gb = acquisition_guard.disk_ok()
@@ -278,15 +283,8 @@ def check_and_process_entity(self, subscription_id, start_date, end_date):
         sub.last_error = None
         db.commit()
 
-        if not scenes:
-            # No scenes found, but successful search
-            if sub.status == 'syncing':
-                sub.status = 'active'
-                db.commit()
-            return
-
         # ── Sentinel-1 GRD (SAR) search ─────────────────────────────────
-        # Search S1 scenes independently of S2 — SAR penetrates clouds.
+        # Search S1 scenes independently of S2, also when no optical scene was found — SAR penetrates clouds.
         # Create download_sar jobs which then trigger calculate_sar_backscatter
         # jobs with index_type "SAR-VV" and "SAR-VH", integrating into the
         # same VegetationJob pipeline and frontend available_indices.
@@ -296,23 +294,19 @@ def check_and_process_entity(self, subscription_id, start_date, end_date):
                 intersects=intersects_geojson,
                 start_date=sar_start,
                 end_date=end,
-                limit=10,
+                limit=50,  # the window spans the lookback: already-handled scenes must not crowd out new ones
             )
             if s1_scenes:
-                s1_existing = db.query(VegetationScene.scene_id).filter(
-                    VegetationScene.scene_id.in_([s["id"] for s in s1_scenes]),
-                    VegetationScene.tenant_id == sub.tenant_id,
-                ).all()
-                s1_existing_ids = {r[0] for r in s1_existing}
-                # a scene that already has a live or finished SAR job for this parcel is not queued twice
+                # Per parcel: a scene another parcel of the tenant already used is still needed here.
+                # A scene that already has a SAR job for this parcel is not queued twice; failed jobs are retried by reap_stuck_jobs
                 s1_jobs = db.query(VegetationJob.parameters['scene_id'].astext).filter(
                     VegetationJob.tenant_id == sub.tenant_id,
                     VegetationJob.entity_id == sub.entity_id,
                     VegetationJob.job_type == 'download_sar',
-                    VegetationJob.status.in_(['pending', 'running', 'completed']),
+                    VegetationJob.status.in_(['pending', 'running', 'completed', 'failed']),
                     VegetationJob.parameters['scene_id'].astext.in_([s["id"] for s in s1_scenes]),
                 ).all()
-                s1_existing_ids |= {r[0] for r in s1_jobs}
+                s1_existing_ids = {r[0] for r in s1_jobs}
 
                 s1_triggered = 0
                 for s1_scene in s1_scenes:
